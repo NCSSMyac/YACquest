@@ -1,3 +1,4 @@
+import { INSTAGRAM_HANDLE } from '../config';
 import type { Activity } from '../types';
 
 /**
@@ -57,7 +58,7 @@ export const ACTIVITIES: Activity[] = [
     id: 'social_tag',
     tier: 2,
     title: 'Tag YAC in a Post',
-    description: 'Tag YAC in a relevant social post or shoutout. Upload a screenshot.',
+    description: `Tag ${INSTAGRAM_HANDLE} in a relevant social post or shoutout. Upload a screenshot.`,
     method: 'screenshot',
     limitLabel: '2 per month',
   },
@@ -82,7 +83,7 @@ export const ACTIVITIES: Activity[] = [
     id: 'follow_ig',
     tier: 3,
     title: 'Follow YAC on Instagram',
-    description: 'Follow the official YAC Instagram and screenshot it.',
+    description: `Follow ${INSTAGRAM_HANDLE} on Instagram and screenshot your follow.`,
     method: 'screenshot',
     limitLabel: 'Once per cycle',
   },
@@ -90,7 +91,7 @@ export const ACTIVITIES: Activity[] = [
     id: 'repost',
     tier: 3,
     title: 'Repost a YAC Post',
-    description: 'Repost a YAC event, announcement or poster to your story or feed.',
+    description: `Repost a ${INSTAGRAM_HANDLE} event, announcement or poster to your story or feed.`,
     method: 'screenshot',
     limitLabel: 'Digital: 1 per week',
   },
@@ -106,7 +107,7 @@ export const ACTIVITIES: Activity[] = [
     id: 'story_game',
     tier: 3,
     title: 'Play an Insta Story Game',
-    description: 'Interact with a YAC Instagram story game or quiz.',
+    description: `Play a game or quiz on the ${INSTAGRAM_HANDLE} Instagram story.`,
     method: 'screenshot',
     limitLabel: 'Digital: 1 per week',
   },

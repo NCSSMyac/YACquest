@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import * as api from '../api';
-import { CAMPUSES, CAPS, TIER_LABELS, TIER_POINTS, UPLOAD, campusName, type Tier } from '../config';
+import { CAMPUSES, CAPS, INSTAGRAM_HANDLE, INSTAGRAM_URL, TIER_LABELS, TIER_POINTS, UPLOAD, campusName, type Tier } from '../config';
 import { ACTIVITIES, activityById } from '../lib/activities';
 import { useAuth } from '../lib/auth';
 import { fmtDate, fmtDateTime } from '../lib/format';
@@ -172,6 +172,9 @@ function Quests({ goEvents }: { goEvents: () => void }) {
   );
 }
 
+/** Quests that happen on Instagram get a direct link. */
+const INSTAGRAM_QUESTS = new Set(['follow_ig', 'repost', 'story_game', 'social_tag']);
+
 function QuestCard({ a, goEvents, onProof }: { a: Activity; goEvents: () => void; onProof: () => void }) {
   const { user } = useAuth();
   const toast = useToast();
@@ -192,6 +195,11 @@ function QuestCard({ a, goEvents, onProof }: { a: Activity; goEvents: () => void
         </div>
         <p style={{ margin: 0 }}>{a.description}</p>
         {a.limitLabel && <span className="chip neutral" style={{ alignSelf: 'flex-start' }}>{a.limitLabel}</span>}
+        {INSTAGRAM_QUESTS.has(a.id) && (
+          <a href={INSTAGRAM_URL} target="_blank" rel="noreferrer" style={{ alignSelf: 'flex-start' }}>
+            Open {INSTAGRAM_HANDLE} ↗
+          </a>
+        )}
         {(a.method === 'screenshot' || a.method === 'photo') && <button className="btn small" onClick={onProof}>Submit proof</button>}
         {a.method === 'event_password' && <button className="btn blue small" onClick={goEvents}>See events</button>}
         {a.method === 'lead_award' && <p className="muted" style={{ margin: 0 }}>Your campus lead awards this at events.</p>}

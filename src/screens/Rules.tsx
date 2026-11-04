@@ -1,4 +1,4 @@
-import { CAMPUSES, CAPS, CONTACT_EMAIL, CYCLE, PRIZE, TIER_LABELS, TIER_POINTS, type Tier } from '../config';
+import { CAMPUSES, CAPS, CONTACT_EMAILS, CYCLE, INSTAGRAM_HANDLE, INSTAGRAM_URL, PRIZE, TIER_LABELS, TIER_POINTS, type Tier } from '../config';
 import { ACTIVITIES } from '../lib/activities';
 import { PageHeader } from '../components/Layout';
 import { TierChip } from '../components/ui';
@@ -68,7 +68,22 @@ export function RulesContent() {
         <h3>Good to know</h3>
         <ul>
           <li>Points are not cash and can’t be transferred.</li>
-          <li>Questions? Email <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.</li>
+          <li>
+            Questions? Email{' '}
+            {CONTACT_EMAILS.map((email, i) => (
+              <span key={email}>
+                {i > 0 && ' or '}
+                <a href={`mailto:${email}`}>{email}</a>
+              </span>
+            ))}
+            .
+          </li>
+          <li>
+            Follow us on Instagram:{' '}
+            <a href={INSTAGRAM_URL} target="_blank" rel="noreferrer">
+              {INSTAGRAM_HANDLE}
+            </a>
+          </li>
         </ul>
       </section>
     </div>

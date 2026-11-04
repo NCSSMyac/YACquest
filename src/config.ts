@@ -76,5 +76,7 @@ export const UPLOAD = {
 /** Polling interval for the live "prizes left" counter. */
 export const PRIZE_POLL_MS = 15_000;
 
-export const CONTACT_EMAIL = 'yac@ncssm.edu'; // TODO: confirm with YAC
-export const INSTAGRAM_HANDLE = '@ncssm_yac'; // TODO: confirm with YAC
+/** YAC contacts shown in the Rules and anywhere participants need help. */
+export const CONTACT_EMAILS = ['iesha.landis.yac@ncssm.edu', 'jacob.rodriguez.yac@ncssm.edu'] as const;
+export const INSTAGRAM_HANDLE = '@ncssmyoungalumni';
+export const INSTAGRAM_URL = 'https://www.instagram.com/ncssmyoungalumni/';
