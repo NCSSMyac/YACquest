@@ -1095,6 +1095,60 @@ begin
                         and (details->>'amount')::int = 300 and details->>'reason' = 'alert test'), 'action log: manual add by admin');
 end $$;
 
+
+-- =============================================================================
+-- 20. 0006 — ANNOUNCEMENTS
+-- =============================================================================
+:as_alice
+do $$ begin
+  perform t.throws('select send_announcement(''Hello all'', ''Hi'', ''all'')', 'forbidden', 'participant cannot send announcements');
+  perform t.throws('select * from list_announcements()', 'forbidden', 'participant cannot list announcements');
+  perform t.eq((select count(*) from announcements), 0::bigint, 'RLS: participant cannot read announcements table');
+end $$;
+:as_super
+update profiles set role = 'admin' where id = t.u('bob');  -- a plain admin (the seeded 'admin' became a chair earlier)
+:as_bob
+do $$
+declare r json; n_duke bigint := (select count(*) from profiles where campus = 'duke');
+begin
+  perform t.throws('select send_announcement(''Hi'', ''x'', ''all'')', 'title', 'announcement title too short');
+  perform t.throws('select send_announcement(''Hello there'', '''', ''all'')', 'body', 'announcement body required');
+  perform t.throws('select send_announcement(''Hello there'', ''x'', ''campus'', ''mars'')', 'campus', 'announcement bad campus');
+  perform t.throws('select send_announcement(''Hello there'', ''x'', ''user'', null, gen_random_uuid())', 'user', 'announcement unknown user');
+  perform t.throws('select send_announcement(''Hello there'', ''x'', ''all'', null, null, true)', 'forbidden', 'admin cannot EMAIL everyone');
+  r := send_announcement('Pickleball Sunday', 'Courts at 2pm!', 'campus', 'duke', null, false);
+  perform t.eq((r->>'recipients')::bigint, n_duke, 'campus announcement reaches every duke profile');
+  perform t.eq((r->>'emailed')::int, 0, 'in-app only: no emails');
+  perform t.eq((select count(*) from email_outbox where kind = 'announcement'), 0::bigint, 'in-app only: outbox untouched');
+  perform t.eq((select count(*) from list_announcements() where title = 'Pickleball Sunday'), 1::bigint, 'admin can list announcements');
+end $$;
+:as_super
+do $$ begin
+  perform t.eq((select count(*) from notifications where kind = 'announcement' and title = 'Pickleball Sunday'),
+               (select count(*) from profiles where campus = 'duke'), 'one notification per duke profile');
+  perform t.eq((select count(*) from notifications n join profiles p on p.id = n.user_id where n.title = 'Pickleball Sunday' and p.campus <> 'duke'), 0::bigint, 'no notifications outside the campus');
+  perform t.ok(exists (select 1 from admin_actions where action = 'announcement_sent' and actor_id = t.u('bob') and details->>'title' = 'Pickleball Sunday'), 'announcement logged');
+end $$;
+:as_super
+select set_config('t.optin', (select count(*) from profiles p join auth.users u on u.id = p.id
+                              where p.email_opt_in and u.email_confirmed_at is not null)::text, false) \g /dev/null
+:as_chair1
+do $$
+declare r json; opted_in bigint := current_setting('t.optin')::bigint;
+begin
+  r := send_announcement('Big news', 'New prize alert!', 'all', null, null, true);
+  perform t.eq((r->>'recipients')::bigint, (select count(*) from profiles), 'chair: everyone gets the in-app message');
+  perform t.eq((r->>'emailed')::bigint, opted_in, 'chair: email only to opted-in confirmed people');
+  perform t.ok(not (select bool_or('erin@example.edu' = any (to_emails)) from email_outbox where kind = 'announcement'), 'opted-out erin not emailed');
+  r := send_announcement('Just for you', 'Your prize is ready', 'user', null, t.u('erin'), true);
+  perform t.eq((r->>'emailed')::int, 1, 'direct message emails the person even if opted out');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok((select bool_and(cardinality(to_emails) <= 90) from email_outbox where kind = 'announcement'), 'announcement emails batched ≤ 90');
+  perform t.ok(exists (select 1 from email_outbox where kind = 'announcement' and subject = '📣 YACquest: Big news' and body_html like '%New prize alert!%'), 'announcement email content');
+end $$;
+
 -- =============================================================================
 :as_super
 select 'PASSED: ' || current_setting('t.passed') || ' assertions' as result;

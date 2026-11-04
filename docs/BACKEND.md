@@ -139,3 +139,10 @@ Actions: `points_added` / `points_removed` (ledger insert with created_by and so
 
 ## 0005 — Event kinds are the three tiers
 `events.kind` ∈ ('high_impact','active','digital') → activities `cross_campus_event` ("High-Impact Event", Tier 1), `home_event` ("Active Event", Tier 2), `digital_event` ("Digital Event", Tier 3, new). Campus is chosen independently ('duke','unc','ncsu','all'); `cross_campus` = (campus = 'all'). Points always come from the tier via app_config. `panel_mentorship` is no longer used for new events (kept for history).
+
+---
+
+## 0006 — Announcements
+- Table `announcements` (admins read via RLS). `send_announcement(p_title, p_body, p_audience 'all'|'campus'|'user', p_campus, p_user_id, p_send_email) → json {id, recipients, emailed}` — admin/chair; emailing 'all' is chair-only (`forbidden`); 20 per sender per day (`limit`); codes `title`, `body`, `audience`, `campus`, `user`.
+- Creates one `notifications` row (kind 'announcement') per target; Home shows the latest 3. Email copy → `email_outbox` kind 'announcement', ≤ 90 BCC per row, only opted-in confirmed emails (a direct message always emails that person). Logged as `announcement_sent`.
+- `list_announcements(p_limit default 20)` — admin/chair, newest first, snake_case rows.

@@ -3,7 +3,7 @@
  * Mirrors submit_claim_info in supabase/migrations/0004_emails_and_audit.sql — the
  * server is the real gatekeeper; this just gives instant, friendly messages.
  */
-import type { ClaimContact } from '../types';
+import type { AnnouncementInput, ClaimContact } from '../types';
 
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -28,3 +28,15 @@ export const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'
 
 /** 0 → "12 am", 13 → "1 pm". */
 export const hourLabel = (h: number) => `${h % 12 === 0 ? 12 : h % 12} ${h < 12 ? 'am' : 'pm'}`;
+
+export const ANNOUNCEMENT_LIMITS = { titleMin: 3, titleMax: 80, bodyMax: 1000 } as const;
+
+/** First problem with an admin announcement, or null. Codes match send_announcement in 0006. */
+export function announcementError(a: AnnouncementInput): { code: string; message: string } | null {
+  const t = a.title.trim();
+  if (t.length < ANNOUNCEMENT_LIMITS.titleMin || t.length > ANNOUNCEMENT_LIMITS.titleMax) return { code: 'title', message: 'Title: 3–80 characters.' };
+  if (!a.body.trim() || a.body.trim().length > ANNOUNCEMENT_LIMITS.bodyMax) return { code: 'body', message: 'Message: 1–1000 characters.' };
+  if (a.audience === 'campus' && !a.campus) return { code: 'campus', message: 'Pick a campus.' };
+  if (a.audience === 'user' && !a.userId) return { code: 'user', message: 'Pick the person to message.' };
+  return null;
+}

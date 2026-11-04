@@ -9,7 +9,7 @@ import type { Session, User as AuthUser } from '@supabase/supabase-js';
 import { CAMPUSES, PRIZE, TIER_POINTS, type CampusId } from '../config';
 import { ACTIVITIES, activityById } from '../lib/activities';
 import { getSupabase, siteUrl } from '../lib/supabase';
-import { claimContactError, isEmail } from '../lib/validate';
+import { announcementError, claimContactError, isEmail } from '../lib/validate';
 import type {
   Activity,
   AdminAction,
@@ -35,6 +35,9 @@ import type {
   User,
   WeeklyReport,
   YacEvent,
+  Announcement,
+  AnnouncementAudience,
+  AnnouncementInput,
 } from '../types';
 import { ApiError, emitChange } from './shared';
 import type { AdminOverview, AdminUserRow, EventInput, QueueItem, SignupInput, SignupResult, TeamMember } from './shared';
@@ -490,13 +493,14 @@ export async function getDashboard(): Promise<Dashboard> {
   if (!s) return fail('unauthenticated', 'Please log in again.');
   const userId = s.user.id;
   const cycle = await activeCycle();
-  const [user, stats, prize, claimRows, subRows, ledgerRows] = await Promise.all([
+  const [user, stats, prize, claimRows, subRows, ledgerRows, msgRows] = await Promise.all([
     loadProfile(s.user),
     rpc<AnyRow | AnyRow[]>('dashboard_stats').then(one),
     rpc<AnyRow | AnyRow[]>('prize_status').then(one),
     sb().from('prize_claims').select('*').eq('user_id', userId).eq('cycle_id', cycle.id).neq('status', 'revoked').limit(1).then(rows),
     sb().from('submissions').select(SUBMISSION_COLS).eq('user_id', userId).order('created_at', { ascending: false }).limit(5).then(rows),
     sb().from('ledger').select(LEDGER_COLS).eq('user_id', userId).eq('cycle_id', cycle.id).order('created_at', { ascending: false }).limit(8).then(rows),
+    sb().from('notifications').select('id, user_id, kind, title, body, read, created_at').eq('user_id', userId).eq('kind', 'announcement').order('created_at', { ascending: false }).limit(3).then(rows),
   ]);
   if (!user) return fail('unauthenticated', 'Please log in again.');
   const st = stats ?? {};
@@ -515,6 +519,7 @@ export async function getDashboard(): Promise<Dashboard> {
     recentSubmissions: ((subRows as AnyRow[]) ?? []).map((r) => toSubmission(r)),
     recentLedger: ((ledgerRows as AnyRow[]) ?? []).map(toLedger),
     unreadCount,
+    messages: ((msgRows as AnyRow[]) ?? []).map(toNotification),
     daysLeft: Math.max(0, Math.ceil((new Date(cycle.endsAt).getTime() - Date.now()) / 86_400_000)),
     referralsUsed: num(pick(st, 'referrals_used')),
   };
@@ -1038,4 +1043,41 @@ export async function adminActionLog(opts: { before?: number; limit?: number } =
 
 export async function resetDemoData(): Promise<void> {
   return fail('forbidden', 'Not available on the live app.');
+}
+
+// ───────────────────────────── announcements (admins) ─────────────────────────────
+
+export async function sendAnnouncement(input: AnnouncementInput): Promise<{ recipients: number; emailed: number }> {
+  const problem = announcementError(input);
+  if (problem) fail(problem.code, problem.message);
+  const r = one(
+    await rpc<AnyRow | AnyRow[]>('send_announcement', {
+      p_title: input.title.trim(),
+      p_body: input.body.trim(),
+      p_audience: input.audience,
+      p_campus: input.audience === 'campus' ? input.campus ?? null : null,
+      p_user_id: input.audience === 'user' ? input.userId ?? null : null,
+      p_send_email: input.sendEmail,
+    }),
+  ) ?? {};
+  emitChange();
+  void refreshUnread().catch(() => {});
+  if (num(r.emailed) > 0) sendQueuedEmailsNow();
+  return { recipients: num(r.recipients), emailed: num(r.emailed) };
+}
+
+export async function listAnnouncements(limit = 20): Promise<Announcement[]> {
+  return ((await rpc<AnyRow[]>('list_announcements', { p_limit: limit })) ?? []).map((r) => ({
+    id: str(r.id),
+    title: str(r.title),
+    body: str(r.body),
+    audience: str(r.audience) as AnnouncementAudience,
+    campus: (opt(r.campus) as CampusId | undefined) ?? undefined,
+    targetName: opt(pick(r, 'target_name')),
+    sendEmail: Boolean(pick(r, 'send_email')),
+    recipientCount: num(pick(r, 'recipient_count')),
+    emailCount: num(pick(r, 'email_count')),
+    senderName: str(pick(r, 'sender_name')),
+    createdAt: str(pick(r, 'created_at')),
+  }));
 }

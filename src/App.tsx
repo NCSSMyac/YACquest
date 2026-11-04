@@ -23,6 +23,7 @@ import Events from './screens/admin/Events';
 import Prizes from './screens/admin/Prizes';
 import System from './screens/admin/System';
 import Team from './screens/admin/Team';
+import Announce from './screens/admin/Announce';
 import ActivityLog from './screens/admin/ActivityLog';
 
 function RequireAuth() {
@@ -110,6 +111,7 @@ export default function App() {
                   <Route element={<AdminLayout />}>
                     <Route index element={<AdminHome />} />
                     <Route path="review" element={<Review />} />
+                    <Route path="announce" element={<Announce />} />
                     <Route path="players" element={<Players />} />
                     <Route path="events" element={<Events />} />
                     <Route element={<RequireStaff chairOnly />}>

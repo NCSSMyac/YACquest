@@ -340,3 +340,33 @@ describe('admin action log', () => {
     expect(describeAction(log[3])).toBe('Iesha L. created the event “Pickleball” (Active Participation, Duke)');
   });
 });
+
+describe('announcements', () => {
+  it('admin sends to a campus; it shows on the dashboard and in the log', async () => {
+    asUser('admin');
+    const r = await api.sendAnnouncement({ title: 'Pickleball Sunday', body: 'Courts at 2pm!', audience: 'campus', campus: 'duke', sendEmail: false });
+    expect(r.recipients).toBe(load().users.filter((u) => u.campus === 'duke').length);
+    expect(r.emailed).toBe(0);
+    asUser('yak001'); // Duke
+    const d = await api.getDashboard();
+    expect(d.messages[0]).toMatchObject({ title: 'Pickleball Sunday', body: 'Courts at 2pm!' });
+    asUser('iesha');
+    const log = await api.adminActionLog();
+    expect(log[0].action).toBe('announcement_sent');
+  });
+  it('only chairs can email everyone; participants cannot send', async () => {
+    asUser('admin');
+    await expect(api.sendAnnouncement({ title: 'Big news', body: 'Hi', audience: 'all', sendEmail: true })).rejects.toMatchObject({ code: 'forbidden' });
+    asUser('yak001');
+    await expect(api.sendAnnouncement({ title: 'Big news', body: 'Hi', audience: 'all', sendEmail: false })).rejects.toMatchObject({ code: 'forbidden' });
+    asUser('iesha');
+    const r = await api.sendAnnouncement({ title: 'Big news', body: 'Hi', audience: 'all', sendEmail: true });
+    expect(r.emailed).toBeGreaterThan(0);
+    expect(load().outbox.filter((o) => o.kind === 'announcement').every((o) => o.toEmails.length <= 90)).toBe(true);
+  });
+  it('validates title and target', async () => {
+    asUser('admin');
+    await expect(api.sendAnnouncement({ title: 'Hi', body: 'x', audience: 'all', sendEmail: false })).rejects.toMatchObject({ code: 'title' });
+    await expect(api.sendAnnouncement({ title: 'Hello there', body: 'x', audience: 'user', sendEmail: false })).rejects.toMatchObject({ code: 'user' });
+  });
+});

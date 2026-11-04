@@ -4,7 +4,7 @@ import { CAPS, PRIZE, TIER_POINTS, campusName } from '../config';
 import { Sprite } from '../components/Sprite';
 import { ErrorText, Loading, Panel, ProgressBar, StatusChip, useToast } from '../components/ui';
 import { activityById } from '../lib/activities';
-import { fmtDate, fmtPts } from '../lib/format';
+import { fmtDate, fmtPts, timeAgo } from '../lib/format';
 import { useAsync } from '../lib/useAsync';
 
 export default function Home() {
@@ -35,6 +35,24 @@ export default function Home() {
           <div className="muted">{campusName(d.user.campus)} adventurer</div>
         </div>
       </div>
+
+      <Panel title="📣 Messages from YAC" action={<Link to="/notifications" className="btn small ghost">See all</Link>}>
+        {d.messages.length === 0 ? (
+          <p className="muted" style={{ margin: 0 }}>No messages yet. Announcements from YAC will show up here.</p>
+        ) : (
+          <ul className="list">
+            {d.messages.map((m) => (
+              <li key={m.id} style={m.read ? undefined : { borderLeft: '4px solid var(--gold-500)', paddingLeft: 10 }}>
+                <div className="spread">
+                  <strong>{m.title}</strong>
+                  <small className="muted" style={{ whiteSpace: 'nowrap' }}>{timeAgo(m.createdAt)}</small>
+                </div>
+                <p style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{m.body}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
 
       <Panel tone="gold" title="Your points">
         <div className="row" style={{ marginBottom: 10 }}>

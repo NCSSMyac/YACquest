@@ -73,6 +73,12 @@ export function describeAction(a: AdminAction): string {
       return `${actor} marked ${possessive(target)} prize (spot #${s(d.spot) || '?'}) as delivered`;
     case 'prize_revoked':
       return `${target} lost prize spot #${s(d.spot) || '?'}${reason}${a.actorName ? ` (after a change by ${a.actorName})` : ''}`;
+    case 'announcement_sent': {
+      const campus = ({ duke: 'Duke', unc: 'UNC', ncsu: 'NC State' } as Record<string, string>)[s(d.campus)] ?? s(d.campus);
+      const aud = d.audience === 'user' ? target : d.audience === 'campus' ? `${campus} members` : 'everyone';
+      const mail = Number(d.emailed) > 0 ? ` (+ email to ${Number(d.emailed)})` : '';
+      return `${actor} sent “${s(d.title)}” to ${aud}${mail}`;
+    }
     case 'cycle_reset':
       return `${actor} ended the cycle${d.name ? ` “${s(d.name)}”` : ''} and reset everyone’s points`;
     case 'report_settings_changed':

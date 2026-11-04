@@ -184,6 +184,8 @@ export interface Dashboard {
   unreadCount: number;
   daysLeft: number;
   referralsUsed: number;
+  /** Latest admin announcements sent to this person (newest first, up to 3). */
+  messages: AppNotification[];
 }
 
 /** Weekly committee email + prize alert settings (chairs edit these in Admin → System). */
@@ -210,7 +212,7 @@ export interface WeeklyReport {
   recipients: string[];
 }
 
-export type EmailKind = 'weekly_report' | 'prize_qualified' | 'prize_info' | 'test';
+export type EmailKind = 'weekly_report' | 'prize_qualified' | 'prize_info' | 'test' | 'announcement';
 export type EmailStatus = 'pending' | 'sending' | 'sent' | 'failed';
 
 export interface EmailLogRow {
@@ -252,4 +254,31 @@ export interface AdminAction {
 export interface ApiError {
   code: string;
   message: string;
+}
+
+/** Who an admin announcement goes to. */
+export type AnnouncementAudience = 'all' | 'campus' | 'user';
+
+export interface AnnouncementInput {
+  title: string; // 3–80
+  body: string; // 1–1000
+  audience: AnnouncementAudience;
+  campus?: CampusId; // when audience = 'campus'
+  userId?: string; // when audience = 'user'
+  /** Also email it (only people with email updates on; a direct message always emails that person). Chairs only for 'all'. */
+  sendEmail: boolean;
+}
+
+export interface Announcement {
+  id: string;
+  title: string;
+  body: string;
+  audience: AnnouncementAudience;
+  campus?: CampusId;
+  targetName?: string;
+  sendEmail: boolean;
+  recipientCount: number;
+  emailCount: number;
+  senderName: string;
+  createdAt: string;
 }

@@ -65,6 +65,8 @@ export const {
   adminOverview,
   listSuggestions,
   weeklyReportPreview,
+  sendAnnouncement,
+  listAnnouncements,
   // chair
   listTeam,
   setRole,

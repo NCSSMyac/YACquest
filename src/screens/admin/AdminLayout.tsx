@@ -13,6 +13,7 @@ export default function AdminLayout() {
     { to: '/admin/review', label: 'Review', badge: count },
     { to: '/admin/players', label: 'Players' },
     { to: '/admin/events', label: 'Events' },
+    { to: '/admin/announce', label: 'Announce' },
     ...(isChair ? [{ to: '/admin/prizes', label: 'Prizes' }, { to: '/admin/team', label: 'Team' }, { to: '/admin/log', label: 'Log' }, { to: '/admin/system', label: 'System' }] : []),
   ];
   return (

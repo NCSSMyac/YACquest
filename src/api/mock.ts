@@ -13,7 +13,7 @@
 import { CAPS, CAMPUSES, CYCLE, PRIZE, TIER_POINTS, type CampusId } from '../config';
 import { ACTIVITIES, ONCE_PER_CYCLE, activityById } from '../lib/activities';
 import { EVENT_KINDS, kindInfo } from '../lib/eventKinds';
-import { claimContactError, isEmail } from '../lib/validate';
+import { announcementError, claimContactError, isEmail } from '../lib/validate';
 import type {
   Activity,
   AdminAction,
@@ -37,6 +37,8 @@ import type {
   User,
   WeeklyReport,
   YacEvent,
+  Announcement,
+  AnnouncementInput,
 } from '../types';
 
 // ───────────────────────────── errors ─────────────────────────────
@@ -70,6 +72,8 @@ interface Db {
   outbox: OutboxRow[];
   /** Append-only admin action log, oldest first. */
   actions: AdminAction[];
+  /** Admin announcements (the real one is the announcements table). */
+  announcements: Announcement[];
   seq: number;
 }
 
@@ -81,7 +85,7 @@ interface OutboxRow extends EmailLogRow {
 
 const DB_KEY = 'yacquest-db-v1';
 const SESSION_KEY = 'yacquest-session';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 
 let db: Db | null = null;
 
@@ -373,6 +377,7 @@ export async function getDashboard(): Promise<Dashboard> {
     unreadCount: d.notifications.filter((n) => n.userId === user.id && !n.read).length,
     daysLeft: Math.max(0, Math.ceil((new Date(CYCLE.end).getTime() - Date.now()) / 86_400_000)),
     referralsUsed: d.ledger.filter((l) => l.userId === user.id && l.activityId === 'bring_new_alum').length,
+    messages: d.notifications.filter((n) => n.userId === user.id && n.kind === 'announcement').slice(0, 3),
   };
 }
 
@@ -889,6 +894,7 @@ export function seed(): Db {
     reportSettings: defaultReportSettings(),
     outbox: [],
     actions: [],
+    announcements: [],
     seq: 1000,
   };
   db = d;
@@ -1342,4 +1348,50 @@ export async function adminActionLog(opts: { before?: number; limit?: number } =
     .reverse()
     .slice(0, limit)
     .map((a) => ({ ...a, details: { ...a.details } }));
+}
+
+// ───────────────────────────── announcements (admins) ─────────────────────────────
+
+/** SERVER RULE (send_announcement in 0006): admins send; only chairs may EMAIL everyone; 20 per sender per day. */
+export async function sendAnnouncement(input: AnnouncementInput): Promise<{ recipients: number; emailed: number }> {
+  await delay();
+  const admin = requireRole('admin', 'chair');
+  const problem = announcementError(input);
+  if (problem) fail(problem.code, problem.message);
+  if (input.audience === 'all' && input.sendEmail && admin.role !== 'chair')
+    fail('forbidden', 'Only a YAC chair can email everyone. Uncheck email or pick a campus.');
+  const d = load();
+  const today = d.announcements.filter((a) => a.senderName === admin.displayName && Date.now() - new Date(a.createdAt).getTime() < 86_400_000).length;
+  if (today >= 20) fail('limit', 'You’ve sent 20 messages today. Try again tomorrow.');
+  const targets = d.users.filter((u) =>
+    input.audience === 'all' ? true : input.audience === 'campus' ? u.campus === input.campus : u.id === input.userId,
+  );
+  if (!targets.length) fail(input.audience === 'user' ? 'user' : 'audience', input.audience === 'user' ? 'Pick the person to message.' : 'Nobody matches that audience yet.');
+  const title = input.title.trim();
+  const body = input.body.trim();
+  for (const u of targets) notify(u.id, 'announcement', title, body);
+  let emailed = 0;
+  const id = nextId('ann');
+  if (input.sendEmail) {
+    const emails = [...new Set(targets.filter((u) => u.emailOptIn || input.audience === 'user').map((u) => u.email.toLowerCase()))];
+    emailed = emails.length;
+    for (let i = 0; i * 90 < emails.length; i++)
+      enqueueEmail('announcement', emails.slice(i * 90, (i + 1) * 90), `📣 YACquest: ${title}`, body, emailHtml(title, `<p>${esc(body)}</p>`), `announcement:${id}:${i}`);
+  }
+  const target = input.audience === 'user' ? targets[0] : undefined;
+  d.announcements.unshift({
+    id, title, body, audience: input.audience,
+    campus: input.audience === 'campus' ? input.campus : undefined,
+    targetName: target?.displayName, sendEmail: input.sendEmail,
+    recipientCount: targets.length, emailCount: emailed, senderName: admin.displayName, createdAt: now(),
+  });
+  logAction('announcement_sent', target, { title, audience: input.audience, campus: input.campus ?? null, recipients: targets.length, emailed }, admin);
+  save();
+  return { recipients: targets.length, emailed };
+}
+
+export async function listAnnouncements(limit = 20): Promise<Announcement[]> {
+  await delay();
+  requireRole('admin', 'chair');
+  return load().announcements.slice(0, limit);
 }
