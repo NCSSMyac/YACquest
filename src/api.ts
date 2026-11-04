@@ -336,7 +336,9 @@ export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Pr
 
 /** Which activity a check-in earns for this user (cross-campus is Tier 1). */
 function checkInActivity(e: YacEvent, user: User): Activity {
-  if (e.crossCampus || e.campus === 'all' || e.campus !== user.campus) return activityById('cross_campus_event')!;
+  // Tier 1 is for official cross-campus events. Visiting another campus's home event counts as Tier 2.
+  void user;
+  if (e.crossCampus || e.campus === 'all') return activityById('cross_campus_event')!;
   if (e.kind === 'panel') return activityById('panel_mentorship')!;
   return activityById('home_event')!;
 }
@@ -380,12 +382,14 @@ function submissionBlocker(user: User, activityId: string, eventId?: string): st
   const thisWeek = weekStart(now());
   if (a.tier === 3 && mine.some((s) => activityById(s.activityId)?.tier === 3 && weekStart(s.createdAt) === thisWeek))
     return `Digital quests are limited to ${CAPS.digitalPerWeek} per week. Come back Monday!`;
-  if (a.id === 'social_tag' && mine.some((s) => s.activityId === 'social_tag' && weekStart(s.createdAt) === thisWeek))
-    return `Social tags are limited to ${CAPS.socialTagPerWeek} per week.`;
+  const month = now().slice(0, 7);
+  if (a.id === 'social_tag' && mine.filter((s) => s.activityId === 'social_tag' && s.createdAt.slice(0, 7) === month).length >= CAPS.socialTagPerMonth)
+    return `Social tags are limited to ${CAPS.socialTagPerMonth} per month.`;
   if (a.id === 'event_photos') {
     if (!eventId) return 'Pick the event the photo is from.';
     if (!d.ledger.some((l) => l.userId === user.id && l.source === 'checkin' && l.refId === eventId)) return 'You can only upload photos from events you checked in to.';
     if (mine.filter((s) => s.activityId === 'event_photos' && s.eventId === eventId).length >= CAPS.photosPerEvent) return 'You already uploaded a photo for that event.';
+    if (mine.filter((s) => s.activityId === 'event_photos').length >= CAPS.photosPerCycle) return `Photo points are limited to ${CAPS.photosPerCycle} per cycle.`;
   }
   return null;
 }
@@ -652,7 +656,7 @@ export async function updateEvent(id: string, input: EventInput): Promise<YacEve
   const e = load().events.find((x) => x.id === id);
   if (!e || (admin.role !== 'chair' && e.campus !== admin.campus)) return fail('forbidden', 'Not found.');
   validateEvent(admin, input);
-  Object.assign(e, input, { title: input.title.trim(), password: input.password.trim() });
+  Object.assign(e, input, { title: input.title.trim(), password: input.password.trim(), activityId: input.crossCampus || input.campus === 'all' ? 'cross_campus_event' : input.kind === 'panel' ? 'panel_mentorship' : 'home_event' });
   save();
   return e;
 }
@@ -879,7 +883,12 @@ export function seed(): Db {
     // Points so far: most people lightly engaged, a few superfans.
     const engagement = rand() ** 2.2;
     const pts = Math.round((engagement * 160) / 5) * 5;
-    if (pts > 0) d.ledger.push({ id: nextId('led'), userId: u.id, amount: pts, source: 'seed', reason: 'Points earned earlier this cycle', createdAt: created });
+    if (pts > 0) {
+      // Split into an older chunk and (for ~40% of people) a recent one, so "active this week" isn't empty.
+      const recent = rand() < 0.4 ? Math.min(pts, 5 * Math.ceil(rand() * 4)) : 0;
+      if (pts - recent > 0) d.ledger.push({ id: nextId('led'), userId: u.id, amount: pts - recent, source: 'seed', reason: 'Points earned earlier this cycle', createdAt: created });
+      if (recent > 0) d.ledger.push({ id: nextId('led'), userId: u.id, amount: recent, source: 'seed', reason: 'Points earned this week', createdAt: iso(-rand() * 2 * D) });
+    }
   }
 
   // Events: past, live now (so check-in works in a demo), and upcoming.

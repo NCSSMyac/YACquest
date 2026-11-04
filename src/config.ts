@@ -5,8 +5,8 @@
  * - ~300 participants across Duke, UNC and NC State.
  * - Cycle runs from launch (mid-Oct 2026) to May 1, 2027 (~22 active weeks).
  * - Goal: about 5 people reach the prize threshold by the end of the cycle.
- *   A simulated 5th-best participant ends near 500 points; the median ends near 110.
- *   A "perfect" participant who does everything tops out around 800.
+ *   In simulation (scripts/simulate-points.py) ~5–6 of 300 reach 650 by May 1;
+ *   the median participant ends near 105. A "perfect" participant tops out near 1,080.
  *
  * Mid-year check (around Feb 1): if almost nobody is past 250, lower PRIZE.goal.
  */
@@ -33,7 +33,7 @@ export const TIER_LABELS: Record<Tier, string> = {
 
 /** The one prize: the first N people to reach `goal` win a gift card. */
 export const PRIZE = {
-  goal: 500,
+  goal: 650,
   count: 5,
   valueUsd: 50,
   name: '$50 gift card',
@@ -45,12 +45,14 @@ export const PRIZE = {
 export const CAPS = {
   /** Tier-3 digital actions (all kinds combined) per participant per week. */
   digitalPerWeek: 1,
-  /** Social tag posts (Tier 2) per participant per week. */
-  socialTagPerWeek: 1,
+  /** Social tag posts (Tier 2) per participant per calendar month. */
+  socialTagPerMonth: 2,
   /** Friends who sign up with your code and attend an event. */
   referralsPerCycle: 3,
   /** Photo uploads that earn points, per event. */
   photosPerEvent: 1,
+  /** Photo uploads that earn points, per cycle (photos are Tier 1, so this keeps them from dominating). */
+  photosPerCycle: 4,
 } as const;
 
 export const CAMPUSES = [

@@ -1,4 +1,78 @@
-// TODO: implement Prizes screen
+import { useState } from 'react';
+import * as api from '../../api';
+import { PRIZE, campusName } from '../../config';
+import { Empty, ErrorText, Loading, Modal, Panel, useToast } from '../../components/ui';
+import { fmtDate, timeAgo } from '../../lib/format';
+import { errorMessage, useAsync } from '../../lib/useAsync';
+
 export default function Prizes() {
-  return <div className="panel">Prizes — coming soon</div>;
+  const toast = useToast();
+  const claims = useAsync(() => api.listClaims(), [], { live: true });
+  const sugg = useAsync(() => api.listSuggestions(), []);
+  const [confirm, setConfirm] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const target = claims.data?.find((c) => c.spot === confirm);
+  const remaining = PRIZE.count - (claims.data?.length ?? 0);
+
+  async function fulfil() {
+    if (confirm == null) return;
+    setBusy(true);
+    try {
+      await api.markFulfilled(confirm);
+      toast('Marked fulfilled — winner notified.', 'success');
+      setConfirm(null);
+      void claims.reload();
+    } catch (e) {
+      toast(errorMessage(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="stack">
+      <Panel title="Prize claims">
+        <p className="muted">{claims.data ? `${remaining} of ${PRIZE.count} spots remaining.` : ''} Fulfill by {PRIZE.fulfillBy}.</p>
+        {claims.loading && !claims.data ? <Loading /> : claims.error ? <ErrorText error={claims.error} /> : !claims.data?.length ? <Empty>No winners yet.</Empty> : (
+          <ul className="list">
+            {[...claims.data].sort((a, b) => a.spot - b.spot).map((c) => (
+              <li key={c.spot} className="stack" style={{ gap: 4 }}>
+                <div className="spread">
+                  <strong>#{c.spot} {c.displayName}</strong>
+                  <span className={`chip ${c.status === 'fulfilled' ? 'approved' : c.status === 'info_submitted' ? 't2' : 'pending'}`}>{c.status.replace('_', ' ')}</span>
+                </div>
+                <span className="muted">{campusName(c.campus)} · qualified {fmtDate(c.qualifiedAt)}{c.reference && ` · ref ${c.reference}`}</span>
+                {c.contact ? (
+                  <span>{c.contact.fullName} · {c.contact.email} · prefers {c.contact.preference}{c.contact.notes && ` · ${c.contact.notes}`}</span>
+                ) : <span className="muted">No contact info submitted yet.</span>}
+                {c.status === 'fulfilled' ? (
+                  <span className="muted">Fulfilled {c.fulfilledAt && fmtDate(c.fulfilledAt)}</span>
+                ) : (
+                  <button className="btn small green" onClick={() => setConfirm(c.spot)}>Mark fulfilled</button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+
+      <Panel title="Prize suggestions">
+        {sugg.loading && !sugg.data ? <Loading /> : !sugg.data?.length ? <Empty>No suggestions yet.</Empty> : (
+          <ul className="list">
+            {sugg.data.map((s) => (
+              <li key={s.id}>“{s.idea}” <span className="muted">— {s.displayName}, {timeAgo(s.createdAt)}</span></li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+
+      <Modal open={confirm != null} onClose={() => setConfirm(null)} title="Mark as fulfilled?">
+        <p>Confirm that the {PRIZE.name} for {target?.displayName} (spot #{confirm}) has been sent. They will be notified.</p>
+        <div className="grid-2">
+          <button className="btn ghost" onClick={() => setConfirm(null)}>Cancel</button>
+          <button className="btn green" disabled={busy} onClick={fulfil}>{busy ? 'Saving…' : 'Yes, fulfilled'}</button>
+        </div>
+      </Modal>
+    </div>
+  );
 }

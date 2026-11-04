@@ -1,4 +1,122 @@
-// TODO: implement Home screen
+import { Link } from 'react-router-dom';
+import * as api from '../api';
+import { CAPS, PRIZE, TIER_POINTS, campusName } from '../config';
+import { Sprite } from '../components/Sprite';
+import { ErrorText, Loading, Panel, ProgressBar, StatusChip, useToast } from '../components/ui';
+import { activityById } from '../lib/activities';
+import { fmtDate, fmtPts } from '../lib/format';
+import { useAsync } from '../lib/useAsync';
+
 export default function Home() {
-  return <div className="panel">Home — coming soon</div>;
+  const toast = useToast();
+  const { data, loading, error } = useAsync(() => api.getDashboard(), [], { live: true });
+
+  if (loading && !data) return <Loading lines={4} />;
+  if (error && !data) return <ErrorText error={error} />;
+  if (!data) return null;
+  const d = data;
+  const toGo = Math.max(0, PRIZE.goal - d.points);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(d.user.friendCode);
+      toast('Friend code copied!', 'success');
+    } catch {
+      toast(`Couldn’t copy. Your code is ${d.user.friendCode}`, 'error');
+    }
+  }
+
+  return (
+    <div className="stack">
+      <div className="row">
+        <Sprite id={d.user.avatar} size={56} />
+        <div>
+          <h1 style={{ margin: 0 }}>Hi, {d.user.displayName}!</h1>
+          <div className="muted">{campusName(d.user.campus)} adventurer</div>
+        </div>
+      </div>
+
+      <Panel tone="gold" title="Your points">
+        <div className="row" style={{ marginBottom: 10 }}>
+          <span className="coin" aria-hidden />
+          <span style={{ fontFamily: 'var(--font-pixel)', fontSize: 28 }}>{d.points}</span>
+        </div>
+        <ProgressBar value={d.points} max={PRIZE.goal} label={`${Math.min(d.points, PRIZE.goal)} / ${PRIZE.goal}`} />
+        <p style={{ margin: '10px 0 0', fontSize: 22 }}>
+          {d.myClaim ? (
+            <>You won spot #{d.myClaim.spot}! <Link to="/prize">Claim your {PRIZE.name}</Link></>
+          ) : d.prize.remaining === 0 ? (
+            <>All prizes are claimed, but keep climbing the leaderboard!</>
+          ) : (
+            <>{toGo} more points to win</>
+          )}
+        </p>
+      </Panel>
+
+      <Link to="/prize" style={{ textDecoration: 'none', color: 'inherit' }}>
+        <Panel tone="navy">
+          <div className="spread">
+            <span><Sprite id="chest" size={32} /></span>
+            <b style={{ fontSize: 22 }}>{d.prize.remaining} of {PRIZE.count} prizes left</b>
+            <span aria-hidden>▶</span>
+          </div>
+        </Panel>
+      </Link>
+
+      <div className="grid-2" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+        <Panel className="stat"><div className="num">#{d.rankOverall}</div><div className="lbl">of {d.participants}</div></Panel>
+        <Panel className="stat"><div className="num">#{d.rankCampus}</div><div className="lbl">{campusName(d.user.campus)}</div></Panel>
+        <Panel className="stat"><div className="num">{d.daysLeft}</div><div className="lbl">days left</div></Panel>
+      </div>
+
+      <div className="stack">
+        <Link className="btn block" to="/earn">Check in at an event</Link>
+        <Link className="btn block blue" to="/earn">Submit a quest</Link>
+      </div>
+
+      <Panel title="Recent submissions">
+        {d.recentSubmissions.length === 0 ? (
+          <p className="muted" style={{ margin: 0 }}>Nothing yet. Pick a quest to get started!</p>
+        ) : (
+          <ul className="list">
+            {d.recentSubmissions.map((s) => (
+              <li key={s.id}>
+                <div className="spread">
+                  <span>{activityById(s.activityId)?.title ?? 'Quest'}</span>
+                  <StatusChip status={s.status} />
+                </div>
+                <div className="muted">{fmtDate(s.createdAt)}</div>
+                {s.status === 'rejected' && s.reviewReason && <div className="field-error">Reason: {s.reviewReason}</div>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+
+      <Panel title="Recent points">
+        {d.recentLedger.length === 0 ? (
+          <p className="muted" style={{ margin: 0 }}>No points yet. Your first quest is waiting!</p>
+        ) : (
+          <ul className="list">
+            {d.recentLedger.map((l) => (
+              <li key={l.id} className="spread">
+                <span>{l.reason}<div className="muted">{fmtDate(l.createdAt)}</div></span>
+                <b style={{ color: l.amount < 0 ? 'var(--red)' : 'var(--green)' }}>{fmtPts(l.amount)}</b>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+
+      <Panel title="Your friend code">
+        <div className="spread">
+          <b style={{ fontFamily: 'var(--font-pixel)', fontSize: 16 }}>{d.user.friendCode}</b>
+          <button className="btn small" onClick={copy}>Copy</button>
+        </div>
+        <p style={{ margin: '8px 0 0' }}>
+          Bring a friend: +{TIER_POINTS[1]} when they attend their first event ({d.referralsUsed}/{CAPS.referralsPerCycle} used)
+        </p>
+      </Panel>
+    </div>
+  );
 }

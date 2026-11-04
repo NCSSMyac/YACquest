@@ -1,4 +1,68 @@
-// TODO: implement Login screen
+import { useState, type FormEvent } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import * as api from '../api';
+import { Sprite } from '../components/Sprite';
+import { ErrorText, Panel } from '../components/ui';
+import { useAuth } from '../lib/auth';
+import { errorMessage } from '../lib/useAsync';
+
 export default function Login() {
-  return <div className="panel">Login — coming soon</div>;
+  const { setUser } = useAuth();
+  const nav = useNavigate();
+  const [handle, setHandle] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const user = await api.login(handle, password);
+      setUser(user);
+      nav('/');
+    } catch (err) {
+      setError(errorMessage(err));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="app-shell" style={{ paddingTop: 24 }}>
+      <div className="stack">
+        <div className="center">
+          <Sprite id="yak" size={96} className="bob" />
+          <h1 style={{ fontFamily: 'var(--font-pixel)', color: 'var(--gold-500)', textShadow: '3px 3px 0 var(--navy-900)', margin: '12px 0 4px' }}>YACquest</h1>
+          <p className="muted" style={{ margin: 0 }}>Earn points. Join the quest. Win prizes.</p>
+        </div>
+        <Panel title="Log in">
+          <form className="stack" onSubmit={submit}>
+            <label className="field">
+              <span>Username or email</span>
+              <input className="input" value={handle} onChange={(e) => setHandle(e.target.value)} autoComplete="username" autoCapitalize="none" required />
+            </label>
+            <label className="field">
+              <span>Password</span>
+              <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
+            </label>
+            <ErrorText error={error} />
+            <button className="btn block" disabled={busy}>{busy ? 'Logging in…' : 'Log in'}</button>
+            <div className="spread">
+              <Link to="/signup">Create account</Link>
+              <Link to="/forgot">Forgot password?</Link>
+            </div>
+          </form>
+        </Panel>
+        <Panel title="Demo accounts" tone="flat">
+          <ul className="list" style={{ fontSize: 18 }}>
+            <li><b>yak001</b> — participant (Duke)</li>
+            <li><b>lead.duke</b>, <b>lead.unc</b>, <b>lead.ncsu</b> — campus leads</li>
+            <li><b>admin</b> — YAC chair</li>
+          </ul>
+          <p className="muted" style={{ margin: '6px 0 0' }}>Any password works in the demo.</p>
+        </Panel>
+      </div>
+    </div>
+  );
 }

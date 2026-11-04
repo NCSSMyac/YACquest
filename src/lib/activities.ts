@@ -26,7 +26,7 @@ export const ACTIVITIES: Activity[] = [
     id: 'cross_campus_event',
     tier: 1,
     title: 'Cross-Campus Event',
-    description: 'Check in at an all-campus YAC event, or at an event hosted by another campus.',
+    description: 'Check in at an official cross-campus (all-campus) YAC event.',
     method: 'event_password',
   },
   {
@@ -35,7 +35,7 @@ export const ACTIVITIES: Activity[] = [
     title: 'Upload Event Photos',
     description: 'Share a photo from a YAC event you attended. A campus lead reviews it.',
     method: 'photo',
-    limitLabel: '1 per event',
+    limitLabel: '1 per event, 4 per cycle',
   },
 
   // Tier 2 — Active Participation
@@ -43,7 +43,7 @@ export const ACTIVITIES: Activity[] = [
     id: 'home_event',
     tier: 2,
     title: 'Home-Campus Event',
-    description: 'Check in at a YAC event on your own campus with the event password.',
+    description: 'Check in at a campus YAC event with the event password (visiting another campus counts too).',
     method: 'event_password',
   },
   {
@@ -59,7 +59,7 @@ export const ACTIVITIES: Activity[] = [
     title: 'Tag YAC in a Post',
     description: 'Tag YAC in a relevant social post or shoutout. Upload a screenshot.',
     method: 'screenshot',
-    limitLabel: '1 per week',
+    limitLabel: '2 per month',
   },
   {
     id: 'panel_mentorship',
