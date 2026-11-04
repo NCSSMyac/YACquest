@@ -1,18 +1,36 @@
-import { TIER_POINTS, type Tier } from '../config';
+import { TIER_LABELS, TIER_POINTS, type Tier } from '../config';
 import type { YacEvent } from '../types';
-import { activityById } from './activities';
 
 /**
- * Event kinds = the proposal's event point categories.
- * Picking a kind decides the points; cross-campus events are always for all campuses.
- * Must match supabase/migrations/0002_event_kinds.sql.
+ * Event kinds ARE the three point tiers from the YAC plan. The admin picks one when
+ * creating an event and everyone who checks in earns that tier's points.
+ * Campus is chosen separately. Must match supabase/migrations/0005_event_tiers.sql.
  */
-export const EVENT_KINDS: { id: YacEvent['kind']; label: string; activityId: string; help: string }[] = [
-  { id: 'home', label: 'Home-campus event', activityId: 'home_event', help: 'A YAC event on one campus (socials, game nights, service, sports).' },
-  { id: 'cross_campus', label: 'Cross-campus event', activityId: 'cross_campus_event', help: 'An official event for all three campuses.' },
-  { id: 'panel', label: 'Panel / mentorship circle', activityId: 'panel_mentorship', help: 'Alumni panels, speaker nights and mentorship circles on one campus.' },
+export const EVENT_KINDS: { id: YacEvent['kind']; tier: Tier; label: string; activityId: string; help: string }[] = [
+  {
+    id: 'high_impact',
+    tier: 1,
+    label: 'High-Impact Engagement',
+    activityId: 'cross_campus_event',
+    help: 'Big events: cross-campus gatherings, signature YAC events, fundraisers.',
+  },
+  {
+    id: 'active',
+    tier: 2,
+    label: 'Active Participation',
+    activityId: 'home_event',
+    help: 'Regular in-person events: socials, game nights, sports, panels, mentorship circles, service.',
+  },
+  {
+    id: 'digital',
+    tier: 3,
+    label: 'Digital Connection',
+    activityId: 'digital_event',
+    help: 'Digital events: Zoom calls, online trivia, livestreams.',
+  },
 ];
 
-export const kindInfo = (kind: YacEvent['kind']) => EVENT_KINDS.find((k) => k.id === kind) ?? EVENT_KINDS[0];
-export const kindTier = (kind: YacEvent['kind']): Tier => activityById(kindInfo(kind).activityId)!.tier;
+export const kindInfo = (kind: YacEvent['kind']) => EVENT_KINDS.find((k) => k.id === kind) ?? EVENT_KINDS[1];
+export const kindTier = (kind: YacEvent['kind']): Tier => kindInfo(kind).tier;
 export const kindPoints = (kind: YacEvent['kind']) => TIER_POINTS[kindTier(kind)];
+export const kindShort = (kind: YacEvent['kind']) => TIER_LABELS[kindTier(kind)];

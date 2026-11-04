@@ -174,7 +174,7 @@ do $$ begin
   perform t.eq(handle_available('bad name'), false, 'handle_available: bad chars');
   perform t.eq(friend_code_exists('YAC-0000'), false, 'friend_code_exists: unknown');
   perform t.ok((select count(*) from app_config) = 1, 'anon can read app_config');
-  perform t.ok((select count(*) from activities) = 14, 'anon can read 14 activities');
+  perform t.ok((select count(*) from activities) = 15, 'anon can read 15 activities');
   perform t.denied('select dashboard_stats()', 'anon cannot call dashboard_stats');
   perform t.denied('select count(*) from profiles', 'anon cannot read profiles');
 end $$;
@@ -224,7 +224,7 @@ end $$;
 -- =============================================================================
 :as_alice
 do $$ begin
-  perform t.throws($q$select create_event('{"title":"Nope","campus":"duke","kind":"home","startsAt":"2026-12-01T18:00:00Z","endsAt":"2026-12-01T20:00:00Z","password":"abcd"}')$q$, 'forbidden', 'participant cannot create_event');
+  perform t.throws($q$select create_event('{"title":"Nope","campus":"duke","kind":"active","startsAt":"2026-12-01T18:00:00Z","endsAt":"2026-12-01T20:00:00Z","password":"abcd"}')$q$, 'forbidden', 'participant cannot create_event');
 end $$;
 :as_admin
 do $$
@@ -232,33 +232,37 @@ declare
   mk jsonb;
   ev json;
 begin
-  perform t.throws($q$select create_event('{"title":"ab","campus":"duke","kind":"home","startsAt":"2026-12-01T18:00:00Z","endsAt":"2026-12-01T20:00:00Z","password":"abcd"}')$q$, 'title', 'event title too short');
-  perform t.throws($q$select create_event('{"title":"Thing","campus":"duke","kind":"home","startsAt":"2026-12-01T18:00:00Z","endsAt":"2026-12-01T20:00:00Z","password":"abc"}')$q$, 'password', 'event password too short');
-  perform t.throws($q$select create_event('{"title":"Thing","campus":"duke","kind":"home","startsAt":"2026-12-01T18:00:00Z","endsAt":"2026-12-01T17:00:00Z","password":"abcd"}')$q$, 'endsAt', 'event ends before start');
+  perform t.throws($q$select create_event('{"title":"ab","campus":"duke","kind":"active","startsAt":"2026-12-01T18:00:00Z","endsAt":"2026-12-01T20:00:00Z","password":"abcd"}')$q$, 'title', 'event title too short');
+  perform t.throws($q$select create_event('{"title":"Thing","campus":"duke","kind":"active","startsAt":"2026-12-01T18:00:00Z","endsAt":"2026-12-01T20:00:00Z","password":"abc"}')$q$, 'password', 'event password too short');
+  perform t.throws($q$select create_event('{"title":"Thing","campus":"duke","kind":"active","startsAt":"2026-12-01T18:00:00Z","endsAt":"2026-12-01T17:00:00Z","password":"abcd"}')$q$, 'endsAt', 'event ends before start');
 
-  ev := create_event(jsonb_build_object('title','Home Live','campus','duke','kind','home','location','Bryan Center',
+  ev := create_event(jsonb_build_object('title','Home Live','campus','duke','kind','active','location','Bryan Center',
           'startsAt', now() - interval '1 hour', 'endsAt', now() + interval '2 hours', 'checkInGraceMinutes', 60, 'password', 'Secret1'));
   perform t.eq(ev->>'activityId', 'home_event', 'create_event derives home_event');
   perform t.eq(ev->>'password', 'Secret1', 'create_event returns password');
   perform t.eq((ev->>'attendeeCount')::int, 0, 'create_event camelCase attendeeCount');
-  ev := create_event(jsonb_build_object('title','Panel Live','campus','unc','kind','panel',
+  ev := create_event(jsonb_build_object('title','Panel Live','campus','unc','kind','active',
           'startsAt', now() - interval '10 minutes', 'endsAt', now() + interval '1 hour', 'password', 'panel'));
-  perform t.eq(ev->>'activityId', 'panel_mentorship', 'panel → panel_mentorship');
-  ev := create_event(jsonb_build_object('title','Cross Live','campus','duke','kind','cross_campus',
+  perform t.eq(ev->>'activityId', 'home_event', 'active tier → home_event (Active Event)');
+  ev := create_event(jsonb_build_object('title','Zoom Trivia','campus','all','kind','digital',
+          'startsAt', now() + interval '1 day', 'endsAt', now() + interval '1 day 1 hour', 'password', 'zoom'));
+  perform t.eq(ev->>'activityId', 'digital_event', 'digital tier → digital_event');
+  perform delete_event((ev->>'id')::uuid);
+  ev := create_event(jsonb_build_object('title','Cross Live','campus','all','kind','high_impact',
           'startsAt', now() + interval '20 minutes', 'endsAt', now() + interval '3 hours', 'password', 'triangle'));
-  perform t.eq(ev->>'activityId', 'cross_campus_event', 'cross_campus kind → cross_campus_event');
-  perform t.eq(ev->>'campus', 'all', 'cross_campus kind forces campus all');
-  perform t.ok((ev->>'crossCampus')::boolean, 'cross_campus kind sets crossCampus');
-  perform t.throws($q$select create_event('{"title":"Thing","campus":"all","kind":"home","startsAt":"2026-12-01T18:00:00Z","endsAt":"2026-12-01T20:00:00Z","password":"abcd"}')$q$, 'campus', 'home event needs a host campus');
+  perform t.eq(ev->>'activityId', 'cross_campus_event', 'high_impact tier → cross_campus_event');
+  perform t.eq(ev->>'campus', 'all', 'campus kept as chosen');
+  perform t.ok((ev->>'crossCampus')::boolean, 'campus all sets crossCampus');
+  perform t.throws($q$select create_event('{"title":"Thing","campus":"mars","kind":"active","startsAt":"2026-12-01T18:00:00Z","endsAt":"2026-12-01T20:00:00Z","password":"abcd"}')$q$, 'campus', 'invalid campus rejected');
   perform t.throws($q$select create_event('{"title":"Thing","campus":"duke","kind":"social","startsAt":"2026-12-01T18:00:00Z","endsAt":"2026-12-01T20:00:00Z","password":"abcd"}')$q$, 'kind', 'old kinds rejected');
-  ev := create_event(jsonb_build_object('title','Social Live 2','campus','ncsu','kind','home',
+  ev := create_event(jsonb_build_object('title','Social Live 2','campus','ncsu','kind','active',
           'startsAt', now() - interval '3 hours', 'endsAt', now() - interval '30 minutes', 'checkInGraceMinutes', 60, 'password', 'serve'));
-  ev := create_event(jsonb_build_object('title','Future Event','campus','duke','kind','home',
+  ev := create_event(jsonb_build_object('title','Future Event','campus','duke','kind','active',
           'startsAt', now() + interval '2 hours', 'endsAt', now() + interval '4 hours', 'password', 'future'));
-  ev := create_event(jsonb_build_object('title','Past Event','campus','duke','kind','home',
+  ev := create_event(jsonb_build_object('title','Past Event','campus','duke','kind','active',
           'startsAt', now() - interval '5 hours', 'endsAt', now() - interval '2 hours', 'checkInGraceMinutes', 60, 'password', 'past'));
   ev := update_event((select id from events where title = 'Future Event'),
-          jsonb_build_object('title','Future Event','campus','duke','kind','cross_campus',
+          jsonb_build_object('title','Future Event','campus','duke','kind','high_impact',
           'startsAt', now() + interval '2 hours', 'endsAt', now() + interval '4 hours', 'password', 'future2'));
   perform t.eq(ev->>'activityId', 'cross_campus_event', 'update_event re-derives activity');
   perform t.eq(ev->>'password', 'future2', 'update_event updates password');
@@ -288,8 +292,8 @@ begin
   perform t.eq(r->>'activityId', 'home_event', 'returns activityId');
   perform t.throws(format('select check_in(%L, %L)', (select id from events where title = 'Home Live'), 'Secret1'), 'duplicate', 'check_in duplicate');
   r := check_in((select id from events where title = 'Panel Live'), 'PANEL');
-  perform t.eq(r->>'activityId', 'panel_mentorship', 'panel check-in activity');
-  perform t.eq((r->>'points')::int, 20, 'panel = 20');
+  perform t.eq(r->>'activityId', 'home_event', 'active-tier check-in activity');
+  perform t.eq((r->>'points')::int, 20, 'active tier = 20');
   r := check_in((select id from events where title = 'Cross Live'), 'triangle');  -- opens 30 min early
   perform t.eq((r->>'points')::int, 35, 'cross-campus = tier 1 = 35 (30-min early window)');
   r := check_in((select id from events where title = 'Social Live 2'), 'serve');  -- ended, within grace
@@ -711,10 +715,10 @@ begin
   perform t.ok(exists (select 1 from admin_actions where action = 'role_changed' and actor_id = t.u('chair1')
                         and target_user_id = t.u('chair1') and details->>'to' = 'admin'), 'log: transfer_chair logs caller → admin');
   perform t.ok(exists (select 1 from admin_actions where action = 'event_created' and actor_name = 'Helper' and details->>'title' = 'Home Live'
-                        and details->>'kind' = 'home' and details->>'campus' = 'duke'), 'log: event_created with title/kind/campus');
-  perform t.eq((select count(*) from admin_actions where action = 'event_created'), 6::bigint, 'log: 6 events created');
+                        and details->>'kind' = 'active' and details->>'campus' = 'duke'), 'log: event_created with title/kind/campus');
+  perform t.eq((select count(*) from admin_actions where action = 'event_created'), 7::bigint, 'log: 7 events created (incl. the deleted Zoom test)');
   perform t.eq((select count(*) from admin_actions where action = 'event_updated'), 1::bigint, 'log: one event_updated (check-in attendee bumps are not logged)');
-  perform t.ok(exists (select 1 from admin_actions where action = 'event_updated' and actor_id = t.u('admin') and details->>'title' = 'Future Event' and details->>'kind' = 'cross_campus'), 'log: event_updated details');
+  perform t.ok(exists (select 1 from admin_actions where action = 'event_updated' and actor_id = t.u('admin') and details->>'title' = 'Future Event' and details->>'kind' = 'high_impact'), 'log: event_updated details');
   perform t.ok(exists (select 1 from admin_actions where action = 'event_deleted' and actor_id = t.u('admin') and details->>'title' = 'Past Event'), 'log: event_deleted');
   perform t.ok(exists (select 1 from admin_actions where action = 'submission_approved' and actor_id = t.u('admin')
                         and target_user_id = t.u('alice') and target_name = 'Alice A.' and details->>'activityId' = 'survey'), 'log: submission_approved');

@@ -26,8 +26,8 @@ export const ACTIVITIES: Activity[] = [
   {
     id: 'cross_campus_event',
     tier: 1,
-    title: 'Cross-Campus Event',
-    description: 'Check in at an official cross-campus (all-campus) YAC event.',
+    title: 'High-Impact Event',
+    description: 'Check in at a High-Impact YAC event (like cross-campus gatherings) with the event password.',
     method: 'event_password',
   },
   {
@@ -43,8 +43,8 @@ export const ACTIVITIES: Activity[] = [
   {
     id: 'home_event',
     tier: 2,
-    title: 'Home-Campus Event',
-    description: 'Check in at a campus YAC event with the event password (visiting another campus counts too).',
+    title: 'Active Event',
+    description: 'Check in at a YAC event (socials, game nights, panels, mentorship circles, service) with the event password.',
     method: 'event_password',
   },
   {
@@ -62,15 +62,15 @@ export const ACTIVITIES: Activity[] = [
     method: 'screenshot',
     limitLabel: '2 per month',
   },
+
+  // Tier 3 — Digital & Community Connection
   {
-    id: 'panel_mentorship',
-    tier: 2,
-    title: 'Panel or Mentorship Circle',
-    description: 'Take part in a campus alumni panel or mentorship circle. Check in with the event password.',
+    id: 'digital_event',
+    tier: 3,
+    title: 'Digital Event',
+    description: 'Check in at a digital YAC event (Zoom call, online trivia, livestream) with the event password.',
     method: 'event_password',
   },
-
-  // Tier 3 — Digital & Community Connection (screenshot proof)
   {
     id: 'survey',
     tier: 3,

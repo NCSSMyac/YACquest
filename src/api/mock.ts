@@ -81,7 +81,7 @@ interface OutboxRow extends EmailLogRow {
 
 const DB_KEY = 'yacquest-db-v1';
 const SESSION_KEY = 'yacquest-session';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 let db: Db | null = null;
 
@@ -402,11 +402,9 @@ export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Pr
 
 /** Which activity a check-in earns for this user (cross-campus is Tier 1). */
 function checkInActivity(e: YacEvent, user: User): Activity {
-  // Tier 1 is for official cross-campus events. Visiting another campus's home event counts as Tier 2.
+  // The event's tier decides the points (mirrors 0005_event_tiers.sql).
   void user;
-  if (e.crossCampus || e.campus === 'all') return activityById('cross_campus_event')!;
-  if (e.kind === 'panel') return activityById('panel_mentorship')!;
-  return activityById('home_event')!;
+  return activityById(kindInfo(e.kind).activityId)!;
 }
 
 export async function checkIn(eventId: string, password: string): Promise<{ points: number; activity: Activity }> {
@@ -704,12 +702,11 @@ export async function adminListEvents(): Promise<YacEvent[]> {
 
 /** The kind decides the campus rules (mirrors 0002_event_kinds.sql). */
 function normalizeEvent(input: EventInput): EventInput {
-  return input.kind === 'cross_campus' ? { ...input, campus: 'all', crossCampus: true } : { ...input, crossCampus: false };
+  return { ...input, crossCampus: input.campus === 'all' };
 }
 
 function validateEvent(admin: User, input: EventInput) {
-  if (!EVENT_KINDS.some((k) => k.id === input.kind)) fail('kind', 'Pick the kind of event.');
-  if (input.kind !== 'cross_campus' && input.campus === 'all') fail('campus', 'Pick the host campus.');
+  if (!EVENT_KINDS.some((k) => k.id === input.kind)) fail('kind', 'Pick the tier for this event.');
   if (input.title.trim().length < 3) fail('title', 'Give the event a title.');
   if (input.password.trim().length < 4) fail('password', 'Event password: at least 4 characters.');
   if (new Date(input.endsAt) <= new Date(input.startsAt)) fail('endsAt', 'End time must be after the start.');
@@ -940,14 +937,14 @@ export function seed(): Db {
   // Events: past, live now (so check-in works in a demo), and upcoming.
   const ev = (e: Omit<YacEvent, 'id' | 'attendeeCount' | 'checkInGraceMinutes'>, attendees = 0) =>
     d.events.push({ ...e, id: nextId('evt'), attendeeCount: attendees, checkInGraceMinutes: 60 });
-  ev({ title: 'Kickoff Mixer', campus: 'duke', crossCampus: false, kind: 'home', location: 'Duke Gardens', startsAt: iso(-12 * D), endsAt: iso(-12 * D + 2 * H), password: 'KICKOFF', activityId: 'home_event' }, 34);
-  ev({ title: 'Trivia Night', campus: 'unc', crossCampus: false, kind: 'home', location: 'Top of the Hill', startsAt: iso(-6 * D), endsAt: iso(-6 * D + 2 * H), password: 'TARHEEL', activityId: 'home_event' }, 41);
-  ev({ title: 'Study Break Social', campus: 'duke', crossCampus: false, kind: 'home', location: 'Bryan Center', startsAt: iso(-1 * H), endsAt: iso(3 * H), password: 'BLUEDEVIL', activityId: 'home_event' });
-  ev({ title: 'Career Panel: First Jobs', campus: 'unc', crossCampus: false, kind: 'panel', location: 'Gerrard Hall', startsAt: iso(-1 * H), endsAt: iso(3 * H), password: 'PANEL', activityId: 'panel_mentorship' });
-  ev({ title: 'Pack Game Watch', campus: 'ncsu', crossCampus: false, kind: 'home', location: 'Talley Student Union', startsAt: iso(-1 * H), endsAt: iso(3 * H), password: 'WOLFPACK', activityId: 'home_event' });
-  ev({ title: 'Triangle Trivia Showdown', campus: 'all', crossCampus: true, kind: 'cross_campus', location: 'American Tobacco Campus, Durham', startsAt: iso(-1 * H), endsAt: iso(4 * H), password: 'TRIANGLE', activityId: 'cross_campus_event' });
-  ev({ title: 'Mentorship Circle', campus: 'duke', crossCampus: false, kind: 'panel', location: 'Perkins Library', startsAt: iso(5 * D), endsAt: iso(5 * D + 90 * 60_000), password: 'MENTOR', activityId: 'panel_mentorship' });
-  ev({ title: 'Winter Service Day', campus: 'all', crossCampus: true, kind: 'cross_campus', location: 'NCSSM Durham', startsAt: iso(17 * D), endsAt: iso(17 * D + 4 * H), password: 'SERVE', activityId: 'cross_campus_event' });
+  ev({ title: 'Kickoff Mixer', campus: 'duke', crossCampus: false, kind: 'active', location: 'Duke Gardens', startsAt: iso(-12 * D), endsAt: iso(-12 * D + 2 * H), password: 'KICKOFF', activityId: 'home_event' }, 34);
+  ev({ title: 'Trivia Night', campus: 'unc', crossCampus: false, kind: 'active', location: 'Top of the Hill', startsAt: iso(-6 * D), endsAt: iso(-6 * D + 2 * H), password: 'TARHEEL', activityId: 'home_event' }, 41);
+  ev({ title: 'Study Break Social', campus: 'duke', crossCampus: false, kind: 'active', location: 'Bryan Center', startsAt: iso(-1 * H), endsAt: iso(3 * H), password: 'BLUEDEVIL', activityId: 'home_event' });
+  ev({ title: 'Career Panel: First Jobs', campus: 'unc', crossCampus: false, kind: 'active', location: 'Gerrard Hall', startsAt: iso(-1 * H), endsAt: iso(3 * H), password: 'PANEL', activityId: 'home_event' });
+  ev({ title: 'Pack Game Watch', campus: 'ncsu', crossCampus: false, kind: 'active', location: 'Talley Student Union', startsAt: iso(-1 * H), endsAt: iso(3 * H), password: 'WOLFPACK', activityId: 'home_event' });
+  ev({ title: 'Triangle Trivia Showdown', campus: 'all', crossCampus: true, kind: 'high_impact', location: 'American Tobacco Campus, Durham', startsAt: iso(-1 * H), endsAt: iso(4 * H), password: 'TRIANGLE', activityId: 'cross_campus_event' });
+  ev({ title: 'Mentorship Circle', campus: 'duke', crossCampus: false, kind: 'active', location: 'Perkins Library', startsAt: iso(5 * D), endsAt: iso(5 * D + 90 * 60_000), password: 'MENTOR', activityId: 'home_event' });
+  ev({ title: 'Winter Service Day', campus: 'all', crossCampus: true, kind: 'high_impact', location: 'NCSSM Durham', startsAt: iso(17 * D), endsAt: iso(17 * D + 4 * H), password: 'SERVE', activityId: 'cross_campus_event' });
 
   // Demo participant history
   const kickoff = d.events[0];
@@ -975,7 +972,7 @@ export function seed(): Db {
   const [iesha, jacob] = d.users;
   const seedAction = (actor: User, action: string, target: string | undefined, details: Record<string, unknown>, createdAt: string) =>
     d.actions.push({ id: d.actions.length + 1, actorName: actor.displayName, action, targetName: target, details, createdAt });
-  seedAction(iesha, 'event_created', undefined, { title: kickoff.title, kind: 'home', campus: 'duke' }, iso(-14 * D));
+  seedAction(iesha, 'event_created', undefined, { title: kickoff.title, kind: 'active', campus: 'duke' }, iso(-14 * D));
   seedAction(jacob, 'submission_approved', demo.displayName, { activityId: 'follow_ig', reason: null }, iso(-10 * D));
   seedAction(jacob, 'submission_rejected', demo.displayName, { activityId: 'repost', reason: 'Screenshot was cropped — we couldn’t see the YAC post.' }, iso(-7 * D));
   seedAction(iesha, 'points_added', demo.displayName, { amount: TIER_POINTS[2], reason: 'Win a Game or Competition: Kickoff cornhole', activityId: 'game_win' }, kickoff.endsAt);

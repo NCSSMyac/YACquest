@@ -52,8 +52,8 @@ export interface YacEvent {
   title: string;
   campus: CampusId | 'all';
   crossCampus: boolean;
-  /** home = Tier 2, cross_campus = Tier 1 (campus 'all'), panel = Tier 2 panel/mentorship. */
-  kind: 'home' | 'cross_campus' | 'panel';
+  /** The event's point tier: high_impact = Tier 1, active = Tier 2, digital = Tier 3. */
+  kind: 'high_impact' | 'active' | 'digital';
   location: string;
   startsAt: string;
   endsAt: string;

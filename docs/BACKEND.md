@@ -134,3 +134,8 @@ Email + password; **Confirm email ON**; min password length 8; PKCE flow. Redire
 ### Admin action log (triggers; actor = auth.uid(), null = system)
 Actions: `points_added` / `points_removed` (ledger insert with created_by and source 'manual'; details {amount, reason, activityId}), `submission_approved` / `submission_rejected` (status change; details {activityId, reason}), `role_changed` (details {from, to}), `event_created` / `event_updated` / `event_deleted` (details {title, kind, campus}), `prize_fulfilled` / `prize_revoked` (details {spot, reason}), `cycle_reset` (details {name}), `report_settings_changed` (details = changed keys). actor_name/target_name are display names at the time.
 - `admin_action_log(p_limit int default 100, p_before bigint default null) → table(id, actor_name, action, target_name, details, created_at)` — **chair**, newest first, keyset paging by id.
+
+---
+
+## 0005 — Event kinds are the three tiers
+`events.kind` ∈ ('high_impact','active','digital') → activities `cross_campus_event` ("High-Impact Event", Tier 1), `home_event` ("Active Event", Tier 2), `digital_event` ("Digital Event", Tier 3, new). Campus is chosen independently ('duke','unc','ncsu','all'); `cross_campus` = (campus = 'all'). Points always come from the tier via app_config. `panel_mentorship` is no longer used for new events (kept for history).

@@ -41,7 +41,7 @@ export default function Events() {
       const s = new Date(Date.now() + 86400000);
       s.setHours(18, 0, 0, 0);
       const en = new Date(s.getTime() + 2 * 3600000);
-      setForm({ title: '', campus: user?.campus ?? 'duke', kind: 'home', location: '', start: toLocal(s.toISOString()), end: toLocal(en.toISOString()), grace: 60, password: genPassword() });
+      setForm({ title: '', campus: user?.campus ?? 'duke', kind: 'active', location: '', start: toLocal(s.toISOString()), end: toLocal(en.toISOString()), grace: 60, password: genPassword() });
     } else {
       setForm({ title: e.title, campus: e.campus, kind: e.kind, location: e.location, start: toLocal(e.startsAt), end: toLocal(e.endsAt), grace: e.checkInGraceMinutes, password: e.password ?? '' });
     }
@@ -53,7 +53,7 @@ export default function Events() {
     setBusy(true);
     setErr(null);
     const input: api.EventInput = {
-      title: form.title, campus: form.kind === 'cross_campus' ? 'all' : form.campus, crossCampus: form.kind === 'cross_campus', kind: form.kind, location: form.location,
+      title: form.title, campus: form.campus, crossCampus: form.campus === 'all', kind: form.kind, location: form.location,
       startsAt: new Date(form.start).toISOString(), endsAt: new Date(form.end).toISOString(), checkInGraceMinutes: form.grace, password: form.password,
     };
     try {
@@ -94,7 +94,7 @@ export default function Events() {
                 <strong>{e.title}</strong>
                 <span className={`chip ${p === 'LIVE' ? 'approved' : p === 'Upcoming' ? 'pending' : 'neutral'}`}>{p}</span>
               </div>
-              <p className="muted">{fmtDateTime(e.startsAt)} – {fmtDateTime(e.endsAt)} · {e.location} · {e.campus === 'all' ? 'All campuses' : campusName(e.campus)} · {kindInfo(e.kind).label} (+{kindPoints(e.kind)})</p>
+              <p className="muted">{fmtDateTime(e.startsAt)} – {fmtDateTime(e.endsAt)} · {e.location} · {e.campus === 'all' ? 'All campuses' : campusName(e.campus)} · Tier {kindTier(e.kind)} {kindInfo(e.kind).label} (+{kindPoints(e.kind)})</p>
               <p>Password: <strong style={{ fontFamily: 'monospace', fontSize: 18 }}>{e.password}</strong> · {e.attendeeCount} checked in</p>
               <div className="grid-2">
                 <button className="btn small blue" onClick={() => open(e)}>Edit</button>
@@ -110,17 +110,11 @@ export default function Events() {
           <form className="stack" onSubmit={save}>
             <label className="field"><span>Title</span><input className="input" value={form.title} onChange={(e) => set('title', e.target.value)} required /></label>
             <label className="field">
-              <span>Kind</span>
-              <select
-                value={form.kind}
-                onChange={(e) => {
-                  const kind = e.target.value as YacEvent['kind'];
-                  setForm((f) => f && { ...f, kind, campus: kind === 'cross_campus' ? 'all' : f.campus === 'all' ? (user?.campus ?? 'duke') : f.campus });
-                }}
-              >
+              <span>Tier (sets the points)</span>
+              <select value={form.kind} onChange={(e) => set('kind', e.target.value as YacEvent['kind'])}>
                 {EVENT_KINDS.map((k) => (
                   <option key={k.id} value={k.id}>
-                    {k.label} · Tier {kindTier(k.id)} · +{kindPoints(k.id)} pts
+                    Tier {k.tier} · {k.label} · +{kindPoints(k.id)} pts
                   </option>
                 ))}
               </select>
@@ -128,16 +122,13 @@ export default function Events() {
             <p className="muted" style={{ margin: 0 }}>
               {kindInfo(form.kind).help} Everyone who checks in earns <strong>+{kindPoints(form.kind)} points</strong>.
             </p>
-            {form.kind === 'cross_campus' ? (
-              <p style={{ margin: 0 }}>Campus: <strong>All campuses</strong></p>
-            ) : (
-              <label className="field">
-                <span>Host campus</span>
-                <select value={form.campus} onChange={(e) => set('campus', e.target.value as CampusId)}>
-                  {CAMPUSES.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-              </label>
-            )}
+            <label className="field">
+              <span>Campus</span>
+              <select value={form.campus} onChange={(e) => set('campus', e.target.value as CampusId | 'all')}>
+                <option value="all">All campuses</option>
+                {CAMPUSES.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </label>
             <label className="field"><span>Location</span><input className="input" value={form.location} onChange={(e) => set('location', e.target.value)} required /></label>
             <label className="field"><span>Starts</span><input className="input" type="datetime-local" value={form.start} onChange={(e) => set('start', e.target.value)} required /></label>
             <label className="field"><span>Ends</span><input className="input" type="datetime-local" value={form.end} onChange={(e) => set('end', e.target.value)} required /></label>

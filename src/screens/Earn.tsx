@@ -3,6 +3,7 @@ import * as api from '../api';
 import { CAMPUSES, CAPS, INSTAGRAM_HANDLE, INSTAGRAM_URL, TIER_LABELS, TIER_POINTS, UPLOAD, campusName, type Tier } from '../config';
 import { ACTIVITIES, activityById } from '../lib/activities';
 import { useAuth } from '../lib/auth';
+import { kindTier } from '../lib/eventKinds';
 import { fmtDate, fmtDateTime } from '../lib/format';
 import { prepareImage } from '../lib/image';
 import { errorMessage, useAsync } from '../lib/useAsync';
@@ -104,7 +105,7 @@ function EventCard({ e, now, onDone }: { e: Ev; now: number; onDone: (pts: numbe
   const opensAt = start - OPEN_BEFORE_MIN * 60_000;
   const closesAt = new Date(e.endsAt).getTime() + e.checkInGraceMinutes * 60_000;
   const live = now >= opensAt && now <= closesAt;
-  const tier: Tier = e.crossCampus || e.campus === 'all' ? 1 : 2;
+  const tier: Tier = kindTier(e.kind);
 
   async function submit(ev: React.FormEvent) {
     ev.preventDefault();
@@ -131,7 +132,6 @@ function EventCard({ e, now, onDone }: { e: Ev; now: number; onDone: (pts: numbe
         </div>
         <div className="row" style={{ flexWrap: 'wrap' }}>
           <TierChip tier={tier} />
-          {e.kind === 'panel' && <span className="chip neutral">Panel</span>}
           <span className="chip neutral">{e.campus === 'all' ? 'All campuses' : campusName(e.campus)}</span>
         </div>
         <div className="muted">📍 {e.location}<br />🕒 {fmtDateTime(e.startsAt)}</div>

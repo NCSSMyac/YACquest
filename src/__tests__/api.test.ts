@@ -328,7 +328,7 @@ describe('admin action log', () => {
   });
   it('logs event, prize and reset actions', async () => {
     asUser('iesha');
-    const e = await api.createEvent({ title: 'Pickleball', campus: 'duke', crossCampus: false, kind: 'home', location: 'Courts', startsAt: new Date().toISOString(), endsAt: new Date(Date.now() + 3600_000).toISOString(), checkInGraceMinutes: 30, password: 'PICKLE' });
+    const e = await api.createEvent({ title: 'Pickleball', campus: 'duke', crossCampus: false, kind: 'active', location: 'Courts', startsAt: new Date().toISOString(), endsAt: new Date(Date.now() + 3600_000).toISOString(), checkInGraceMinutes: 30, password: 'PICKLE' });
     await api.deleteEvent(e.id);
     const winner = await makeWinner();
     asUser('iesha');
@@ -337,6 +337,6 @@ describe('admin action log', () => {
     const log = await api.adminActionLog({ limit: 4 });
     expect(log.map((a) => a.action)).toEqual(['cycle_reset', 'prize_fulfilled', 'event_deleted', 'event_created']);
     expect(describeAction(log[1])).toBe(`Iesha L. marked ${winner.displayName}’s prize (spot #1) as delivered`.replace(/s’s/, 's’'));
-    expect(describeAction(log[3])).toBe('Iesha L. created the event “Pickleball” (Home-campus event, Duke)');
+    expect(describeAction(log[3])).toBe('Iesha L. created the event “Pickleball” (Active Participation, Duke)');
   });
 });
