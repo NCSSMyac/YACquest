@@ -652,6 +652,17 @@ export async function myRank(): Promise<LeaderRow | null> {
 
 // ───────────────────────────── prize race ─────────────────────────────
 
+/**
+ * Ask the send-emails Edge Function to send queued emails right away instead of waiting
+ * for the 10-minute cron. Fire-and-forget: if it fails, the cron still sends them.
+ */
+function sendQueuedEmailsNow() {
+  void sb()
+    .functions.invoke('send-emails', { method: 'POST', body: {} })
+    .then(() => setTimeout(emitChange, 500))
+    .catch((e: unknown) => console.warn('[YACquest] instant email send skipped; cron will send it', e));
+}
+
 export async function prizeStatus(): Promise<PrizeStatus> {
   return toPrize(one(await rpc<AnyRow | AnyRow[]>('prize_status')));
 }
@@ -670,6 +681,7 @@ export async function submitClaimInfo(contact: ClaimContact): Promise<PrizeClaim
     }),
   );
   emitChange();
+  sendQueuedEmailsNow(); // the "URGENT winner info" alert goes out immediately
   return toClaim(row ?? {});
 }
 
@@ -981,11 +993,13 @@ export async function updateReportSettings(patch: Partial<ReportSettings>): Prom
 export async function sendWeeklyReportNow(): Promise<void> {
   await rpc('send_weekly_report_now');
   emitChange();
+  sendQueuedEmailsNow();
 }
 
 export async function sendTestEmail(): Promise<void> {
   await rpc('send_test_email');
   emitChange();
+  sendQueuedEmailsNow();
 }
 
 export async function emailLog(limit = 50): Promise<EmailLogRow[]> {
@@ -1005,6 +1019,7 @@ export async function emailLog(limit = 50): Promise<EmailLogRow[]> {
 export async function retryEmail(id: string): Promise<void> {
   await rpc('retry_email', { p_id: id });
   emitChange();
+  sendQueuedEmailsNow();
 }
 
 export async function adminActionLog(opts: { before?: number; limit?: number } = {}): Promise<AdminAction[]> {
