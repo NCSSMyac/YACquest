@@ -105,7 +105,7 @@ export default function Signup() {
           <ErrorText error={errors.campus} />
         </Panel>
         <Panel title="Pick your character">
-          <div role="radiogroup" aria-label="Character" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+          <div role="radiogroup" aria-label="Character" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8 }}>
             {AVATAR_IDS.map((id) => (
               <button
                 type="button"
@@ -114,9 +114,9 @@ export default function Signup() {
                 aria-checked={avatar === id}
                 onClick={() => setAvatar(id)}
                 className="panel flat"
-                style={{ margin: 0, padding: 6, cursor: 'pointer', textAlign: 'center', background: avatar === id ? 'var(--gold-300)' : undefined, color: avatar === id ? 'var(--navy-900)' : undefined, borderColor: avatar === id ? 'var(--gold-500)' : undefined }}
+                style={{ margin: 0, padding: 6, cursor: 'pointer', textAlign: 'center', background: avatar === id ? 'var(--gold-300)' : undefined, color: avatar === id ? 'var(--navy-900)' : 'var(--text)', minWidth: 0, borderColor: avatar === id ? 'var(--gold-500)' : undefined }}
               >
-                <Sprite id={id} size={56} />
+                <Sprite id={id} size={48} />
                 <div style={{ fontSize: 16 }}>{AVATAR_NAMES[id]}</div>
               </button>
             ))}

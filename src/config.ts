@@ -8,7 +8,7 @@
  *   In simulation (scripts/simulate-points.py) ~5–6 of 300 reach 650 by May 1;
  *   the median participant ends near 105. A "perfect" participant tops out near 1,080.
  *
- * Mid-year check (around Feb 1): if almost nobody is past 250, lower PRIZE.goal.
+ * Mid-year check (around Feb 1): if almost nobody is past 300, lower PRIZE.goal.
  */
 
 export type Tier = 1 | 2 | 3;

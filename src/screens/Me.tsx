@@ -128,7 +128,7 @@ export default function Me() {
             <span>Display name</span>
             <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={24} />
           </label>
-          <div role="radiogroup" aria-label="Character" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+          <div role="radiogroup" aria-label="Character" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8 }}>
             {AVATAR_IDS.map((id) => (
               <button
                 type="button"
@@ -137,7 +137,7 @@ export default function Me() {
                 aria-checked={avatar === id}
                 onClick={() => setAvatar(id)}
                 className="panel flat"
-                style={{ margin: 0, padding: 6, cursor: 'pointer', textAlign: 'center', background: avatar === id ? 'var(--gold-300)' : undefined, color: avatar === id ? 'var(--navy-900)' : undefined }}
+                style={{ margin: 0, padding: 6, cursor: 'pointer', textAlign: 'center', background: avatar === id ? 'var(--gold-300)' : undefined, color: avatar === id ? 'var(--navy-900)' : 'var(--text)', minWidth: 0 }}
               >
                 <Sprite id={id} size={48} />
                 <div style={{ fontSize: 16 }}>{AVATAR_NAMES[id]}</div>
