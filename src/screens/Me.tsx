@@ -1,3 +1,4 @@
+import { InstallApp } from '../components/InstallApp';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import * as api from '../api';
@@ -122,13 +123,15 @@ export default function Me() {
         </div>
       </Panel>
 
+      <InstallApp />
+
       <Panel title="Edit profile">
         <form className="stack" onSubmit={saveProfile}>
           <label className="field">
             <span>Display name</span>
             <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={24} />
           </label>
-          <div role="radiogroup" aria-label="Character" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8 }}>
+          <div role="radiogroup" aria-label="Character" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
             {AVATAR_IDS.map((id) => (
               <button
                 type="button"

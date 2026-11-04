@@ -865,7 +865,7 @@ function makeFriendCode(rand: () => number = Math.random) {
 
 const FIRST = ['Ava', 'Ben', 'Chloe', 'Dev', 'Emma', 'Femi', 'Grace', 'Hari', 'Isla', 'Jamal', 'Kira', 'Leo', 'Maya', 'Nate', 'Omar', 'Priya', 'Quinn', 'Rosa', 'Sam', 'Tara', 'Uma', 'Vik', 'Wren', 'Xavi', 'Yara', 'Zane', 'Aiden', 'Bella', 'Caleb', 'Dana', 'Eli', 'Fiona', 'Gabe', 'Hana', 'Ian', 'Jade', 'Kai', 'Lena', 'Milo', 'Nia'];
 const LAST = 'ABCDEFGHJKLMNOPRSTWYZ';
-const AVATARS: AvatarId[] = ['yak', 'knight', 'mage', 'ranger'];
+const AVATARS: AvatarId[] = ['yak', 'unicorn', 'dragon', 'knight', 'mage', 'ranger'];
 
 const PLACEHOLDER_IMG = (label: string, color: string) =>
   'data:image/svg+xml;utf8,' +

@@ -109,7 +109,7 @@ export default function Signup() {
           <ErrorText error={errors.campus} />
         </Panel>
         <Panel title="Pick your character">
-          <div role="radiogroup" aria-label="Character" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8 }}>
+          <div role="radiogroup" aria-label="Character" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
             {AVATAR_IDS.map((id) => (
               <button
                 type="button"

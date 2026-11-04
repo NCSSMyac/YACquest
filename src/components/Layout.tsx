@@ -15,7 +15,7 @@ export function Layout() {
     <div className="app-shell">
       <header className="topbar">
         <Link to="/" className="brand" aria-label="YACquest home">
-          <Sprite id="yak" size={28} />
+          <span className="sprite-badge"><Sprite id="yak" size={30} /></span>
           YACquest
         </Link>
         <Link to="/notifications" className="icon-btn" aria-label={`Notifications${unread ? `, ${unread} unread` : ''}`}>

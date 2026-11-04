@@ -1149,6 +1149,20 @@ do $$ begin
   perform t.ok(exists (select 1 from email_outbox where kind = 'announcement' and subject = '📣 YACquest: Big news' and body_html like '%New prize alert!%'), 'announcement email content');
 end $$;
 
+
+-- =============================================================================
+-- 21. 0007 — new characters
+-- =============================================================================
+:as_alice
+do $$ declare p profiles;
+begin
+  p := update_profile(null, 'unicorn', null);
+  perform t.eq(p.avatar, 'unicorn', 'can pick the unicorn');
+  p := update_profile(null, 'dragon', null);
+  perform t.eq(p.avatar, 'dragon', 'can pick the dragon');
+  perform t.throws('select update_profile(null, ''griffin'', null)', 'avatar', 'unknown avatar rejected');
+end $$;
+
 -- =============================================================================
 :as_super
 select 'PASSED: ' || current_setting('t.passed') || ' assertions' as result;

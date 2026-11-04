@@ -11,7 +11,8 @@ import type { CampusId, Tier } from './config';
  */
 export type Role = 'participant' | 'admin' | 'chair';
 
-export type AvatarId = 'yak' | 'knight' | 'mage' | 'ranger';
+/** Player characters. unicorn + dragon are original designs nodding to NCSSM's mascots (not the official logos). */
+export type AvatarId = 'yak' | 'unicorn' | 'dragon' | 'knight' | 'mage' | 'ranger';
 
 export interface User {
   id: string;
