@@ -1,14 +1,13 @@
 import { useState, type FormEvent } from 'react';
 import * as api from '../../api';
-import { CAMPUSES, TIER_POINTS, campusName, type CampusId } from '../../config';
-import { activityById } from '../../lib/activities';
+import { CAMPUSES, campusName, type CampusId } from '../../config';
+import { EVENT_KINDS, kindInfo, kindPoints, kindTier } from '../../lib/eventKinds';
 import { Empty, ErrorText, Loading, Modal, Panel, useToast } from '../../components/ui';
 import { useAuth } from '../../lib/auth';
 import { fmtDateTime } from '../../lib/format';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 import type { YacEvent } from '../../types';
 
-const KINDS: YacEvent['kind'][] = ['social', 'panel', 'service', 'game_night'];
 const WORDS = ['YAK', 'MOO', 'HORN', 'QUEST', 'GOLD', 'SHAGGY', 'FJORD', 'RIDGE'];
 const genPassword = () => `${WORDS[Math.floor(Math.random() * WORDS.length)]}-${1000 + Math.floor(Math.random() * 9000)}`;
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -16,8 +15,6 @@ const toLocal = (iso: string) => {
   const d = new Date(iso);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
-const homePts = TIER_POINTS[activityById('home_event')!.tier];
-const crossPts = TIER_POINTS[activityById('cross_campus_event')!.tier];
 
 function phase(e: YacEvent): 'LIVE' | 'Upcoming' | 'Past' {
   const now = Date.now();
@@ -26,7 +23,7 @@ function phase(e: YacEvent): 'LIVE' | 'Upcoming' | 'Past' {
   return now < s ? 'Upcoming' : now <= end ? 'LIVE' : 'Past';
 }
 
-interface Form { title: string; campus: CampusId | 'all'; crossCampus: boolean; kind: YacEvent['kind']; location: string; start: string; end: string; grace: number; password: string }
+interface Form { title: string; campus: CampusId | 'all'; kind: YacEvent['kind']; location: string; start: string; end: string; grace: number; password: string }
 
 export default function Events() {
   const { user } = useAuth();
@@ -44,9 +41,9 @@ export default function Events() {
       const s = new Date(Date.now() + 86400000);
       s.setHours(18, 0, 0, 0);
       const en = new Date(s.getTime() + 2 * 3600000);
-      setForm({ title: '', campus: user?.campus ?? 'duke', crossCampus: false, kind: 'social', location: '', start: toLocal(s.toISOString()), end: toLocal(en.toISOString()), grace: 60, password: genPassword() });
+      setForm({ title: '', campus: user?.campus ?? 'duke', kind: 'home', location: '', start: toLocal(s.toISOString()), end: toLocal(en.toISOString()), grace: 60, password: genPassword() });
     } else {
-      setForm({ title: e.title, campus: e.campus, crossCampus: e.crossCampus, kind: e.kind, location: e.location, start: toLocal(e.startsAt), end: toLocal(e.endsAt), grace: e.checkInGraceMinutes, password: e.password ?? '' });
+      setForm({ title: e.title, campus: e.campus, kind: e.kind, location: e.location, start: toLocal(e.startsAt), end: toLocal(e.endsAt), grace: e.checkInGraceMinutes, password: e.password ?? '' });
     }
   }
 
@@ -56,7 +53,7 @@ export default function Events() {
     setBusy(true);
     setErr(null);
     const input: api.EventInput = {
-      title: form.title, campus: form.campus, crossCampus: form.crossCampus, kind: form.kind, location: form.location,
+      title: form.title, campus: form.kind === 'cross_campus' ? 'all' : form.campus, crossCampus: form.kind === 'cross_campus', kind: form.kind, location: form.location,
       startsAt: new Date(form.start).toISOString(), endsAt: new Date(form.end).toISOString(), checkInGraceMinutes: form.grace, password: form.password,
     };
     try {
@@ -97,8 +94,8 @@ export default function Events() {
                 <strong>{e.title}</strong>
                 <span className={`chip ${p === 'LIVE' ? 'approved' : p === 'Upcoming' ? 'pending' : 'neutral'}`}>{p}</span>
               </div>
-              <p className="muted">{fmtDateTime(e.startsAt)} – {fmtDateTime(e.endsAt)} · {e.location} · {e.campus === 'all' ? 'All campuses' : campusName(e.campus)}{e.crossCampus ? ' · cross-campus' : ''}</p>
-              <p>Password: <strong style={{ fontFamily: 'monospace', fontSize: 22 }}>{e.password}</strong> · {e.attendeeCount} checked in</p>
+              <p className="muted">{fmtDateTime(e.startsAt)} – {fmtDateTime(e.endsAt)} · {e.location} · {e.campus === 'all' ? 'All campuses' : campusName(e.campus)} · {kindInfo(e.kind).label} (+{kindPoints(e.kind)})</p>
+              <p>Password: <strong style={{ fontFamily: 'monospace', fontSize: 18 }}>{e.password}</strong> · {e.attendeeCount} checked in</p>
               <div className="grid-2">
                 <button className="btn small blue" onClick={() => open(e)}>Edit</button>
                 <button className="btn small red" onClick={() => del(e)}>Delete</button>
@@ -113,20 +110,34 @@ export default function Events() {
           <form className="stack" onSubmit={save}>
             <label className="field"><span>Title</span><input className="input" value={form.title} onChange={(e) => set('title', e.target.value)} required /></label>
             <label className="field">
-              <span>Campus</span>
-              <select value={form.campus} onChange={(e) => set('campus', e.target.value as CampusId | 'all')}>
-                <option value="all">All campuses</option>
-                {CAMPUSES.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </label>
-            <label className="row"><input type="checkbox" checked={form.crossCampus} onChange={(e) => set('crossCampus', e.target.checked)} /> Cross-campus event (open to other campuses)</label>
-            <p className="muted">Check-in earns +{homePts} for home-campus members and +{crossPts} for cross-campus attendees.</p>
-            <label className="field">
               <span>Kind</span>
-              <select value={form.kind} onChange={(e) => set('kind', e.target.value as YacEvent['kind'])}>
-                {KINDS.map((k) => <option key={k} value={k}>{k.replace('_', ' ')}</option>)}
+              <select
+                value={form.kind}
+                onChange={(e) => {
+                  const kind = e.target.value as YacEvent['kind'];
+                  setForm((f) => f && { ...f, kind, campus: kind === 'cross_campus' ? 'all' : f.campus === 'all' ? (user?.campus ?? 'duke') : f.campus });
+                }}
+              >
+                {EVENT_KINDS.map((k) => (
+                  <option key={k.id} value={k.id}>
+                    {k.label} · Tier {kindTier(k.id)} · +{kindPoints(k.id)} pts
+                  </option>
+                ))}
               </select>
             </label>
+            <p className="muted" style={{ margin: 0 }}>
+              {kindInfo(form.kind).help} Everyone who checks in earns <strong>+{kindPoints(form.kind)} points</strong>.
+            </p>
+            {form.kind === 'cross_campus' ? (
+              <p style={{ margin: 0 }}>Campus: <strong>All campuses</strong></p>
+            ) : (
+              <label className="field">
+                <span>Host campus</span>
+                <select value={form.campus} onChange={(e) => set('campus', e.target.value as CampusId)}>
+                  {CAMPUSES.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </label>
+            )}
             <label className="field"><span>Location</span><input className="input" value={form.location} onChange={(e) => set('location', e.target.value)} required /></label>
             <label className="field"><span>Starts</span><input className="input" type="datetime-local" value={form.start} onChange={(e) => set('start', e.target.value)} required /></label>
             <label className="field"><span>Ends</span><input className="input" type="datetime-local" value={form.end} onChange={(e) => set('end', e.target.value)} required /></label>

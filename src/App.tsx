@@ -23,6 +23,7 @@ import Events from './screens/admin/Events';
 import Prizes from './screens/admin/Prizes';
 import System from './screens/admin/System';
 import Team from './screens/admin/Team';
+import ActivityLog from './screens/admin/ActivityLog';
 
 function RequireAuth() {
   const { user, ready } = useAuth();
@@ -115,6 +116,7 @@ export default function App() {
                       <Route path="prizes" element={<Prizes />} />
                       <Route path="system" element={<System />} />
                       <Route path="team" element={<Team />} />
+                      <Route path="log" element={<ActivityLog />} />
                     </Route>
                   </Route>
                 </Route>

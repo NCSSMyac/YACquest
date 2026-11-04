@@ -27,7 +27,7 @@ The database SQL (`supabase/migrations/*.sql`) and the front end's live API (`sr
 - `chair_bootstrap` (email citext pk)
 - `activities` (id text pk, tier int 1–3, title text, method text check in ('event_password','screenshot','photo','lead_award','referral')) — seeded with the 13 ids in `src/lib/activities.ts`.
 - `profiles` (id uuid pk → auth.users on delete cascade, handle citext unique 3–20 `[a-zA-Z0-9_.]`, display_name text 2–24, email citext, campus text check in ('duke','unc','ncsu'), role text default 'participant', avatar text check in ('yak','knight','mage','ranger'), friend_code text unique like 'YAC-XXXX', referred_by uuid → profiles, email_opt_in bool default true, points int default 0 **(current cycle total, maintained by ledger trigger)**, created_at)
-- `events` (id uuid, cycle_id, title, campus text check in ('duke','unc','ncsu','all'), cross_campus bool, kind text check in ('social','panel','service','game_night'), location, starts_at, ends_at, check_in_grace_minutes int default 60, activity_id text → activities, attendee_count int default 0, created_by uuid, created_at)
+- `events` (id uuid, cycle_id, title, campus text check in ('duke','unc','ncsu','all'), cross_campus bool, kind text check in ('home','cross_campus','panel') **(since 0002: kind decides points — cross_campus → Tier 1 and campus forced to 'all'; home/panel → Tier 2 and need a host campus; cross_campus flag is derived)**, location, starts_at, ends_at, check_in_grace_minutes int default 60, activity_id text → activities, attendee_count int default 0, created_by uuid, created_at)
 - `event_secrets` (event_id uuid pk → events on delete cascade, password text) — admins only.
 - `submissions` (id uuid, cycle_id, user_id, activity_id, event_id null, image_path text — storage path in bucket `proofs`, note text ≤280, status text 'pending'|'approved'|'rejected', reviewer_id, review_reason, created_at, reviewed_at)
 - `ledger` (id bigint identity, cycle_id, user_id, amount int ≠ 0, source text check in ('checkin','submission','manual','referral'), activity_id null, ref_id text null, reason text, created_by uuid null, created_at)
@@ -96,3 +96,41 @@ Bucket `proofs`, private, 5 MB limit, image mime types only. Path: `<uid>/<uuid>
 
 ## Auth (Supabase dashboard settings — see SETUP.md)
 Email + password; **Confirm email ON**; min password length 8; PKCE flow. Redirects: confirmation → `<site>?confirmed=1`, password reset → `<site>?reset=1` (query string, not hash, because the app uses HashRouter).
+
+---
+
+## 0004 — Emails, action log, winner form, $75 × 4 prizes (no Google Sheets)
+
+**Config:** `app_config.prize_count = 4`, `prize_value_usd = 75`. Drop table `sync_status` (Google Sheets sync is cancelled).
+
+### New tables (RLS on; **chairs read**, nobody writes directly; writes via RPCs/triggers)
+- `report_settings` (id int pk check id=1, weekly_enabled bool default true, weekly_day int 0–6 default 1 (0=Sunday, America/New_York), weekly_hour int 0–23 default 9, near_goal_points int default 150, recipients text[] default '{}' (extra emails), include_chairs bool default true, include_admins bool default true, prize_alerts_enabled bool default true, updated_at, updated_by uuid). Seed one row.
+- `email_outbox` (id uuid, kind text check in ('weekly_report','prize_qualified','prize_info','test'), to_emails text[] not null, subject text, body_text text, body_html text, dedupe_key text unique not null, status text check in ('pending','sending','sent','failed') default 'pending', attempts int default 0, last_error text, created_at, sent_at). **dedupe_key prevents duplicate reports/alerts.**
+- `admin_actions` (id bigint identity, actor_id uuid null, actor_name text, action text, target_user_id uuid null, target_name text, details jsonb default '{}', created_at default now()). Append-only.
+
+### Recipients
+`report_recipients() → text[]` (internal): distinct lower-case emails from `report_settings.recipients` ∪ (chairs if include_chairs) ∪ (admins if include_admins), only profiles whose auth email is confirmed.
+
+### Weekly committee report
+`build_weekly_report() → json {subject, text, html}` (internal). Contents: spots left (`N of 4 left`); **Close to the prize**: participants with no active claim and points ≥ goal − near_goal_points, ordered by points desc, showing name, campus, points, points to go (this is the "Johnny is dominating" shout-out list); top 5 overall; Campus Cup per-capita; this week (Mon 00:00 NY): active participants, points awarded, new sign-ups; pending reviews; days left in cycle. Simple inline-styled HTML (navy/gold), plain-text twin.
+- `enqueue_weekly_report_if_due() → boolean` — **service_role only**. If weekly_enabled and now (NY) is on/after weekly_day+weekly_hour of the current ISO week, insert with dedupe_key `weekly:<IYYY-IW>` (on conflict do nothing). Returns true if a row was inserted. No recipients → do nothing.
+- `send_weekly_report_now() → void` — chair; dedupe_key `weekly-manual:<epoch ms>`.
+- `weekly_report_preview() → json {subject, text, html, recipients text[]}` — admin or chair.
+- `send_test_email() → void` — chair; to the caller's email, kind 'test', dedupe `test:<uuid>`.
+
+### Prize alerts (triggers on `prize_claims`, only if prize_alerts_enabled and recipients exist)
+- After insert (a new winner): kind 'prize_qualified', dedupe `prize_qualified:<claim id>`, subject `🏆 YACquest: <name> won spot #N`, body says they're waiting for delivery info.
+- After update when `contact` changes and is not null: kind 'prize_info', dedupe `prize_info:<claim id>:<md5(contact::text)>`, subject `URGENT 🎁 YACquest winner info: <name> (spot #N)`, body lists full name, email, phone, mailing address, gift card preference, notes, reference, campus.
+
+### Sending (Edge Function `send-emails`, run every 10 min by Supabase Cron)
+- `claim_email_batch(p_limit int default 20) → setof email_outbox` — service_role only. Picks rows with status 'pending', or 'failed' with attempts < 5, or 'sending' older than 15 min; sets status 'sending', attempts+1; returns them (`for update skip locked`).
+- `mark_email_result(p_id uuid, p_ok boolean, p_error text)` — service_role only. ok → 'sent', sent_at now(), last_error null; else 'failed', last_error = left(p_error, 500).
+- Chair: `email_log(p_limit int default 50) → table(id, kind, to_emails, subject, status, attempts, last_error, created_at, sent_at)` newest first; `retry_email(p_id uuid)` → status 'pending', attempts 0.
+- Chair: `get_report_settings() → json` (camelCase: weeklyEnabled, weeklyDay, weeklyHour, nearGoalPoints, recipients, includeChairs, includeAdmins, prizeAlertsEnabled, updatedAt) and `update_report_settings(p_settings jsonb) → json` (same keys, any subset; validate day 0–6, hour 0–23, near_goal_points 0–1000, recipients valid emails ≤ 20).
+
+### Winner form
+`submit_claim_info(p_full_name text, p_email text, p_phone text, p_address text, p_preference text default null, p_notes text default null) → json claim` — drop the old 4-argument version. Validation codes: `fullName` (≥2), `email`, `phone` (≥7 digits), `address` (≥10 chars). Contact jsonb keys: fullName, email, phone, address, preference, notes. Everything else as before.
+
+### Admin action log (triggers; actor = auth.uid(), null = system)
+Actions: `points_added` / `points_removed` (ledger insert with created_by and source 'manual'; details {amount, reason, activityId}), `submission_approved` / `submission_rejected` (status change; details {activityId, reason}), `role_changed` (details {from, to}), `event_created` / `event_updated` / `event_deleted` (details {title, kind, campus}), `prize_fulfilled` / `prize_revoked` (details {spot, reason}), `cycle_reset` (details {name}), `report_settings_changed` (details = changed keys). actor_name/target_name are display names at the time.
+- `admin_action_log(p_limit int default 100, p_before bigint default null) → table(id, actor_name, action, target_name, details, created_at)` — **chair**, newest first, keyset paging by id.

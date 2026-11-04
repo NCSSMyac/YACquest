@@ -77,7 +77,7 @@ export default function Login() {
         </Panel>
         {api.isMock && (
           <Panel title="Demo accounts" tone="flat">
-            <ul className="list" style={{ fontSize: 18 }}>
+            <ul className="list" style={{ fontSize: 15 }}>
               <li><b>yak001</b> — participant (Duke)</li>
               <li><b>admin</b> — admin helper</li>
               <li><b>iesha</b>, <b>jacob</b> — YAC chairs</li>

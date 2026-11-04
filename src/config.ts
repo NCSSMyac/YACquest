@@ -3,12 +3,14 @@
  *
  * How these numbers were chosen (see docs/POINTS.md for the full model):
  * - ~300 participants across Duke, UNC and NC State.
- * - Cycle runs from launch (mid-Oct 2026) to May 1, 2027 (~22 active weeks).
- * - Goal: about 5 people reach the prize threshold by the end of the cycle.
- *   In simulation (scripts/simulate-points.py) ~5–6 of 300 reach 650 by May 1;
- *   the median participant ends near 105. A "perfect" participant tops out near 1,080.
+ * - Points start with the first event (Nov 8, 2026) and the cycle ends May 1, 2027 (~20 active weeks).
+ * - Goal: the prize is HARD. In simulation (scripts/simulate-points.py) about 3 of 300 reach 650,
+ *   the first one around mid-April; ~40 people get past halfway (325); the median ends near 120.
+ *   A "perfect" participant who does everything tops out near 1,160.
+ * - Every automatic award is a tier value below. Manual admin additions are capped at TIER_POINTS[1].
+ *   The database has its own copy in app_config (supabase/migrations/0003…) — change both together.
  *
- * Mid-year check (around Feb 1): if almost nobody is past 300, lower PRIZE.goal.
+ * Mid-year check (around Feb 1): if almost nobody is past 250, lower PRIZE.goal.
  */
 
 export type Tier = 1 | 2 | 3;
@@ -20,7 +22,7 @@ export const CYCLE = {
 } as const;
 
 export const TIER_POINTS: Record<Tier, number> = {
-  1: 40, // High-impact engagement
+  1: 35, // High-impact engagement
   2: 20, // Active participation
   3: 5, // Digital & community connection (screenshot proof)
 };
@@ -34,9 +36,9 @@ export const TIER_LABELS: Record<Tier, string> = {
 /** The one prize: the first N people to reach `goal` win a gift card. */
 export const PRIZE = {
   goal: 650,
-  count: 5,
-  valueUsd: 50,
-  name: '$50 gift card',
+  count: 4,
+  valueUsd: 75,
+  name: '$75 gift card',
   /** Claims are fulfilled after the cycle ends. */
   fulfillBy: '2027-05-15',
 } as const;

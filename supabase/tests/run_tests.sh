@@ -5,12 +5,13 @@
 #   PGWORK=/some/dir supabase/tests/run_tests.sh
 #
 # Steps: start cluster → fresh DB → stubs.sql (fake Supabase auth/storage) →
-# 0001_init.sql → 0001_init.sql again (re-run safety) → tests.sql →
-# 0001_init.sql on the populated DB → stop cluster. Exits non-zero on any failure.
+# all migrations → all migrations again (re-run safety) → tests.sql →
+# all migrations on the populated DB → stop cluster. Exits non-zero on any failure.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MIGRATION="$HERE/../migrations/0001_init.sql"
+MIGRATIONS=("$HERE"/../migrations/*.sql)
+migrate() { for m in "${MIGRATIONS[@]}"; do "${PSQL[@]}" -d yac_test -f "$m" >/dev/null; done; }
 PGBIN="${PGBIN:-/usr/lib/postgresql/16/bin}"
 PGWORK="${PGWORK:-$(mktemp -d)}"
 PGPORT="${PGPORT:-55432}"
@@ -47,11 +48,11 @@ echo "== fresh database"
 echo "== stubs.sql (fake Supabase auth + storage)"
 "${PSQL[@]}" -d yac_test -f "$HERE/stubs.sql" >/dev/null
 
-echo "== 0001_init.sql on a fresh DB"
-"${PSQL[@]}" -d yac_test -f "$MIGRATION" >/dev/null
+echo "== all migrations on a fresh DB"
+migrate
 
-echo "== 0001_init.sql again (must be safe to re-run)"
-"${PSQL[@]}" -d yac_test -f "$MIGRATION" >/dev/null
+echo "== all migrations again (must be safe to re-run)"
+migrate
 "${PSQL[@]}" -d yac_test -tA -c "select count(*) from cycles" | grep -qx 1 || { echo "re-run created a second cycle"; exit 1; }
 
 echo "== tests.sql"
@@ -60,7 +61,7 @@ env PGOPTIONS= psql -X -q -v ON_ERROR_STOP=1 -h "$SOCK" -p "$PGPORT" -U postgres
 }
 grep -c 'NOTICE:  ok - ' "$PGWORK/notices.log" | xargs -I{} echo "   ({} 'ok' notices)"
 
-echo "== 0001_init.sql once more on the populated DB"
-"${PSQL[@]}" -d yac_test -f "$MIGRATION" >/dev/null
+echo "== all migrations once more on the populated DB"
+migrate
 
 echo "ALL GOOD"

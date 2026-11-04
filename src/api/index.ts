@@ -71,10 +71,16 @@ export const {
   transferChair,
   listClaims,
   markFulfilled,
-  syncStatus,
-  runSync,
   exportLedgerCsv,
   resetCycle,
   archives,
   resetDemoData,
+  // chair: weekly email, prize alerts, action log
+  getReportSettings,
+  updateReportSettings,
+  sendWeeklyReportNow,
+  sendTestEmail,
+  emailLog,
+  retryEmail,
+  adminActionLog,
 } = impl;

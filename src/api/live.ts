@@ -6,16 +6,21 @@
  * tables directly except the `proofs` storage bucket.
  */
 import type { Session, User as AuthUser } from '@supabase/supabase-js';
-import { CAMPUSES, type CampusId } from '../config';
+import { CAMPUSES, PRIZE, TIER_POINTS, type CampusId } from '../config';
 import { ACTIVITIES, activityById } from '../lib/activities';
 import { getSupabase, siteUrl } from '../lib/supabase';
+import { claimContactError, isEmail } from '../lib/validate';
 import type {
   Activity,
+  AdminAction,
   AppNotification,
   AvatarId,
   CampusCupRow,
+  ClaimContact,
   ClaimStatus,
   Dashboard,
+  EmailLogRow,
+  EmailStatus,
   LeaderRow,
   LedgerEntry,
   LedgerSource,
@@ -23,11 +28,12 @@ import type {
   PrizeClaim,
   PrizeStatus,
   PrizeSuggestion,
+  ReportSettings,
   Role,
   Submission,
   SubmissionStatus,
-  SyncStatus,
   User,
+  WeeklyReport,
   YacEvent,
 } from '../types';
 import { ApiError, emitChange } from './shared';
@@ -184,8 +190,21 @@ function toLedger(r: AnyRow): LedgerEntry {
   };
 }
 
+function toContact(v: unknown): ClaimContact | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const c = v as AnyRow;
+  return {
+    fullName: str(pick(c, 'full_name')),
+    email: str(c.email),
+    phone: str(c.phone),
+    address: str(c.address),
+    preference: opt(c.preference),
+    notes: opt(c.notes),
+  };
+}
+
 function toClaim(r: AnyRow): PrizeClaim {
-  const contact = pick<PrizeClaim['contact'] | null>(r, 'contact');
+  const contact = toContact(pick(r, 'contact'));
   return {
     spot: num(r.spot),
     userId: str(pick(r, 'user_id')),
@@ -194,7 +213,7 @@ function toClaim(r: AnyRow): PrizeClaim {
     qualifiedAt: str(pick(r, 'qualified_at')),
     status: pick<ClaimStatus>(r, 'status'),
     reference: opt(r.reference),
-    contact: contact ?? undefined,
+    contact,
     fulfilledAt: opt(pick(r, 'fulfilled_at')),
     revokedAt: opt(pick(r, 'revoked_at')),
     revokeReason: opt(pick(r, 'revoke_reason')),
@@ -637,15 +656,17 @@ export async function prizeStatus(): Promise<PrizeStatus> {
   return toPrize(one(await rpc<AnyRow | AnyRow[]>('prize_status')));
 }
 
-export async function submitClaimInfo(contact: { fullName: string; email: string; preference: string; notes?: string }): Promise<PrizeClaim> {
-  if (contact.fullName.trim().length < 2) fail('fullName', 'Enter your full name.');
-  if (!/^\S+@\S+\.\S+$/.test(contact.email.trim())) fail('email', 'Enter a valid email.');
+export async function submitClaimInfo(contact: ClaimContact): Promise<PrizeClaim> {
+  const problem = claimContactError(contact);
+  if (problem) fail(problem.code, problem.message);
   const row = one(
     await rpc<AnyRow | AnyRow[]>('submit_claim_info', {
       p_full_name: contact.fullName.trim(),
       p_email: contact.email.trim(),
-      p_preference: contact.preference,
-      p_notes: contact.notes?.trim() ?? null,
+      p_phone: contact.phone.trim(),
+      p_address: contact.address.trim(),
+      p_preference: contact.preference?.trim() || null,
+      p_notes: contact.notes?.trim() || null,
     }),
   );
   emitChange();
@@ -750,7 +771,8 @@ export async function userLedger(userId: string): Promise<LedgerEntry[]> {
 }
 
 export async function adjustPoints(userId: string, amount: number, reason: string): Promise<void> {
-  if (!Number.isInteger(amount) || amount === 0 || Math.abs(amount) > 500) fail('amount', 'Enter a whole number between -500 and 500 (not 0).');
+  if (!Number.isInteger(amount) || amount === 0 || amount > TIER_POINTS[1] || amount < -PRIZE.goal)
+    fail('amount', `Add at most ${TIER_POINTS[1]} points at a time (one High-Impact action), or remove up to ${PRIZE.goal}. Not 0.`);
   if (reason.trim().length < 3) fail('reason', 'A reason is required.');
   await rpc('adjust_points', { p_user_id: userId, p_amount: amount, p_reason: reason.trim() });
   emitChange();
@@ -828,17 +850,9 @@ export async function adminOverview(): Promise<AdminOverview> {
   };
 }
 
-export async function weeklyReportPreview(): Promise<{ subject: string; lines: string[] }> {
-  const [o, top] = await Promise.all([adminOverview(), leaderboard(5)]);
-  return {
-    subject: `YACquest weekly report — ${new Date().toLocaleDateString()}`,
-    lines: [
-      `${o.activeThisWeek} of ${o.participants} participants earned points this week (${o.pointsThisWeek} pts total).`,
-      `${o.newSignupsThisWeek} new sign-ups. ${o.pendingReviews} submissions waiting for review.`,
-      `Prize race: ${o.prize.remaining} of ${o.prize.total} spots left.`,
-      `Top 5: ${top.map((r) => `${r.displayName} (${r.points})`).join(', ')}`,
-    ],
-  };
+export async function weeklyReportPreview(): Promise<WeeklyReport> {
+  const r = one(await rpc<AnyRow | AnyRow[]>('weekly_report_preview')) ?? {};
+  return { subject: str(r.subject), text: str(r.text), html: str(r.html), recipients: ((r.recipients as string[] | null) ?? []).map(String) };
 }
 
 // ───────────────────────────── chair ─────────────────────────────
@@ -877,24 +891,7 @@ export async function markFulfilled(spot: number): Promise<void> {
   emitChange();
 }
 
-export async function syncStatus(): Promise<SyncStatus> {
-  const r = (rows(await sb().from('sync_status').select('last_sync_at, rows_pushed, rows_pulled, conflicts, state, sheet_url').eq('id', 1).maybeSingle()) as AnyRow | null) ?? {};
-  return {
-    lastSyncAt: str(r.last_sync_at),
-    rowsPushed: num(r.rows_pushed),
-    rowsPulled: num(r.rows_pulled),
-    conflicts: num(r.conflicts),
-    // May be 'not_configured' on the live backend; the System screen just displays it.
-    state: (str(r.state) || 'not_configured') as SyncStatus['state'],
-    sheetUrl: str(r.sheet_url),
-  };
-}
-
-export async function runSync(): Promise<SyncStatus> {
-  return fail('not_configured', 'Google Sheets sync isn’t set up yet — use Export CSV for now.');
-}
-
-/** CSV of the active cycle's ledger — for the Sheet, audits and the year-end archive. */
+/** CSV of the active cycle's ledger — for audits and the year-end archive. */
 export async function exportLedgerCsv(): Promise<string> {
   const cycle = await activeCycle();
   const PAGE = 1000;
@@ -943,6 +940,85 @@ export async function archives(): Promise<{ cycle: string; archivedAt: string; l
     ledgerRows: num(pick(r, 'ledger_rows')),
     winners: ((r.winners as AnyRow[] | null) ?? []).map(toClaim),
   }));
+}
+
+// ───────────────────────────── emails + action log (chair; 0004) ─────────────────────────────
+
+function toReportSettings(r: AnyRow | null): ReportSettings {
+  const s = r ?? {};
+  return {
+    weeklyEnabled: pick(s, 'weekly_enabled') !== false,
+    weeklyDay: num(pick(s, 'weekly_day')),
+    weeklyHour: num(pick(s, 'weekly_hour')),
+    nearGoalPoints: num(pick(s, 'near_goal_points')),
+    recipients: ((pick<string[] | null>(s, 'recipients')) ?? []).map(String),
+    includeChairs: pick(s, 'include_chairs') !== false,
+    includeAdmins: pick(s, 'include_admins') !== false,
+    prizeAlertsEnabled: pick(s, 'prize_alerts_enabled') !== false,
+    updatedAt: opt(pick(s, 'updated_at')),
+  };
+}
+
+export async function getReportSettings(): Promise<ReportSettings> {
+  return toReportSettings(one(await rpc<AnyRow | AnyRow[]>('get_report_settings')));
+}
+
+export async function updateReportSettings(patch: Partial<ReportSettings>): Promise<ReportSettings> {
+  const body: Record<string, unknown> = {};
+  for (const k of ['weeklyEnabled', 'weeklyDay', 'weeklyHour', 'nearGoalPoints', 'recipients', 'includeChairs', 'includeAdmins', 'prizeAlertsEnabled'] as const)
+    if (patch[k] !== undefined) body[k] = patch[k];
+  if (body.recipients) {
+    const list = [...new Set((body.recipients as string[]).map((e) => e.trim().toLowerCase()).filter(Boolean))];
+    const bad = list.find((e) => !isEmail(e));
+    if (bad) fail('recipients', `“${bad}” isn’t a valid email.`);
+    body.recipients = list;
+  }
+  const row = one(await rpc<AnyRow | AnyRow[]>('update_report_settings', { p_settings: body }));
+  emitChange();
+  return toReportSettings(row);
+}
+
+export async function sendWeeklyReportNow(): Promise<void> {
+  await rpc('send_weekly_report_now');
+  emitChange();
+}
+
+export async function sendTestEmail(): Promise<void> {
+  await rpc('send_test_email');
+  emitChange();
+}
+
+export async function emailLog(limit = 50): Promise<EmailLogRow[]> {
+  return ((await rpc<AnyRow[]>('email_log', { p_limit: limit })) ?? []).map((r) => ({
+    id: str(r.id),
+    kind: str(r.kind),
+    toEmails: ((pick<string[] | null>(r, 'to_emails')) ?? []).map(String),
+    subject: str(r.subject),
+    status: (str(r.status) || 'pending') as EmailStatus,
+    attempts: num(r.attempts),
+    lastError: opt(pick(r, 'last_error')),
+    createdAt: str(pick(r, 'created_at')),
+    sentAt: opt(pick(r, 'sent_at')),
+  }));
+}
+
+export async function retryEmail(id: string): Promise<void> {
+  await rpc('retry_email', { p_id: id });
+  emitChange();
+}
+
+export async function adminActionLog(opts: { before?: number; limit?: number } = {}): Promise<AdminAction[]> {
+  return ((await rpc<AnyRow[]>('admin_action_log', { p_limit: opts.limit ?? 50, p_before: opts.before ?? null })) ?? []).map((r) => {
+    const details = pick<unknown>(r, 'details');
+    return {
+      id: num(r.id),
+      actorName: str(pick(r, 'actor_name')),
+      action: str(r.action),
+      targetName: opt(pick(r, 'target_name')),
+      details: details && typeof details === 'object' ? (details as Record<string, unknown>) : {},
+      createdAt: str(pick(r, 'created_at')),
+    };
+  });
 }
 
 export async function resetDemoData(): Promise<void> {

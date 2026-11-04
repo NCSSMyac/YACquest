@@ -57,6 +57,16 @@ describe('anti-farming caps', () => {
   });
 });
 
+describe('manual point caps', () => {
+  it('adds at most one Tier 1 action per entry, removes up to the goal', async () => {
+    asUser('admin');
+    const u = load().users.find((x) => x.handle === 'yak001')!;
+    await expect(api.adjustPoints(u.id, TIER_POINTS[1] + 1, 'too much')).rejects.toMatchObject({ code: 'amount' });
+    await expect(api.adjustPoints(u.id, -PRIZE.goal - 1, 'too much')).rejects.toMatchObject({ code: 'amount' });
+    await api.adjustPoints(u.id, TIER_POINTS[1], 'allowed amount');
+  });
+});
+
 describe('admin permissions', () => {
   it('admins can adjust any campus', async () => {
     asUser('admin');
@@ -79,8 +89,9 @@ describe('admin permissions', () => {
   });
 });
 
+// Writes straight to the ledger (manual admin additions are capped at TIER_POINTS[1] per entry).
 const boostTo = async (id: string, target: number) => {
-  while (pointsOf(id) < target) await api.adjustPoints(id, Math.min(500, target - pointsOf(id)), 'boost');
+  if (pointsOf(id) < target) api.__test.addLedger({ userId: id, amount: target - pointsOf(id), source: 'manual', reason: 'test boost' });
 };
 
 describe('prize race', () => {
@@ -141,5 +152,191 @@ describe('team roles', () => {
     expect(users.find((u) => u.handle === 'admin')!.role).toBe('chair');
     expect(users.filter((u) => u.role === 'chair').length).toBe(2);
     await expect(api.listTeam()).rejects.toMatchObject({ code: 'forbidden' });
+  });
+});
+
+// ───────────────────────────── 0004: prizes, winner form, emails, action log ─────────────────────────────
+import { claimContactError } from '../lib/validate';
+import { describeAction } from '../lib/actionText';
+
+const goodContact = { fullName: 'Ava Brown', email: 'ava@example.com', phone: '(919) 555-0100', address: '123 Main St\nDurham, NC 27701', preference: 'Target' };
+
+/** Boosts the first participant to the goal and logs in as them. */
+async function makeWinner() {
+  const u = load().users.find((x) => x.role === 'participant')!;
+  await boostTo(u.id, PRIZE.goal);
+  setSession(u.id);
+  return u;
+}
+
+describe('prize config', () => {
+  it('is 4 spots of $75', () => {
+    expect(PRIZE.count).toBe(4);
+    expect(PRIZE.valueUsd).toBe(75);
+    expect(PRIZE.name).toBe('$75 gift card');
+  });
+  it('only the first 4 of 6 qualifiers win', async () => {
+    asUser('admin');
+    const people = load().users.filter((u) => u.role === 'participant').slice(0, 6);
+    for (const u of people) await boostTo(u.id, PRIZE.goal);
+    const status = await api.prizeStatus();
+    expect(status.total).toBe(4);
+    expect(status.claims).toHaveLength(4);
+    expect(status.claims.map((c) => c.userId)).toEqual(people.slice(0, 4).map((u) => u.id));
+  });
+});
+
+describe('winner form validation', () => {
+  it('mirrors the server rules', () => {
+    expect(claimContactError(goodContact)).toBeNull();
+    expect(claimContactError({ ...goodContact, fullName: 'A' })?.code).toBe('fullName');
+    expect(claimContactError({ ...goodContact, email: 'nope' })?.code).toBe('email');
+    expect(claimContactError({ ...goodContact, phone: '555-01' })?.code).toBe('phone');
+    expect(claimContactError({ ...goodContact, phone: '+1 919.555.0100' })).toBeNull();
+    expect(claimContactError({ ...goodContact, address: '12 Main' })?.code).toBe('address');
+  });
+  it('rejects bad phone/address and saves good info with a reference', async () => {
+    await makeWinner();
+    await expect(api.submitClaimInfo({ ...goodContact, phone: '12345' })).rejects.toMatchObject({ code: 'phone' });
+    await expect(api.submitClaimInfo({ ...goodContact, address: 'Durham' })).rejects.toMatchObject({ code: 'address' });
+    const claim = await api.submitClaimInfo(goodContact);
+    expect(claim.status).toBe('info_submitted');
+    expect(claim.reference).toMatch(/^YQ-\d{4}-01[A-Z0-9]{4}$/);
+    expect(claim.contact).toMatchObject({ phone: '(919) 555-0100', address: '123 Main St\nDurham, NC 27701', preference: 'Target' });
+  });
+  it('preference is optional', async () => {
+    await makeWinner();
+    const claim = await api.submitClaimInfo({ ...goodContact, preference: undefined });
+    expect(claim.contact?.preference).toBeUndefined();
+  });
+});
+
+describe('prize alert emails', () => {
+  it('queues a "won" alert and an URGENT info alert to chairs + admins', async () => {
+    await makeWinner();
+    await api.submitClaimInfo(goodContact);
+    const out = load().outbox;
+    expect(out.map((r) => r.kind)).toEqual(['prize_qualified', 'prize_info']);
+    expect(out[1].subject).toMatch(/^URGENT/);
+    expect(out[1].text).toContain('123 Main St');
+    expect(out[0].toEmails).toEqual(expect.arrayContaining(['iesha.landis.yac@ncssm.edu', 'jacob.rodriguez.yac@ncssm.edu', 'admin@example.edu']));
+    api.__test.deliverOutbox();
+    expect(load().outbox.every((r) => r.status === 'sent' && r.attempts === 1)).toBe(true);
+  });
+  it('sends nothing when prize alerts are off', async () => {
+    asUser('iesha');
+    await api.updateReportSettings({ prizeAlertsEnabled: false });
+    await makeWinner();
+    await api.submitClaimInfo(goodContact);
+    expect(load().outbox).toHaveLength(0);
+  });
+});
+
+describe('report settings + weekly email', () => {
+  it('chair-only, validated, normalised, and logged', async () => {
+    asUser('admin');
+    await expect(api.getReportSettings()).rejects.toMatchObject({ code: 'forbidden' });
+    asUser('iesha');
+    const s = await api.getReportSettings();
+    expect(s).toMatchObject({ weeklyEnabled: true, weeklyDay: 1, weeklyHour: 9, nearGoalPoints: 150, includeChairs: true, includeAdmins: true, prizeAlertsEnabled: true });
+    await expect(api.updateReportSettings({ weeklyDay: 7 })).rejects.toMatchObject({ code: 'weeklyDay' });
+    await expect(api.updateReportSettings({ weeklyHour: 24 })).rejects.toMatchObject({ code: 'weeklyHour' });
+    await expect(api.updateReportSettings({ recipients: ['not-an-email'] })).rejects.toMatchObject({ code: 'recipients' });
+    const next = await api.updateReportSettings({ weeklyDay: 5, weeklyHour: 16, recipients: [' Board@NCSSM.edu ', 'board@ncssm.edu'] });
+    expect(next).toMatchObject({ weeklyDay: 5, weeklyHour: 16, recipients: ['board@ncssm.edu'] });
+    const preview = await api.weeklyReportPreview();
+    expect(preview.recipients).toContain('board@ncssm.edu');
+    expect(preview.subject).toMatch(/weekly report/i);
+    expect(preview.html).toContain('Close to the prize');
+    expect(preview.text).toContain(`${PRIZE.count} of ${PRIZE.count} spots left`);
+    const log = await api.adminActionLog();
+    expect(log[0]).toMatchObject({ action: 'report_settings_changed', actorName: 'Iesha L.' });
+    expect(describeAction(log[0])).toMatch(/Iesha L\. changed the weekly email settings \(day → Friday, time → 4 pm, recipients\)/);
+  });
+  it('lists people close to the prize in the report', async () => {
+    asUser('iesha');
+    const u = load().users.find((x) => x.role === 'participant')!;
+    await boostTo(u.id, PRIZE.goal - 40);
+    const preview = await api.weeklyReportPreview();
+    expect(preview.text).toContain(`${u.displayName}`);
+    expect(preview.text).toContain('40 to go');
+  });
+  it('send now needs recipients; test email goes to the caller', async () => {
+    asUser('iesha');
+    await api.updateReportSettings({ weeklyEnabled: false, includeChairs: false, includeAdmins: false });
+    await expect(api.sendWeeklyReportNow()).rejects.toMatchObject({ code: 'no_recipients' });
+    await api.updateReportSettings({ recipients: ['board@ncssm.edu'] });
+    await api.sendWeeklyReportNow();
+    await api.sendTestEmail();
+    const log = await api.emailLog();
+    const [test, weekly] = log;
+    expect(test).toMatchObject({ kind: 'test', toEmails: ['iesha.landis.yac@ncssm.edu'], status: 'pending', attempts: 0 });
+    expect(weekly).toMatchObject({ kind: 'weekly_report', toEmails: ['board@ncssm.edu'] });
+  });
+  it('auto-queues the weekly report once per week after the set day/hour', async () => {
+    asUser('iesha');
+    const todayEastern = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' }).format(new Date()));
+    await api.updateReportSettings({ weeklyDay: todayEastern, weeklyHour: 0 });
+    await api.emailLog();
+    await api.emailLog();
+    expect(load().outbox.filter((r) => r.kind === 'weekly_report')).toHaveLength(1);
+    expect(load().outbox[0].dedupeKey).toMatch(/^weekly:\d{4}-\d{2}$/);
+  });
+  it('failed emails can be retried', async () => {
+    asUser('iesha');
+    await api.updateReportSettings({ weeklyEnabled: false, includeChairs: false, includeAdmins: false, recipients: ['oops@bad.invalid'] });
+    await api.sendWeeklyReportNow();
+    api.__test.deliverOutbox();
+    const [row] = (await api.emailLog()).filter((r) => r.kind === 'weekly_report');
+    expect(row).toMatchObject({ status: 'failed', attempts: 1 });
+    expect(row.lastError).toBeTruthy();
+    await api.retryEmail(row.id);
+    const [again] = (await api.emailLog()).filter((r) => r.id === row.id);
+    expect(again).toMatchObject({ status: 'pending', attempts: 0 });
+  });
+});
+
+describe('admin action log', () => {
+  it('records admin changes with friendly sentences, newest first', async () => {
+    asUser('admin');
+    const jade = load().users.find((u) => u.handle === 'alum001')!;
+    await api.awardActivity(jade.id, 'game_win', 'pickleball');
+    await api.adjustPoints(jade.id, -5, 'Duplicate award');
+    const pending = (await api.reviewQueue())[0];
+    await api.reviewSubmission(pending.id, 'rejected', 'Screenshot unclear');
+    asUser('iesha');
+    const yak = load().users.find((u) => u.handle === 'yak001')!;
+    await api.setRole(yak.id, 'admin');
+    const log = await api.adminActionLog({ limit: 4 });
+    expect(log.map((a) => a.action)).toEqual(['role_changed', 'submission_rejected', 'points_removed', 'points_added']);
+    const text = log.map(describeAction);
+    expect(text[0]).toBe('Iesha L. made Yak001 an admin');
+    expect(text[1]).toMatch(new RegExp(`^YAC Helper rejected ${pending.user.displayName.replace('.', '\\.')}’s? .+ — Screenshot unclear$`));
+    expect(text[2]).toBe(`YAC Helper removed 5 points from ${jade.displayName} — Duplicate award`);
+    expect(text[3]).toMatch(new RegExp(`^YAC Helper added \\+${TIER_POINTS[2]} to .+ — Win a Game or Competition: pickleball$`));
+  });
+  it('is chair-only and pages with `before`', async () => {
+    asUser('admin');
+    await expect(api.adminActionLog()).rejects.toMatchObject({ code: 'forbidden' });
+    asUser('iesha');
+    const all = await api.adminActionLog({ limit: 100 });
+    expect(all.length).toBeGreaterThanOrEqual(3);
+    const first = await api.adminActionLog({ limit: 2 });
+    const next = await api.adminActionLog({ before: first[1].id, limit: 2 });
+    expect(next[0].id).toBeLessThan(first[1].id);
+    expect([...first, ...next].map((a) => a.id)).toEqual(all.slice(0, first.length + next.length).map((a) => a.id));
+  });
+  it('logs event, prize and reset actions', async () => {
+    asUser('iesha');
+    const e = await api.createEvent({ title: 'Pickleball', campus: 'duke', crossCampus: false, kind: 'home', location: 'Courts', startsAt: new Date().toISOString(), endsAt: new Date(Date.now() + 3600_000).toISOString(), checkInGraceMinutes: 30, password: 'PICKLE' });
+    await api.deleteEvent(e.id);
+    const winner = await makeWinner();
+    asUser('iesha');
+    await api.markFulfilled(1);
+    await api.resetCycle('RESET');
+    const log = await api.adminActionLog({ limit: 4 });
+    expect(log.map((a) => a.action)).toEqual(['cycle_reset', 'prize_fulfilled', 'event_deleted', 'event_created']);
+    expect(describeAction(log[1])).toBe(`Iesha L. marked ${winner.displayName}’s prize (spot #1) as delivered`.replace(/s’s/, 's’'));
+    expect(describeAction(log[3])).toBe('Iesha L. created the event “Pickleball” (Home-campus event, Duke)');
   });
 });

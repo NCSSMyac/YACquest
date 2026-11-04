@@ -58,14 +58,14 @@ export default function Notifications() {
               <li key={n.id} style={{ padding: 0, border: 0 }}>
                 <Panel tone={n.read ? 'flat' : 'gold'} className="">
                   <div className="row" style={{ alignItems: 'flex-start' }}>
-                    <span aria-hidden style={{ fontSize: 22, color: k.color, minWidth: 28, textAlign: 'center' }}>{k.icon}</span>
+                    <span aria-hidden style={{ fontSize: 18, color: k.color, minWidth: 28, textAlign: 'center' }}>{k.icon}</span>
                     <div style={{ flex: 1 }}>
                       <div className="spread" style={{ alignItems: 'flex-start' }}>
                         <b>{n.title}</b>
                         {!n.read && <span className="chip t1">New</span>}
                       </div>
                       <div>{n.body}</div>
-                      <div className="muted" style={{ fontSize: 16 }}>{timeAgo(n.createdAt)}</div>
+                      <div className="muted" style={{ fontSize: 13 }}>{timeAgo(n.createdAt)}</div>
                     </div>
                   </div>
                 </Panel>

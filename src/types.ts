@@ -34,7 +34,7 @@ export type VerifyMethod =
   | 'event_password' // check in at an event with the password the lead announces
   | 'screenshot' // upload proof, reviewed by a lead
   | 'photo' // upload event photo, reviewed by a lead
-  | 'lead_award' // campus lead awards it (e.g. winning a game)
+  | 'lead_award' // a YAC admin awards it (e.g. winning a game)
   | 'referral'; // automatic when a referred friend attends their first event
 
 export interface Activity {
@@ -52,7 +52,8 @@ export interface YacEvent {
   title: string;
   campus: CampusId | 'all';
   crossCampus: boolean;
-  kind: 'social' | 'panel' | 'service' | 'game_night';
+  /** home = Tier 2, cross_campus = Tier 1 (campus 'all'), panel = Tier 2 panel/mentorship. */
+  kind: 'home' | 'cross_campus' | 'panel';
   location: string;
   startsAt: string;
   endsAt: string;
@@ -106,10 +107,20 @@ export interface PrizeClaim {
   qualifiedAt: string;
   status: ClaimStatus;
   reference?: string;
-  contact?: { fullName: string; email: string; preference: string; notes?: string };
+  contact?: ClaimContact;
   fulfilledAt?: string;
   revokedAt?: string;
   revokeReason?: string;
+}
+
+/** What a winner sends so YAC can deliver the gift card. */
+export interface ClaimContact {
+  fullName: string;
+  email: string;
+  phone: string;
+  address: string;
+  preference?: string;
+  notes?: string;
 }
 
 export interface PrizeStatus {
@@ -175,13 +186,67 @@ export interface Dashboard {
   referralsUsed: number;
 }
 
-export interface SyncStatus {
-  lastSyncAt: string;
-  rowsPushed: number;
-  rowsPulled: number;
-  conflicts: number;
-  state: 'ok' | 'error' | 'syncing';
-  sheetUrl: string;
+/** Weekly committee email + prize alert settings (chairs edit these in Admin → System). */
+export interface ReportSettings {
+  weeklyEnabled: boolean;
+  /** 0 = Sunday … 6 = Saturday (Eastern time). */
+  weeklyDay: number;
+  /** 0–23, Eastern time. */
+  weeklyHour: number;
+  /** "Close to the prize" list = people within this many points of the goal. */
+  nearGoalPoints: number;
+  /** Extra emails on top of chairs/admins. */
+  recipients: string[];
+  includeChairs: boolean;
+  includeAdmins: boolean;
+  prizeAlertsEnabled: boolean;
+  updatedAt?: string;
+}
+
+export interface WeeklyReport {
+  subject: string;
+  text: string;
+  html: string;
+  recipients: string[];
+}
+
+export type EmailKind = 'weekly_report' | 'prize_qualified' | 'prize_info' | 'test';
+export type EmailStatus = 'pending' | 'sending' | 'sent' | 'failed';
+
+export interface EmailLogRow {
+  id: string;
+  kind: EmailKind | string;
+  toEmails: string[];
+  subject: string;
+  status: EmailStatus;
+  attempts: number;
+  lastError?: string;
+  createdAt: string;
+  sentAt?: string;
+}
+
+export type AdminActionKind =
+  | 'points_added'
+  | 'points_removed'
+  | 'submission_approved'
+  | 'submission_rejected'
+  | 'role_changed'
+  | 'event_created'
+  | 'event_updated'
+  | 'event_deleted'
+  | 'prize_fulfilled'
+  | 'prize_revoked'
+  | 'cycle_reset'
+  | 'report_settings_changed';
+
+/** One row of the append-only admin action log (chairs only). */
+export interface AdminAction {
+  id: number;
+  actorName: string;
+  action: AdminActionKind | string;
+  targetName?: string;
+  details: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface ApiError {

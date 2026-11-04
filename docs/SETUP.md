@@ -10,6 +10,7 @@ This takes about 30–45 minutes, done once. Dashboard menu names can differ sli
 ## 2. Create the database
 1. Open **SQL Editor → New query**.
 2. Paste the whole of `supabase/migrations/0001_init.sql` and click **Run**. It should finish with "Success". It is safe to run again.
+3. Then do the same for every later file in `supabase/migrations/` **in number order** (`0002_event_kinds.sql`, …). Each new migration only needs to be run once, but re-running is safe.
 
 ## 3. Turn on real logins
 **Authentication → Sign In / Providers → Email**
@@ -54,6 +55,37 @@ Supabase's built-in email only sends a few messages per hour and is meant for te
 2. Test the whole flow with a friend's account: sign up → confirm email → check in with the password → see points on the leaderboard.
 3. Add helpers: they sign up and confirm their email, then Admin → **Team → Add an admin**.
 
+## 8. Weekly email + prize alerts
+YACquest emails the YAC team a **weekly report** (spots left, who's close to the prize, top 5, Campus Cup, this week's numbers) and sends **prize alerts** right away when someone wins a spot and when a winner sends their delivery info (name, email, phone, mailing address). It uses the same YAC Gmail and app password as step 4. Do this once:
+
+**a. Update the database.** SQL Editor → New query → paste all of `supabase/migrations/0004_emails_and_audit.sql` → **Run**. (Skip if you already ran every migration in step 2.)
+
+**b. Add the email sender.**
+1. Supabase → **Edge Functions** → **Deploy a new function** → **Via Editor**.
+2. Name it exactly `send-emails`.
+3. Delete the sample code, then paste the whole of `supabase/functions/send-emails/index.ts` (on GitHub, open the file → **Raw** → select all → copy).
+4. Click **Deploy**.
+
+**c. Give it the Gmail password.** Edge Functions → **Secrets** (sometimes under *Manage secrets*) → add:
+| Name | Value |
+|---|---|
+| `SMTP_USER` | the YAC Gmail address, e.g. `ncssm.yac.app@gmail.com` |
+| `SMTP_PASS` | the 16-letter Google **app password** (spaces are fine) |
+| `SMTP_FROM_NAME` | optional — the sender name people see (default `YACquest`) |
+| `SMTP_HOST` / `SMTP_PORT` | optional — only if you're not using Gmail (defaults `smtp.gmail.com` / `465`) |
+
+**d. Run it every 10 minutes.** **Integrations → Cron** → enable it if asked → **Create job**:
+- Name: `send-emails`
+- Schedule: every 10 minutes — `*/10 * * * *`
+- Type: **Supabase Edge Function** → pick `send-emails`, method **POST**. The default headers (including *Authorization* with the anon key) are fine.
+- Save.
+
+**e. Test it.** In the app: Admin → **System** → **Send test email to me**. Within 10 minutes it should arrive (check spam), and the **Email delivery log** shows it as **sent**. If it says **failed**, the error explains why (usually a wrong app password — fix the secret, then press **Retry**).
+
+**Changing it later** (no code): Admin → **System → Weekly committee email** — turn it on/off, pick the day and time (Eastern), set how close counts as "close to the prize", choose whether chairs/admins get it, add extra emails (e.g. a board member), and turn prize alerts on/off. **Send this week's report now** sends one immediately; the preview is on the Admin **Overview** tab.
+
+Chairs can also see every admin change (points added/removed, reviews, role changes, events, prizes) under Admin → **Log**.
+
 ## Roles, and handing over the chair
 - **Admin**: review screenshots, award/adjust points, run events. Given and removed by a chair (only to accounts with a confirmed email).
 - **Chair**: everything. There can be at most **2**. A chair can't remove the other chair.
@@ -71,9 +103,9 @@ Make sure no more than 2 people are chairs afterwards.
 - **Free plan limits**: 500 MB database, 1 GB file storage, 50k monthly users — far more than YACquest needs. Free projects pause after 7 days with **no activity**; any login wakes it.
 - Screenshots are shrunk to ~150 KB before upload. ~300 people × a few per month stays well under 1 GB for the year.
 - Backups: Admin → **System → Export ledger CSV** once a month, saved to the YAC Drive.
-- Not built yet: Google Sheets sync and the weekly email (use CSV export for now).
 
 ## For developers
 - Database tests: `bash supabase/tests/run_tests.sh` (needs local Postgres 16).
 - App tests: `npm test`. Contract between DB and app: `docs/BACKEND.md`.
-- Future database changes go in a new file `supabase/migrations/0002_….sql`. Supabase grants new functions to everyone by default, so repeat the `revoke execute … from public, anon` lines for any new function.
+- Email sender: `supabase/functions/send-emails/index.ts` (Deno; not part of the app's TypeScript build). Deploy from the CLI with `supabase functions deploy send-emails` if you prefer.
+- Future database changes go in a new numbered file in `supabase/migrations/` (next after `0004_…`). Supabase grants new functions to everyone by default, so repeat the `revoke execute … from public, anon` lines for any new function.

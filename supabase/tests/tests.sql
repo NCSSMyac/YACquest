@@ -93,17 +93,34 @@ end $$;
 
 -- Session switching macros (psql variables expand to SQL text).
 \set as_super 'reset role;'
-\set as_chair1 'reset role; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000000c1''; set role authenticated;'
-\set as_chair2 'reset role; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000000c2''; set role authenticated;'
-\set as_admin  'reset role; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000000ad''; set role authenticated;'
-\set as_alice  'reset role; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000000a1''; set role authenticated;'
-\set as_bob    'reset role; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000000b0''; set role authenticated;'
-\set as_ref2   'reset role; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000000b2''; set role authenticated;'
-\set as_ref3   'reset role; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000000b3''; set role authenticated;'
-\set as_ref4   'reset role; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000000b4''; set role authenticated;'
-\set as_carol  'reset role; set request.jwt.claim.sub = ''00000000-0000-0000-0000-000000000ca0''; set role authenticated;'
-\set as_erin   'reset role; set request.jwt.claim.sub = ''00000000-0000-0000-0000-000000000e70''; set role authenticated;'
-\set as_anon   'reset role; set request.jwt.claim.sub = ''''; set role anon;'
+\set as_chair1 'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000000c1''; set role authenticated;'
+\set as_chair2 'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000000c2''; set role authenticated;'
+\set as_admin  'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000000ad''; set role authenticated;'
+\set as_alice  'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000000a1''; set role authenticated;'
+\set as_bob    'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000000b0''; set role authenticated;'
+\set as_ref2   'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000000b2''; set role authenticated;'
+\set as_ref3   'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000000b3''; set role authenticated;'
+\set as_ref4   'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000000b4''; set role authenticated;'
+\set as_carol  'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-000000000ca0''; set role authenticated;'
+\set as_erin   'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-000000000e70''; set role authenticated;'
+\set as_anon   'reset role; set request.jwt.claim.role = ''anon''; set request.jwt.claim.sub = ''''; set role anon;'
+\set as_dave    'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-000000000da0''; set role authenticated;'
+-- Edge Function with the service_role key:
+\set as_service 'reset role; set request.jwt.claim.role = ''service_role''; set request.jwt.claim.sub = ''''; set role service_role;'
+-- pg_cron / SQL Editor: database superuser, no API user, no JWT:
+\set as_cron    'reset role; set request.jwt.claim.role = ''''; set request.jwt.claim.sub = '''';'
+
+-- =============================================================================
+-- 0. CONFIG (0004: 4 prizes × $75, Sheets sync removed)
+-- =============================================================================
+do $$ begin
+  perform t.eq((select prize_count from app_config), 4, '0004: 4 prize spots');
+  perform t.eq((select prize_value_usd from app_config), 75, '0004: $75 prizes');
+  perform t.eq((select prize_goal from app_config), 650, 'goal still 650');
+  perform t.ok(to_regclass('public.sync_status') is null, '0004: sync_status table dropped');
+  perform t.eq((select count(*) from report_settings), 1::bigint, 'report_settings seeded with one row');
+  perform t.ok(not exists (select 1 from pg_proc where proname = 'submit_claim_info' and pronargs = 4), 'old 4-arg submit_claim_info dropped');
+end $$;
 
 -- =============================================================================
 -- 1. SIGN-UP TRIGGER
@@ -157,7 +174,7 @@ do $$ begin
   perform t.eq(handle_available('bad name'), false, 'handle_available: bad chars');
   perform t.eq(friend_code_exists('YAC-0000'), false, 'friend_code_exists: unknown');
   perform t.ok((select count(*) from app_config) = 1, 'anon can read app_config');
-  perform t.ok((select count(*) from activities) = 13, 'anon can read 13 activities');
+  perform t.ok((select count(*) from activities) = 14, 'anon can read 14 activities');
   perform t.denied('select dashboard_stats()', 'anon cannot call dashboard_stats');
   perform t.denied('select count(*) from profiles', 'anon cannot read profiles');
 end $$;
@@ -207,7 +224,7 @@ end $$;
 -- =============================================================================
 :as_alice
 do $$ begin
-  perform t.throws($q$select create_event('{"title":"Nope","campus":"duke","kind":"social","startsAt":"2026-12-01T18:00:00Z","endsAt":"2026-12-01T20:00:00Z","password":"abcd"}')$q$, 'forbidden', 'participant cannot create_event');
+  perform t.throws($q$select create_event('{"title":"Nope","campus":"duke","kind":"home","startsAt":"2026-12-01T18:00:00Z","endsAt":"2026-12-01T20:00:00Z","password":"abcd"}')$q$, 'forbidden', 'participant cannot create_event');
 end $$;
 :as_admin
 do $$
@@ -215,11 +232,11 @@ declare
   mk jsonb;
   ev json;
 begin
-  perform t.throws($q$select create_event('{"title":"ab","campus":"duke","kind":"social","startsAt":"2026-12-01T18:00:00Z","endsAt":"2026-12-01T20:00:00Z","password":"abcd"}')$q$, 'title', 'event title too short');
-  perform t.throws($q$select create_event('{"title":"Thing","campus":"duke","kind":"social","startsAt":"2026-12-01T18:00:00Z","endsAt":"2026-12-01T20:00:00Z","password":"abc"}')$q$, 'password', 'event password too short');
-  perform t.throws($q$select create_event('{"title":"Thing","campus":"duke","kind":"social","startsAt":"2026-12-01T18:00:00Z","endsAt":"2026-12-01T17:00:00Z","password":"abcd"}')$q$, 'endsAt', 'event ends before start');
+  perform t.throws($q$select create_event('{"title":"ab","campus":"duke","kind":"home","startsAt":"2026-12-01T18:00:00Z","endsAt":"2026-12-01T20:00:00Z","password":"abcd"}')$q$, 'title', 'event title too short');
+  perform t.throws($q$select create_event('{"title":"Thing","campus":"duke","kind":"home","startsAt":"2026-12-01T18:00:00Z","endsAt":"2026-12-01T20:00:00Z","password":"abc"}')$q$, 'password', 'event password too short');
+  perform t.throws($q$select create_event('{"title":"Thing","campus":"duke","kind":"home","startsAt":"2026-12-01T18:00:00Z","endsAt":"2026-12-01T17:00:00Z","password":"abcd"}')$q$, 'endsAt', 'event ends before start');
 
-  ev := create_event(jsonb_build_object('title','Home Live','campus','duke','crossCampus',false,'kind','social','location','Bryan Center',
+  ev := create_event(jsonb_build_object('title','Home Live','campus','duke','kind','home','location','Bryan Center',
           'startsAt', now() - interval '1 hour', 'endsAt', now() + interval '2 hours', 'checkInGraceMinutes', 60, 'password', 'Secret1'));
   perform t.eq(ev->>'activityId', 'home_event', 'create_event derives home_event');
   perform t.eq(ev->>'password', 'Secret1', 'create_event returns password');
@@ -227,17 +244,21 @@ begin
   ev := create_event(jsonb_build_object('title','Panel Live','campus','unc','kind','panel',
           'startsAt', now() - interval '10 minutes', 'endsAt', now() + interval '1 hour', 'password', 'panel'));
   perform t.eq(ev->>'activityId', 'panel_mentorship', 'panel → panel_mentorship');
-  ev := create_event(jsonb_build_object('title','Cross Live','campus','all','crossCampus',true,'kind','game_night',
+  ev := create_event(jsonb_build_object('title','Cross Live','campus','duke','kind','cross_campus',
           'startsAt', now() + interval '20 minutes', 'endsAt', now() + interval '3 hours', 'password', 'triangle'));
-  perform t.eq(ev->>'activityId', 'cross_campus_event', 'all-campus → cross_campus_event');
-  ev := create_event(jsonb_build_object('title','Social Live 2','campus','ncsu','kind','service',
+  perform t.eq(ev->>'activityId', 'cross_campus_event', 'cross_campus kind → cross_campus_event');
+  perform t.eq(ev->>'campus', 'all', 'cross_campus kind forces campus all');
+  perform t.ok((ev->>'crossCampus')::boolean, 'cross_campus kind sets crossCampus');
+  perform t.throws($q$select create_event('{"title":"Thing","campus":"all","kind":"home","startsAt":"2026-12-01T18:00:00Z","endsAt":"2026-12-01T20:00:00Z","password":"abcd"}')$q$, 'campus', 'home event needs a host campus');
+  perform t.throws($q$select create_event('{"title":"Thing","campus":"duke","kind":"social","startsAt":"2026-12-01T18:00:00Z","endsAt":"2026-12-01T20:00:00Z","password":"abcd"}')$q$, 'kind', 'old kinds rejected');
+  ev := create_event(jsonb_build_object('title','Social Live 2','campus','ncsu','kind','home',
           'startsAt', now() - interval '3 hours', 'endsAt', now() - interval '30 minutes', 'checkInGraceMinutes', 60, 'password', 'serve'));
-  ev := create_event(jsonb_build_object('title','Future Event','campus','duke','kind','social',
+  ev := create_event(jsonb_build_object('title','Future Event','campus','duke','kind','home',
           'startsAt', now() + interval '2 hours', 'endsAt', now() + interval '4 hours', 'password', 'future'));
-  ev := create_event(jsonb_build_object('title','Past Event','campus','duke','kind','social',
+  ev := create_event(jsonb_build_object('title','Past Event','campus','duke','kind','home',
           'startsAt', now() - interval '5 hours', 'endsAt', now() - interval '2 hours', 'checkInGraceMinutes', 60, 'password', 'past'));
   ev := update_event((select id from events where title = 'Future Event'),
-          jsonb_build_object('title','Future Event','campus','duke','crossCampus',true,'kind','social',
+          jsonb_build_object('title','Future Event','campus','duke','kind','cross_campus',
           'startsAt', now() + interval '2 hours', 'endsAt', now() + interval '4 hours', 'password', 'future2'));
   perform t.eq(ev->>'activityId', 'cross_campus_event', 'update_event re-derives activity');
   perform t.eq(ev->>'password', 'future2', 'update_event updates password');
@@ -270,10 +291,10 @@ begin
   perform t.eq(r->>'activityId', 'panel_mentorship', 'panel check-in activity');
   perform t.eq((r->>'points')::int, 20, 'panel = 20');
   r := check_in((select id from events where title = 'Cross Live'), 'triangle');  -- opens 30 min early
-  perform t.eq((r->>'points')::int, 40, 'cross-campus = tier 1 = 40 (30-min early window)');
+  perform t.eq((r->>'points')::int, 35, 'cross-campus = tier 1 = 35 (30-min early window)');
   r := check_in((select id from events where title = 'Social Live 2'), 'serve');  -- ended, within grace
   perform t.eq((r->>'points')::int, 20, 'check-in within grace period works');
-  perform t.eq((select points from profiles where id = auth.uid()), 100, 'profile points maintained by trigger');
+  perform t.eq((select points from profiles where id = auth.uid()), 95, 'profile points maintained by trigger');
   perform t.eq((select attendee_count from events where title = 'Home Live'), 1, 'attendee_count bumped');
   perform t.eq((select count(*) from ledger where source = 'referral'), 0::bigint, 'no referral for non-referred user');
 end $$;
@@ -282,7 +303,7 @@ end $$;
 do $$ begin
   perform check_in((select id from events where title = 'Home Live'), 'secret1');
   perform check_in((select id from events where title = 'Panel Live'), 'panel');
-  perform t.eq((select points from profiles where id = auth.uid()), 40, 'bob has 40');
+  perform t.eq((select points from profiles where id = auth.uid()), 75, 'bob has 40 + 35 joined-with-code bonus');
   perform t.eq((select count(*) from ledger where user_id <> auth.uid()), 0::bigint, 'RLS: bob cannot see alice''s ledger (incl. referral row)');
 end $$;
 :as_ref2
@@ -294,16 +315,18 @@ select check_in((select id from events where title = 'Home Live'), 'secret1') \g
 :as_super
 do $$ begin
   perform t.eq((select count(*) from ledger where source = 'referral' and user_id = t.u('alice')), 3::bigint, 'referral bonus capped at 3 per cycle');
+  perform t.eq((select count(*) from ledger where activity_id = 'joined_with_code'), 4::bigint, 'every new member who used a code gets the joined bonus once (even past the referrer cap)');
+  perform t.eq((select count(*) from ledger where activity_id = 'joined_with_code' and user_id = t.u('bob')), 1::bigint, 'bob joined bonus only once');
   perform t.eq((select count(*) from ledger where source = 'referral' and ref_id = t.u('bob')::text), 1::bigint, 'only bob''s FIRST check-in pays a referral');
-  perform t.ok((select bool_and(amount = 40 and activity_id = 'bring_new_alum') from ledger where source = 'referral'), 'referral is tier 1 bring_new_alum');
-  perform t.eq((select points from profiles where id = t.u('alice')), 220, 'alice 100 + 3×40 referral');
-  perform t.eq((select count(*) from notifications where user_id = t.u('alice') and title = '+40 for bringing a friend'), 3::bigint, 'referrer notified each time');
+  perform t.ok((select bool_and(amount = 35 and activity_id in ('bring_new_alum','joined_with_code')) from ledger where source = 'referral'), 'referral rows are tier 1 (35)');
+  perform t.eq((select points from profiles where id = t.u('alice')), 200, 'alice 95 + 3×35 referral');
+  perform t.eq((select count(*) from notifications where user_id = t.u('alice') and title = '+35 for bringing a friend'), 3::bigint, 'referrer notified each time');
   perform t.eq((select attendee_count from events where title = 'Home Live'), 5, 'attendee_count = 5');
 end $$;
 :as_alice
 do $$ begin
   perform t.eq((dashboard_stats()->>'referralsUsed')::int, 3, 'dashboard referralsUsed');
-  perform t.eq((dashboard_stats()->>'points')::int, 220, 'dashboard points');
+  perform t.eq((dashboard_stats()->>'points')::int, 200, 'dashboard points');
 end $$;
 
 -- =============================================================================
@@ -375,28 +398,28 @@ begin
   perform t.throws(format('select review_submission(%L, ''maybe'', null)', v_sub), 'decision', 'review bad decision');
   perform review_submission(v_sub, 'approved', null);
   perform t.eq((select status from submissions where id = v_sub), 'approved', 'submission approved');
-  perform t.eq((select points from profiles where id = t.u('alice')), 225, 'approve adds tier-3 points (5)');
+  perform t.eq((select points from profiles where id = t.u('alice')), 205, 'approve adds tier-3 points (5)');
   perform t.ok(exists (select 1 from ledger where source = 'submission' and ref_id = v_sub::text and created_by = t.u('admin')), 'approval ledger row');
   perform t.throws(format('select review_submission(%L, ''approved'', null)', v_sub), 'already_reviewed', 'cannot review twice');
   v_sub := (select id from submissions where activity_id = 'annual_fund' and user_id = t.u('alice'));
   perform t.throws(format('select review_submission(%L, ''rejected'', ''  '')', v_sub), 'reason', 'reject needs a reason');
   perform review_submission(v_sub, 'reject', 'Receipt not readable');
   perform t.eq((select status || '|' || review_reason from submissions where id = v_sub), 'rejected|Receipt not readable', 'submission rejected with reason');
-  perform t.eq((select points from profiles where id = t.u('alice')), 225, 'reject adds no points');
+  perform t.eq((select points from profiles where id = t.u('alice')), 205, 'reject adds no points');
 
   perform t.throws(format('select adjust_points(%L, 0, ''because'')', t.u('alice')), 'amount', 'adjust 0');
-  perform t.throws(format('select adjust_points(%L, 501, ''because'')', t.u('alice')), 'amount', 'adjust > 500');
-  perform t.throws(format('select adjust_points(%L, -501, ''because'')', t.u('alice')), 'amount', 'adjust < -500');
+  perform t.throws(format('select adjust_points(%L, 36, ''because'')', t.u('alice')), 'amount', 'manual add capped at tier 1 (35)');
+  perform t.throws(format('select adjust_points(%L, -651, ''because'')', t.u('alice')), 'amount', 'manual removal capped at the goal (650)');
   perform t.throws(format('select adjust_points(%L, 10, ''ab'')', t.u('alice')), 'reason', 'adjust reason too short');
   perform t.throws(format('select adjust_points(%L, 10, ''because'')', gen_random_uuid()), 'not_found', 'adjust unknown user');
   perform adjust_points(t.u('alice'), -5, 'Duplicate survey');
-  perform t.eq((select points from profiles where id = t.u('alice')), 220, 'admin adjust -5');
+  perform t.eq((select points from profiles where id = t.u('alice')), 200, 'admin adjust -5');
   perform award_activity(t.u('alice'), 'game_win', 'Cornhole');
-  perform t.eq((select points from profiles where id = t.u('alice')), 240, 'award_activity game_win +20');
+  perform t.eq((select points from profiles where id = t.u('alice')), 220, 'award_activity game_win +20');
   perform t.ok(exists (select 1 from ledger where user_id = t.u('alice') and reason = 'Win a Game or Competition: Cornhole'), 'award reason "<title>: <note>"');
   perform t.throws(format('select award_activity(%L, ''nope'', null)', t.u('alice')), 'activity', 'award unknown activity');
   perform t.eq((select count(*) from search_users('ALI')), 1::bigint, 'search_users case-insensitive');
-  perform t.eq((select points from search_users('alice')), 240, 'search_users returns points');
+  perform t.eq((select points from search_users('alice')), 220, 'search_users returns points');
   perform t.throws(format('select delete_event(%L)', (select id from events where title = 'Home Live')), 'has_attendees', 'cannot delete event with attendees');
   perform delete_event((select id from events where title = 'Past Event'));
   perform t.ok(not exists (select 1 from events where title = 'Past Event'), 'delete_event');
@@ -419,7 +442,7 @@ do $$ begin
   perform t.eq((select count(*) from profiles), 1::bigint, 'RLS: only own profile');
   perform t.eq((select count(*) from notifications where user_id <> auth.uid()), 0::bigint, 'RLS: only own notifications');
   perform t.eq((select count(*) from prize_suggestions), 0::bigint, 'RLS: participant cannot read suggestions');
-  perform t.eq((select count(*) from sync_status), 0::bigint, 'RLS: participant cannot read sync_status');
+  perform t.eq((select count(*) from report_settings), 0::bigint, 'RLS: participant cannot read report_settings');
   perform t.denied(format('insert into ledger (cycle_id, user_id, amount, source) values (active_cycle_id(), %L, 999, ''manual'')', auth.uid()), 'participant cannot insert into ledger');
   perform t.denied('update profiles set role = ''chair'' where id = auth.uid()', 'participant cannot update own role');
   perform t.denied('update profiles set points = 9999 where id = auth.uid()', 'participant cannot update own points');
@@ -443,11 +466,11 @@ do $$ begin
   perform t.ok((select count(*) from ledger) > (select count(*) from ledger where user_id = auth.uid()), 'admin reads all ledger rows');
   perform t.ok((select count(*) from profiles) > 10, 'admin reads all profiles');
   perform t.denied(format('insert into ledger (cycle_id, user_id, amount, source) values (active_cycle_id(), %L, 1, ''manual'')', auth.uid()), 'admin cannot insert into ledger directly');
-  perform t.eq((select count(*) from sync_status), 0::bigint, 'admin cannot read sync_status');
+  perform t.eq((select count(*) from report_settings), 0::bigint, 'admin cannot read report_settings');
 end $$;
 :as_chair1
 do $$ begin
-  perform t.eq((select count(*) from sync_status), 1::bigint, 'chair reads sync_status');
+  perform t.eq((select count(*) from report_settings), 1::bigint, 'chair reads report_settings');
 end $$;
 :as_super
 do $$ begin
@@ -458,7 +481,8 @@ end $$;
 -- 9. PRIZE RACE  (goal 300, 2 spots for the test)
 -- =============================================================================
 :as_super
-update app_config set prize_goal = 300, prize_count = 2;
+-- Big one-step boosts need a higher manual cap just for this section (cap = tier1_points).
+update app_config set prize_goal = 300, prize_count = 2, tier1_points = 500;
 :as_admin
 select adjust_points(t.u('carol'), 300, 'race test') \g /dev/null
 select adjust_points(t.u('dave'),  300, 'race test') \g /dev/null
@@ -508,15 +532,21 @@ end $$;
 :as_carol
 do $$ begin
   perform t.eq((select count(*) from prize_claims), 1::bigint, 'RLS: carol sees only her own (revoked) claim');
-  perform t.throws('select submit_claim_info(''Carol C'', ''carol@example.edu'', ''Amazon'', null)', 'no_claim', 'submit_claim_info without active claim');
+  perform t.throws('select submit_claim_info(''Carol C'', ''carol@example.edu'', ''919-555-0100'', ''1 Main St, Durham NC 27701'', ''Amazon'', null)', 'no_claim', 'submit_claim_info without active claim');
   perform t.throws('select list_claims()', 'forbidden', 'participant cannot list_claims');
 end $$;
 :as_erin
 do $$ declare c json;
 begin
-  perform t.throws('select submit_claim_info(''E'', ''erin@example.edu'', ''Amazon'', null)', 'fullName', 'claim info: full name');
-  perform t.throws('select submit_claim_info(''Erin E'', ''nope'', ''Amazon'', null)', 'email', 'claim info: email');
-  c := submit_claim_info('Erin E', 'erin@example.edu', 'Amazon', 'thanks!');
+  perform t.throws('select submit_claim_info(''E'', ''erin@example.edu'', ''919-555-0100'', ''1 Main St, Durham NC 27701'', ''Amazon'', null)', 'fullName', 'claim info: full name');
+  perform t.throws('select submit_claim_info(''Erin E'', ''nope'', ''919-555-0100'', ''1 Main St, Durham NC 27701'', ''Amazon'', null)', 'email', 'claim info: email');
+  perform t.throws('select submit_claim_info(''Erin E'', ''erin@example.edu'', ''555-01'', ''1 Main St, Durham NC 27701'', ''Amazon'', null)', 'phone', 'claim info: phone needs 7 digits');
+  perform t.throws('select submit_claim_info(''Erin E'', ''erin@example.edu'', ''(919) 555-0100'', ''Durham'', ''Amazon'', null)', 'address', 'claim info: address needs 10 chars');
+  perform t.throws(format('select submit_claim_info(''Erin E'', ''erin@example.edu'', ''(919) 555-0100'', ''12 Oak Ave, Raleigh NC'', null, %L)', repeat('x', 281)), 'notes', 'claim info: notes <= 280');
+  c := submit_claim_info('Erin E', 'erin@example.edu', '(919) 555-0100', '12 Oak Ave, Raleigh NC 27601', 'Amazon', 'thanks!');
+  perform t.eq(c->'contact'->>'phone', '(919) 555-0100', 'claim contact phone');
+  perform t.eq(c->'contact'->>'address', '12 Oak Ave, Raleigh NC 27601', 'claim contact address');
+  perform t.eq(c->'contact'->>'preference', 'Amazon', 'claim contact preference');
   perform t.eq(c->>'status', 'info_submitted', 'claim info submitted');
   perform t.ok(c->>'reference' ~ ('^YQ-' || extract(year from now() at time zone 'America/New_York')::int || '-02[A-Z0-9]{4}$'), 'claim reference format YQ-<year>-<spot><4>');
   perform t.eq(c->'contact'->>'fullName', 'Erin E', 'claim contact json');
@@ -538,10 +568,13 @@ do $$ begin
   perform t.eq((select status from prize_claims where user_id = t.u('frank') and status <> 'revoked'), 'fulfilled', 'race: fulfilled claims are never revoked');
 end $$;
 
+:as_super
+update app_config set tier1_points = 35;
+
 -- =============================================================================
 -- 10. LEADERBOARD / RANKS
 -- =============================================================================
--- points now: carol 300, erin 300, alice 240, dave 200, frank 200, bob 40, ref2..4 20
+-- points now: carol 300, erin 300, alice 220, dave 200, frank 200, bob 75, ref2..4 55 (joined-with-code bonus)
 :as_carol
 do $$ begin
   perform t.ok((select rank = 1 from leaderboard(10) where user_id = t.u('carol')), 'leaderboard: carol rank 1');
@@ -660,6 +693,402 @@ end $$;
 do $$ begin
   perform t.ok(exists (select 1 from notifications where title = 'A new cycle has started!'), 'reset notifies participants');
   perform t.ok(can_submit('annual_fund') is null and can_submit('follow_ig') is not null, 'once-per-cycle resets with the cycle (follow_ig still weekly-capped)');
+end $$;
+
+-- =============================================================================
+-- 13. 0004 — ADMIN ACTION LOG (from everything the sections above did)
+-- =============================================================================
+-- Display names: chair1 = Iesha, admin = Helper (chair since section 11).
+:as_super
+do $$
+declare a admin_actions;
+begin
+  perform t.ok(exists (select 1 from admin_actions where action = 'role_changed' and actor_id = t.u('chair1') and actor_name = 'Iesha'
+                        and target_user_id = t.u('admin') and target_name = 'Helper' and details = '{"from":"participant","to":"admin"}'),
+               'log: role_changed (chair1 made Helper admin)');
+  perform t.ok(exists (select 1 from admin_actions where action = 'role_changed' and actor_id = t.u('chair1')
+                        and target_user_id = t.u('admin') and details->>'to' = 'chair'), 'log: transfer_chair logs target → chair');
+  perform t.ok(exists (select 1 from admin_actions where action = 'role_changed' and actor_id = t.u('chair1')
+                        and target_user_id = t.u('chair1') and details->>'to' = 'admin'), 'log: transfer_chair logs caller → admin');
+  perform t.ok(exists (select 1 from admin_actions where action = 'event_created' and actor_name = 'Helper' and details->>'title' = 'Home Live'
+                        and details->>'kind' = 'home' and details->>'campus' = 'duke'), 'log: event_created with title/kind/campus');
+  perform t.eq((select count(*) from admin_actions where action = 'event_created'), 6::bigint, 'log: 6 events created');
+  perform t.eq((select count(*) from admin_actions where action = 'event_updated'), 1::bigint, 'log: one event_updated (check-in attendee bumps are not logged)');
+  perform t.ok(exists (select 1 from admin_actions where action = 'event_updated' and actor_id = t.u('admin') and details->>'title' = 'Future Event' and details->>'kind' = 'cross_campus'), 'log: event_updated details');
+  perform t.ok(exists (select 1 from admin_actions where action = 'event_deleted' and actor_id = t.u('admin') and details->>'title' = 'Past Event'), 'log: event_deleted');
+  perform t.ok(exists (select 1 from admin_actions where action = 'submission_approved' and actor_id = t.u('admin')
+                        and target_user_id = t.u('alice') and target_name = 'Alice A.' and details->>'activityId' = 'survey'), 'log: submission_approved');
+  perform t.ok(exists (select 1 from admin_actions where action = 'submission_rejected' and actor_id = t.u('admin')
+                        and target_user_id = t.u('alice') and details->>'reason' = 'Receipt not readable' and details->>'activityId' = 'annual_fund'), 'log: submission_rejected with reason');
+  perform t.ok(not exists (select 1 from admin_actions where action like 'points_%' and target_user_id = t.u('alice') and (details->>'amount')::int = 5), 'log: approval is not double-logged as points_added');
+  perform t.eq((select count(*) from admin_actions where action in ('points_added','points_removed')),
+               (select count(*) from ledger where source = 'manual' and created_by is not null), 'log: one entry per manual ledger row');
+  perform t.ok(exists (select 1 from admin_actions where action = 'points_removed' and actor_name = 'Helper' and target_user_id = t.u('alice')
+                        and (details->>'amount')::int = -5 and details->>'reason' = 'Duplicate survey'), 'log: points_removed');
+  perform t.ok(exists (select 1 from admin_actions where action = 'points_added' and target_user_id = t.u('alice')
+                        and details->>'activityId' = 'game_win' and (details->>'amount')::int = 20), 'log: award_activity → points_added with activityId');
+  perform t.ok(not exists (select 1 from admin_actions where action like 'points_%' and details->>'reason' like 'Checked in%'), 'log: check-ins / referrals not logged');
+  perform t.ok(exists (select 1 from admin_actions where action = 'prize_fulfilled' and actor_id = t.u('chair1') and target_user_id = t.u('frank')
+                        and (details->>'spot')::int = 1), 'log: prize_fulfilled');
+  perform t.ok(exists (select 1 from admin_actions where action = 'prize_revoked' and target_user_id = t.u('carol')
+                        and details->>'reason' = 'Points fell below the goal after a correction'), 'log: prize_revoked with reason');
+  perform t.ok(exists (select 1 from admin_actions where action = 'cycle_reset' and actor_id = t.u('admin') and details->>'name' = '2027–28'), 'log: cycle_reset');
+  perform t.throws('update admin_actions set action = ''x''', 'forbidden', 'admin_actions is append-only even for the owner');
+  perform t.throws('delete from admin_actions', 'forbidden', 'admin_actions cannot be deleted');
+end $$;
+
+-- =============================================================================
+-- 14. 0004 — PRIZE ALERTS from the race above (old cycle)
+-- =============================================================================
+:as_super
+do $$
+declare c prize_claims;
+begin
+  perform t.eq((select count(*) from email_outbox where kind = 'prize_qualified'),
+               (select count(*) from prize_claims), 'alerts: one prize_qualified email per claim ever created');
+  select * into c from prize_claims where user_id = t.u('carol');
+  perform t.ok(exists (select 1 from email_outbox where dedupe_key = 'prize_qualified:' || c.id
+                        and subject = '🏆 YACquest: Carol won spot #1' and body_text like '%waiting%'), 'alerts: prize_qualified subject + dedupe key');
+  perform t.ok((select to_emails from email_outbox where dedupe_key = 'prize_qualified:' || c.id)
+               @> array['iesha.landis.yac@ncssm.edu','jacob.rodriguez.yac@ncssm.edu'], 'alerts: sent to the (lower-cased) chairs');
+  select * into c from prize_claims where user_id = t.u('erin') and status <> 'revoked';
+  perform t.ok(exists (select 1 from email_outbox where kind = 'prize_info' and dedupe_key = 'prize_info:' || c.id || ':' || md5(c.contact::text)
+                        and subject = 'URGENT 🎁 YACquest winner info: Erin (spot #2)'
+                        and body_text like '%(919) 555-0100%' and body_text like '%12 Oak Ave, Raleigh NC 27601%'
+                        and body_text like '%' || c.reference || '%'
+                        and body_html like '%12 Oak Ave, Raleigh NC 27601%'), 'alerts: prize_info with phone + address + reference');
+end $$;
+
+-- =============================================================================
+-- 15. 0004 — REPORT SETTINGS + RECIPIENTS
+-- =============================================================================
+:as_chair1
+do $$ begin
+  perform set_role(t.u('bob'), 'admin');   -- bob = a plain admin from here on
+end $$;
+:as_bob
+do $$ begin
+  perform t.throws('select get_report_settings()', 'forbidden', 'admin cannot get_report_settings');
+  perform t.throws('select update_report_settings(''{"weeklyHour":8}'')', 'forbidden', 'admin cannot update_report_settings');
+  perform t.throws('select send_weekly_report_now()', 'forbidden', 'admin cannot send_weekly_report_now');
+  perform t.throws('select send_test_email()', 'forbidden', 'admin cannot send_test_email');
+  perform t.throws('select email_log()', 'forbidden', 'admin cannot email_log');
+  perform t.throws(format('select retry_email(%L)', gen_random_uuid()), 'forbidden', 'admin cannot retry_email');
+  perform t.throws('select admin_action_log()', 'forbidden', 'admin cannot admin_action_log');
+  perform t.eq((select count(*) from email_outbox), 0::bigint, 'RLS: admin cannot read email_outbox');
+  perform t.eq((select count(*) from admin_actions), 0::bigint, 'RLS: admin cannot read admin_actions');
+  perform t.eq((select count(*) from report_settings), 0::bigint, 'RLS: admin cannot read report_settings');
+  perform t.denied('insert into admin_actions (action) values (''fake'')', 'admin cannot insert admin_actions');
+  perform t.denied('select claim_email_batch(10)', 'authenticated cannot call claim_email_batch');
+  perform t.denied(format('select mark_email_result(%L, true, null)', gen_random_uuid()), 'authenticated cannot call mark_email_result');
+  perform t.denied('select enqueue_weekly_report_if_due()', 'authenticated cannot call enqueue_weekly_report_if_due');
+  perform t.denied('select report_recipients()', 'authenticated cannot call internal report_recipients');
+  perform t.denied('select build_weekly_report()', 'authenticated cannot call internal build_weekly_report');
+end $$;
+:as_alice
+do $$ begin
+  perform t.eq((select count(*) from email_outbox), 0::bigint, 'RLS: participant cannot read email_outbox');
+  perform t.eq((select count(*) from admin_actions), 0::bigint, 'RLS: participant cannot read admin_actions');
+  perform t.throws('select weekly_report_preview()', 'forbidden', 'participant cannot weekly_report_preview');
+  perform t.denied('insert into email_outbox (kind, to_emails, dedupe_key) values (''test'', ''{a@b.co}'', ''x'')', 'participant cannot insert email_outbox');
+  perform t.denied('update report_settings set weekly_hour = 3', 'participant cannot update report_settings');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied('select get_report_settings()', 'anon cannot call get_report_settings');
+  perform t.denied('select submit_claim_info(''a'',''b'',''c'',''d'',null,null)', 'anon cannot call submit_claim_info');
+end $$;
+:as_chair1
+do $$
+declare s json;
+begin
+  perform t.ok((select count(*) from email_outbox) > 0, 'chair reads email_outbox');
+  perform t.ok((select count(*) from admin_actions) > 0, 'chair reads admin_actions');
+  s := get_report_settings();
+  perform t.ok((s->>'weeklyEnabled')::boolean and (s->>'weeklyDay')::int = 1 and (s->>'weeklyHour')::int = 9
+               and (s->>'nearGoalPoints')::int = 150 and json_array_length(s->'recipients') = 0
+               and (s->>'includeChairs')::boolean and (s->>'includeAdmins')::boolean and (s->>'prizeAlertsEnabled')::boolean
+               and s->>'updatedAt' is not null, 'get_report_settings defaults (camelCase)');
+  perform t.throws('select update_report_settings(''{"weeklyDay":7}'')', 'weeklyDay', 'settings: day 0–6');
+  perform t.throws('select update_report_settings(''{"weeklyDay":"1"}'')', 'weeklyDay', 'settings: day must be a number');
+  perform t.throws('select update_report_settings(''{"weeklyHour":24}'')', 'weeklyHour', 'settings: hour 0–23');
+  perform t.throws('select update_report_settings(''{"weeklyHour":-1}'')', 'weeklyHour', 'settings: hour not negative');
+  perform t.throws('select update_report_settings(''{"nearGoalPoints":1001}'')', 'nearGoalPoints', 'settings: near goal 0–1000');
+  perform t.throws('select update_report_settings(''{"recipients":["ok@example.org","not-an-email"]}'')', 'recipients', 'settings: invalid recipient email');
+  perform t.throws('select update_report_settings(''{"recipients":"a@b.co"}'')', 'recipients', 'settings: recipients must be a list');
+  perform t.throws(format('select update_report_settings(%L)', jsonb_build_object('recipients', (select jsonb_agg('p' || g || '@example.org') from generate_series(1, 21) g))), 'recipients', 'settings: at most 20 recipients');
+  perform t.throws('select update_report_settings(''{"weeklyEnabled":"yes"}'')', 'weeklyEnabled', 'settings: booleans must be booleans');
+  perform t.eq((get_report_settings()->>'weeklyHour')::int, 9, 'settings: failed updates change nothing');
+
+  s := update_report_settings('{"recipients":[" Extra@Example.org ","extra@example.org","helper@example.edu",""],"nearGoalPoints":200}');
+  perform t.eq((select array_agg(x order by x) from json_array_elements_text(s->'recipients') x), array['extra@example.org','helper@example.edu'], 'settings: recipients trimmed, lower-cased, deduped');
+  perform t.eq((s->>'nearGoalPoints')::int, 200, 'settings: partial update applied');
+  perform t.eq((s->>'weeklyHour')::int, 9, 'settings: omitted keys unchanged');
+end $$;
+:as_super
+do $$
+declare a admin_actions;
+begin
+  select * into a from admin_actions where action = 'report_settings_changed' order by id desc limit 1;
+  perform t.ok(a.actor_id = t.u('chair1') and a.actor_name = 'Iesha', 'log: report_settings_changed actor');
+  perform t.ok((a.details->>'nearGoalPoints')::int = 200 and a.details ? 'recipients' and not a.details ? 'weeklyHour', 'log: report_settings_changed details = changed keys only');
+  perform t.eq((select updated_by from report_settings), t.u('chair1'), 'settings: updated_by');
+
+  perform t.eq(report_recipients(), array['bob@example.edu','extra@example.org','helper@example.edu','iesha.landis.yac@ncssm.edu'],
+               'recipients: chairs + admins + extras, lower-case, deduped');
+  update profiles set role = 'admin' where id = t.u('unver');   -- unconfirmed admin (only possible via SQL)
+  perform t.ok(not ('unver@example.edu' = any (report_recipients())), 'recipients: unconfirmed email excluded');
+  update profiles set role = 'participant' where id = t.u('unver');
+  perform t.ok(not ('chair2' = any (report_recipients())) and not ('jacob.rodriguez.yac@ncssm.edu' = any (report_recipients())), 'recipients: participants excluded');
+  update report_settings set include_admins = false;
+  perform t.eq(report_recipients(), array['extra@example.org','helper@example.edu','iesha.landis.yac@ncssm.edu'], 'recipients: include_admins=false drops admins');
+  update report_settings set include_chairs = false;
+  perform t.eq(report_recipients(), array['extra@example.org','helper@example.edu'], 'recipients: include_chairs=false leaves only extras');
+  update report_settings set include_chairs = true, include_admins = true;
+end $$;
+
+-- =============================================================================
+-- 16. 0004 — WEEKLY REPORT
+-- =============================================================================
+:as_super
+-- new cycle (goal 300 for the test). Big boosts need a higher manual cap.
+update app_config set prize_goal = 300, prize_count = 4, tier1_points = 500;
+:as_bob
+select adjust_points(t.u('dave'), 150, 'near goal test') \g /dev/null
+:as_dave
+select update_profile('Dave <b>&', null, null) \g /dev/null
+:as_bob
+do $$
+declare p json := weekly_report_preview();
+begin
+  perform t.ok(p->>'subject' like 'YACquest weekly report%4 of 4 prize spots left', 'preview: subject has spots left');
+  perform t.ok(p->>'text' like '%PRIZE SPOTS: 4 of 4 left%', 'preview: text spots left');
+  perform t.ok(p->>'text' like '%CLOSE TO THE PRIZE (within 200 points of 300)%Dave <b>& (UNC) — 150 pts, 150 to go%TOP 5%', 'preview: close-to-prize list with points to go');
+  perform t.ok(p->>'text' not like '%Alice A. (Duke) — 10 pts, 290 to go%', 'preview: people far from the goal are not "close"');
+  perform t.ok(p->>'text' like '%TOP 5 OVERALL%1. Dave <b>& (UNC) — 150 pts%', 'preview: top 5');
+  perform t.ok(p->>'text' like '%CAMPUS CUP%' and p->>'text' like '%THIS WEEK%' and p->>'text' like '%PENDING REVIEWS:%' and p->>'text' like '%DAYS LEFT IN CYCLE (2027–28): 30_%', 'preview: campus cup, this week, pending, days left');
+  perform t.ok(p->>'html' like '<!doctype html>%#0b2a5b%#f2b33d%', 'preview: html uses navy/gold');
+  perform t.ok(p->>'html' like '%Dave &lt;b&gt;&amp;%' and p->>'html' not like '%Dave <b>%', 'preview: names are HTML-escaped');
+  perform t.ok(p->>'html' like '%4 of 4</div>%prize spots left%', 'preview: html spots left');
+  perform t.eq((select array_agg(x order by x) from json_array_elements_text(p->'recipients') x),
+               array['bob@example.edu','extra@example.org','helper@example.edu','iesha.landis.yac@ncssm.edu'], 'preview: recipients');
+end $$;
+
+-- enqueue_weekly_report_if_due: service_role / pg_cron only
+:as_alice
+reset role;   -- superuser connection, but with a logged-in user's JWT
+do $$ begin
+  perform t.throws('select enqueue_weekly_report_if_due()', 'forbidden', 'enqueue refused for a logged-in user even with EXECUTE');
+  perform t.throws('select claim_email_batch(5)', 'forbidden', 'claim_email_batch refused for a logged-in user even with EXECUTE');
+end $$;
+:as_super
+update report_settings set weekly_day = 0, weekly_hour = 23;   -- Sunday 11 pm NY: not due (except during that hour)
+:as_service
+do $$ begin
+  if not (extract(dow from now() at time zone 'America/New_York') = 0 and extract(hour from now() at time zone 'America/New_York') = 23) then
+    perform t.eq(enqueue_weekly_report_if_due(), false, 'enqueue: not due before the scheduled day/hour');
+  end if;
+end $$;
+:as_super
+update report_settings set weekly_day = 1, weekly_hour = 0, recipients = '{}', include_chairs = false, include_admins = false;
+:as_service
+do $$ begin
+  perform t.eq(enqueue_weekly_report_if_due(), false, 'enqueue: no recipients → nothing');
+end $$;
+:as_super
+update report_settings set include_chairs = true, include_admins = true, weekly_enabled = false;
+:as_service
+do $$ begin
+  perform t.eq(enqueue_weekly_report_if_due(), false, 'enqueue: disabled → nothing');
+end $$;
+:as_super
+do $$ begin
+  perform t.eq((select count(*) from email_outbox where kind = 'weekly_report'), 0::bigint, 'enqueue: nothing queued so far');
+end $$;
+update report_settings set weekly_enabled = true;   -- Monday 00:00 → always due
+:as_service
+do $$ begin
+  perform t.eq(enqueue_weekly_report_if_due(), true, 'enqueue: due → queued (service_role)');
+  perform t.eq(enqueue_weekly_report_if_due(), false, 'enqueue: same week → deduped');
+end $$;
+:as_cron
+do $$ begin
+  perform t.eq(enqueue_weekly_report_if_due(), false, 'enqueue: callable by superuser (pg_cron), still deduped');
+end $$;
+:as_super
+do $$ begin
+  perform t.eq((select count(*) from email_outbox where kind = 'weekly_report'), 1::bigint, 'enqueue: exactly one weekly row');
+  perform t.ok(exists (select 1 from email_outbox where kind = 'weekly_report'
+                        and dedupe_key = 'weekly:' || to_char(now() at time zone 'America/New_York', 'IYYY-IW')
+                        and to_emails = report_recipients()
+                        and status = 'pending' and body_html like '<!doctype html>%' and body_text like '%CLOSE TO THE PRIZE%'),
+               'enqueue: dedupe key weekly:<IYYY-IW>, html + text');
+end $$;
+:as_chair1
+do $$ begin
+  perform send_weekly_report_now();
+  perform send_weekly_report_now();
+  perform send_test_email();
+end $$;
+:as_super
+do $$ begin
+  perform t.eq((select count(*) from email_outbox where kind = 'weekly_report' and dedupe_key like 'weekly-manual:%'), 2::bigint, 'send_weekly_report_now queues a new report each time');
+  perform t.ok(exists (select 1 from email_outbox where kind = 'test' and to_emails = array['iesha.landis.yac@ncssm.edu'] and dedupe_key like 'test:%'), 'send_test_email goes to the caller only');
+end $$;
+
+-- =============================================================================
+-- 17. 0004 — PRIZE ALERTS (new cycle) + WINNER FORM
+-- =============================================================================
+:as_bob
+select adjust_points(t.u('carol'), 300, 'alert test') \g /dev/null
+select adjust_points(t.u('alice'), 1, 'trigger another race refresh') \g /dev/null
+:as_super
+do $$
+declare c prize_claims;
+begin
+  select * into c from prize_claims where user_id = t.u('carol') and cycle_id = active_cycle_id();
+  perform t.eq(c.spot, 1, 'new cycle: carol wins spot 1');
+  perform t.eq((select count(*) from email_outbox where dedupe_key = 'prize_qualified:' || c.id), 1::bigint, 'alert: prize_qualified queued once');
+  perform t.eq((select count(*) from email_outbox where kind = 'prize_qualified' and subject = '🏆 YACquest: Carol won spot #1'), 2::bigint, 'alert: (old + new cycle) carol alerts');
+  perform t.eq((prize_status()->>'total')::int, 4, 'prize_status total = 4');
+  perform t.eq((prize_status()->>'remaining')::int, 3, 'prize_status remaining = 3');
+  update report_settings set prize_alerts_enabled = false;
+end $$;
+:as_bob
+select adjust_points(t.u('dave'), 150, 'wins with alerts off') \g /dev/null
+:as_super
+do $$ begin
+  perform t.ok(exists (select 1 from prize_claims where user_id = t.u('dave') and cycle_id = active_cycle_id() and status = 'qualified'), 'dave wins spot 2');
+  perform t.ok(not exists (select 1 from email_outbox where dedupe_key = 'prize_qualified:' || (select id from prize_claims where user_id = t.u('dave') and cycle_id = active_cycle_id())), 'alert: none when prize alerts are off');
+  update report_settings set prize_alerts_enabled = true;
+end $$;
+:as_carol
+do $$ declare c json;
+begin
+  perform t.throws('select submit_claim_info(''C'', ''carol@example.edu'', ''919 555 0100'', ''1 Main St, Durham NC'')', 'fullName', 'winner form: name');
+  perform t.throws('select submit_claim_info(''Carol C'', ''carol@'', ''919 555 0100'', ''1 Main St, Durham NC'')', 'email', 'winner form: email');
+  perform t.throws('select submit_claim_info(''Carol C'', ''carol@example.edu'', ''phone'', ''1 Main St, Durham NC'')', 'phone', 'winner form: phone without digits');
+  perform t.throws('select submit_claim_info(''Carol C'', ''carol@example.edu'', null, ''1 Main St, Durham NC'')', 'phone', 'winner form: phone required');
+  perform t.throws('select submit_claim_info(''Carol C'', ''carol@example.edu'', ''919 555 0100'', ''  Durham  '')', 'address', 'winner form: short address');
+  c := submit_claim_info('Carol C', 'carol@example.edu', '919 555 0100', '1 Main St, Durham NC 27701');   -- preference/notes default
+  perform t.eq(c->>'status', 'info_submitted', 'winner form: 4-arg call works (defaults)');
+  perform t.ok((c->'contact')::jsonb ?& array['fullName','email','phone','address','preference'] and not ((c->'contact')::jsonb ? 'notes'), 'winner form: contact keys');
+  perform submit_claim_info('Carol C', 'carol@example.edu', '919 555 0100', '1 Main St, Durham NC 27701');   -- same info again
+end $$;
+:as_super
+do $$ declare c prize_claims;
+begin
+  select * into c from prize_claims where user_id = t.u('carol') and cycle_id = active_cycle_id();
+  perform t.eq((select count(*) from email_outbox where kind = 'prize_info' and dedupe_key like 'prize_info:' || c.id || ':%'), 1::bigint, 'alert: resubmitting the same info sends no second email');
+  perform t.ok(exists (select 1 from email_outbox where kind = 'prize_info' and dedupe_key = 'prize_info:' || c.id || ':' || md5(c.contact::text)
+                        and subject = 'URGENT 🎁 YACquest winner info: Carol (spot #1)'
+                        and body_text like '%Phone: 919 555 0100%' and body_text like '%Mailing address: 1 Main St, Durham NC 27701%'
+                        and body_text like '%Campus: Duke%'), 'alert: prize_info body has phone + address + campus');
+end $$;
+:as_carol
+select submit_claim_info('Carol C', 'carol@example.edu', '919 555 0100', '2 Elm St, Durham NC 27701', 'Target', 'moved!') \g /dev/null
+:as_super
+do $$ begin
+  perform t.eq((select count(*) from email_outbox e join prize_claims c on e.dedupe_key like 'prize_info:' || c.id || ':%'
+                 where c.user_id = t.u('carol') and c.cycle_id = active_cycle_id()), 2::bigint, 'alert: changed info sends a new prize_info email');
+end $$;
+
+-- =============================================================================
+-- 18. 0004 — SENDING: claim_email_batch / mark_email_result / retry_email
+-- =============================================================================
+:as_super
+do $$ begin
+  perform set_config('t.pending', (select count(*) from email_outbox where status = 'pending')::text, false);
+end $$;
+:as_service
+do $$
+declare
+  ids uuid[];
+  v_fail uuid;
+  v_ok uuid;
+begin
+  select array_agg(id) into ids from claim_email_batch(2);
+  perform t.eq(cardinality(ids), 2, 'claim: respects p_limit');
+  select array_agg(id) into ids from claim_email_batch(500);
+  perform t.eq(cardinality(ids), current_setting('t.pending')::int - 2, 'claim: picks the rest of the pending rows');
+  perform t.eq((select count(*) from claim_email_batch()), 0::bigint, 'claim: sending rows are not picked again');
+  v_ok := ids[1]; v_fail := ids[2];
+  perform set_config('t.fail', v_fail::text, false);
+  perform set_config('t.ok', v_ok::text, false);
+  perform mark_email_result(v_ok, true, null);
+  perform mark_email_result(v_fail, false, repeat('x', 600));
+  perform t.throws(format('select mark_email_result(%L, true, null)', gen_random_uuid()), 'not_found', 'mark_email_result unknown id');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok((select status = 'sent' and sent_at is not null and last_error is null and attempts = 1 from email_outbox where id = current_setting('t.ok')::uuid), 'mark ok → sent');
+  perform t.ok((select status = 'failed' and length(last_error) = 500 and attempts = 1 from email_outbox where id = current_setting('t.fail')::uuid), 'mark failed → failed, error truncated to 500');
+  perform t.eq((select count(*) from email_outbox where status = 'sending'), current_setting('t.pending')::bigint - 2, 'others still sending');
+end $$;
+:as_service
+do $$
+declare ids uuid[]; i int;
+begin
+  select array_agg(id) into ids from claim_email_batch(50);
+  perform t.eq(ids, array[current_setting('t.fail')::uuid], 'claim: failed row is retried');
+  perform t.eq((select attempts from email_outbox where id = ids[1]), 2, 'claim: attempts + 1');
+  for i in 1..3 loop
+    perform mark_email_result(ids[1], false, 'SMTP down');
+    perform claim_email_batch(50);
+  end loop;
+  perform t.eq((select attempts from email_outbox where id = ids[1]), 5, 'claim: attempt 5');
+  perform mark_email_result(ids[1], false, 'SMTP down');
+  perform t.eq((select count(*) from claim_email_batch(50)), 0::bigint, 'claim: gives up after 5 attempts');
+end $$;
+:as_super
+update email_outbox set claimed_at = now() - interval '20 minutes'
+ where id = (select id from email_outbox where status = 'sending' order by created_at limit 1);
+:as_service
+do $$ begin
+  perform t.eq((select count(*) from claim_email_batch(50)), 1::bigint, 'claim: rows stuck in sending > 15 min are picked again');
+end $$;
+:as_chair1
+do $$
+declare l record;
+begin
+  perform t.ok((select bool_and(a.created_at >= b.created_at)
+                  from (select created_at, row_number() over () rn from email_log(1000)) a
+                  join (select created_at, row_number() over () rn from email_log(1000)) b on b.rn = a.rn + 1), 'email_log newest first');
+  perform t.eq((select count(*) from email_log(3)), 3::bigint, 'email_log limit');
+  select * into l from email_log(1000) where id = current_setting('t.fail')::uuid;
+  perform t.ok(l.status = 'failed' and l.attempts = 5 and l.last_error = 'SMTP down' and l.kind is not null and l.to_emails is not null, 'email_log fields');
+  perform retry_email(current_setting('t.fail')::uuid);
+  perform t.throws(format('select retry_email(%L)', gen_random_uuid()), 'not_found', 'retry_email unknown id');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok((select status = 'pending' and attempts = 0 from email_outbox where id = current_setting('t.fail')::uuid), 'retry_email → pending, attempts 0');
+end $$;
+:as_service
+do $$ begin
+  perform t.ok(exists (select 1 from claim_email_batch(50) where id = current_setting('t.fail')::uuid), 'claim: retried row is picked up again');
+end $$;
+
+-- =============================================================================
+-- 19. 0004 — admin_action_log (chair, keyset paging)
+-- =============================================================================
+:as_chair1
+do $$
+declare
+  p1 bigint[];
+  p2 bigint[];
+  total bigint := (select count(*) from admin_actions);
+begin
+  select array_agg(id order by id desc) into p1 from admin_action_log(5);
+  perform t.eq(cardinality(p1), 5, 'action log: page size');
+  perform t.eq(p1[1], (select max(id) from admin_actions), 'action log: newest first');
+  select array_agg(id order by id desc) into p2 from admin_action_log(5, p1[5]);
+  perform t.ok(cardinality(p2) = 5 and p2[1] < p1[5], 'action log: next page strictly older (p_before)');
+  perform t.eq((select count(*) from admin_action_log(1000)), total, 'action log: everything reachable');
+  perform t.ok(exists (select 1 from admin_action_log(1000) where action = 'role_changed' and actor_name = 'Iesha' and target_name = 'Bob'
+                        and details = '{"from":"participant","to":"admin"}'::jsonb), 'action log: row shape (actor_name, target_name, details)');
+  perform t.ok(exists (select 1 from admin_action_log(1000) where action = 'points_added' and actor_name = 'Bob' and target_name = 'Carol'
+                        and (details->>'amount')::int = 300 and details->>'reason' = 'alert test'), 'action log: manual add by admin');
 end $$;
 
 -- =============================================================================

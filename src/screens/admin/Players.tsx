@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import * as api from '../../api';
 import { ACTIVITIES, activityById } from '../../lib/activities';
-import { TIER_POINTS, campusName } from '../../config';
+import { PRIZE, TIER_POINTS, campusName } from '../../config';
 import { Empty, ErrorText, Loading, Modal, useToast } from '../../components/ui';
 import { fmtDateTime, fmtPts } from '../../lib/format';
 import { errorMessage, useAsync } from '../../lib/useAsync';
@@ -109,7 +109,8 @@ function PlayerModal({ user, onClose }: { user: api.AdminUserRow; onClose: () =>
 
         <form className="stack" onSubmit={adjust}>
           <h3>Adjust points</h3>
-          <label className="field"><span>Amount (+ or −)</span><input className="input" type="number" step={1} value={amount} onChange={(e) => setAmount(e.target.value)} required /></label>
+          <label className="field"><span>Amount (+ or −)</span><input className="input" type="number" step={1} min={-PRIZE.goal} max={TIER_POINTS[1]} value={amount} onChange={(e) => setAmount(e.target.value)} required /></label>
+          <p className="muted" style={{ margin: 0 }}>Add at most +{TIER_POINTS[1]} at a time (one High-Impact action) so the prize race stays fair. Use a negative number to remove points or fix mistakes.</p>
           <label className="field"><span>Reason (required)</span><input className="input" value={reason} onChange={(e) => setReason(e.target.value)} required /></label>
           <p className="muted">The reason is shown to the participant in their notifications.</p>
           <ErrorText error={adjErr} />

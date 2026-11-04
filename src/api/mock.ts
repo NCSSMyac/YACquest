@@ -12,23 +12,30 @@
  */
 import { CAPS, CAMPUSES, CYCLE, PRIZE, TIER_POINTS, type CampusId } from '../config';
 import { ACTIVITIES, ONCE_PER_CYCLE, activityById } from '../lib/activities';
+import { EVENT_KINDS, kindInfo } from '../lib/eventKinds';
+import { claimContactError, isEmail } from '../lib/validate';
 import type {
   Activity,
+  AdminAction,
   AppNotification,
   AvatarId,
   CampusCupRow,
+  ClaimContact,
   Dashboard,
+  EmailKind,
+  EmailLogRow,
   LeaderRow,
   LedgerEntry,
   NotificationKind,
   PrizeClaim,
   PrizeStatus,
   PrizeSuggestion,
+  ReportSettings,
   Role,
   Submission,
   SubmissionStatus,
-  SyncStatus,
   User,
+  WeeklyReport,
   YacEvent,
 } from '../types';
 
@@ -58,13 +65,23 @@ interface Db {
   notifications: AppNotification[];
   suggestions: PrizeSuggestion[];
   archives: { cycle: string; archivedAt: string; ledgerRows: number; winners: PrizeClaim[] }[];
-  sync: SyncStatus;
+  reportSettings: ReportSettings;
+  /** Emails waiting to go out / already sent (the real one is the email_outbox table). */
+  outbox: OutboxRow[];
+  /** Append-only admin action log, oldest first. */
+  actions: AdminAction[];
   seq: number;
+}
+
+interface OutboxRow extends EmailLogRow {
+  text: string;
+  html: string;
+  dedupeKey: string;
 }
 
 const DB_KEY = 'yacquest-db-v1';
 const SESSION_KEY = 'yacquest-session';
-const DB_VERSION = 2;
+const DB_VERSION = 4;
 
 let db: Db | null = null;
 
@@ -201,6 +218,7 @@ function refreshPrizeRace() {
       c.status = 'revoked';
       c.revokedAt = now();
       c.revokeReason = 'Points fell below the goal after a correction';
+      logAction('prize_revoked', { displayName: c.displayName }, { spot: c.spot, reason: c.revokeReason });
       notify(c.userId, 'prize_update', 'Prize spot revoked', `Your points dropped below ${PRIZE.goal} after a correction, so spot #${c.spot} reopened. Earn it back to qualify again.`);
     }
   }
@@ -217,7 +235,9 @@ function refreshPrizeRace() {
   for (const { u, at } of eligible) {
     const spot = free.shift();
     if (spot == null) break;
-    d.claims.push({ spot, userId: u.id, displayName: u.displayName, campus: u.campus, qualifiedAt: at, status: 'qualified' });
+    const claim: PrizeClaim = { spot, userId: u.id, displayName: u.displayName, campus: u.campus, qualifiedAt: at, status: 'qualified' };
+    d.claims.push(claim);
+    prizeAlert('prize_qualified', claim);
     notify(u.id, 'prize_qualified', `You won spot #${spot}!`, `You reached ${PRIZE.goal} points and claimed a ${PRIZE.name}. Open Prize to send your delivery info.`);
   }
 }
@@ -352,7 +372,7 @@ export async function getDashboard(): Promise<Dashboard> {
     recentLedger: d.ledger.filter((l) => l.userId === user.id).slice(-8).reverse(),
     unreadCount: d.notifications.filter((n) => n.userId === user.id && !n.read).length,
     daysLeft: Math.max(0, Math.ceil((new Date(CYCLE.end).getTime() - Date.now()) / 86_400_000)),
-    referralsUsed: d.ledger.filter((l) => l.userId === user.id && l.source === 'referral').length,
+    referralsUsed: d.ledger.filter((l) => l.userId === user.id && l.activityId === 'bring_new_alum').length,
   };
 }
 
@@ -407,11 +427,16 @@ export async function checkIn(eventId: string, password: string): Promise<{ poin
 
   // Referral bonus: first event attended by someone who signed up with a friend code.
   const firstCheckIn = d.ledger.filter((l) => l.userId === user.id && l.source === 'checkin').length === 1;
+  // BOTH people earn Tier 1 (mirrors 0003_points_and_referrals.sql).
   if (firstCheckIn && user.referredBy) {
-    const used = d.ledger.filter((l) => l.userId === user.referredBy && l.source === 'referral').length;
+    const used = d.ledger.filter((l) => l.userId === user.referredBy && l.activityId === 'bring_new_alum').length;
     if (used < CAPS.referralsPerCycle) {
       addLedger({ userId: user.referredBy, amount: TIER_POINTS[1], source: 'referral', activityId: 'bring_new_alum', refId: user.id, reason: `Brought a new alum: ${user.displayName}` });
       notify(user.referredBy, 'points_adjusted', `+${TIER_POINTS[1]} for bringing a friend`, `${user.displayName} checked in to their first YAC event.`);
+    }
+    if (!d.ledger.some((l) => l.userId === user.id && l.activityId === 'joined_with_code')) {
+      addLedger({ userId: user.id, amount: TIER_POINTS[1], source: 'referral', activityId: 'joined_with_code', refId: `joined:${user.id}`, reason: 'Joined with a friend code' });
+      notify(user.id, 'points_adjusted', `+${TIER_POINTS[1]} for joining with a friend code`, 'Welcome bonus for coming to your first YAC event!');
     }
   }
   save();
@@ -518,17 +543,25 @@ export async function prizeStatus(): Promise<PrizeStatus> {
   return prizeStatusSync();
 }
 
-export async function submitClaimInfo(contact: { fullName: string; email: string; preference: string; notes?: string }): Promise<PrizeClaim> {
+export async function submitClaimInfo(contact: ClaimContact): Promise<PrizeClaim> {
   await delay(400);
   const user = me();
   const claim = load().claims.find((c) => c.userId === user.id && c.status !== 'revoked');
   if (!claim) return fail('no_claim', 'You haven’t won a spot yet.');
   if (claim.status === 'fulfilled') fail('fulfilled', 'This prize was already delivered.');
-  if (contact.fullName.trim().length < 2) fail('fullName', 'Enter your full name.');
-  if (!/^\S+@\S+\.\S+$/.test(contact.email)) fail('email', 'Enter a valid email.');
-  claim.contact = { ...contact, fullName: contact.fullName.trim() };
+  const problem = claimContactError(contact);
+  if (problem) fail(problem.code, problem.message);
+  claim.contact = {
+    fullName: contact.fullName.trim(),
+    email: contact.email.trim(),
+    phone: contact.phone.trim(),
+    address: contact.address.trim(),
+    preference: contact.preference?.trim() || undefined,
+    notes: contact.notes?.trim() || undefined,
+  };
   claim.status = 'info_submitted';
   claim.reference = claim.reference ?? `YQ-${new Date().getFullYear()}-${String(claim.spot).padStart(2, '0')}${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  prizeAlert('prize_info', claim);
   save();
   return claim;
 }
@@ -605,6 +638,7 @@ export async function reviewSubmission(id: string, decision: 'approved' | 'rejec
   } else {
     notify(owner.id, 'submission_rejected', `Not approved — ${a.title}`, reason!.trim());
   }
+  logAction(decision === 'approved' ? 'submission_approved' : 'submission_rejected', owner, { activityId: a.id, reason: reason?.trim() || null }, admin);
   save();
 }
 
@@ -634,9 +668,11 @@ export async function adjustPoints(userId: string, amount: number, reason: strin
   const admin = requireRole('admin', 'chair');
   const u = load().users.find((x) => x.id === userId);
   if (!u || !canManage(admin, u)) return fail('forbidden', 'That person was not found.');
-  if (!Number.isInteger(amount) || amount === 0 || Math.abs(amount) > 500) fail('amount', 'Enter a whole number between -500 and 500 (not 0).');
+  if (!Number.isInteger(amount) || amount === 0 || amount > TIER_POINTS[1] || amount < -PRIZE.goal)
+    fail('amount', `Add at most ${TIER_POINTS[1]} points at a time (one High-Impact action), or remove up to ${PRIZE.goal}. Not 0.`);
   if (reason.trim().length < 3) fail('reason', 'A reason is required.');
   addLedger({ userId, amount, source: 'manual', reason: reason.trim(), createdBy: admin.id });
+  logAction(amount > 0 ? 'points_added' : 'points_removed', u, { amount, reason: reason.trim(), activityId: null }, admin);
   notify(userId, 'points_adjusted', `${amount > 0 ? '+' : ''}${amount} pts from ${admin.displayName}`, reason.trim());
   save();
 }
@@ -649,7 +685,9 @@ export async function awardActivity(userId: string, activityId: string, note: st
   const a = activityById(activityId);
   if (!u || !canManage(admin, u)) return fail('forbidden', 'That person was not found.');
   if (!a) return fail('activity', 'Unknown activity.');
-  addLedger({ userId, amount: TIER_POINTS[a.tier], source: 'manual', activityId, reason: note.trim() ? `${a.title}: ${note.trim()}` : a.title, createdBy: admin.id });
+  const why = note.trim() ? `${a.title}: ${note.trim()}` : a.title;
+  addLedger({ userId, amount: TIER_POINTS[a.tier], source: 'manual', activityId, reason: why, createdBy: admin.id });
+  logAction('points_added', u, { amount: TIER_POINTS[a.tier], reason: why, activityId }, admin);
   notify(userId, 'points_adjusted', `+${TIER_POINTS[a.tier]} pts — ${a.title}`, note.trim() || `Awarded by ${admin.displayName}`);
   save();
 }
@@ -664,7 +702,14 @@ export async function adminListEvents(): Promise<YacEvent[]> {
     .sort((a, b) => b.startsAt.localeCompare(a.startsAt));
 }
 
+/** The kind decides the campus rules (mirrors 0002_event_kinds.sql). */
+function normalizeEvent(input: EventInput): EventInput {
+  return input.kind === 'cross_campus' ? { ...input, campus: 'all', crossCampus: true } : { ...input, crossCampus: false };
+}
+
 function validateEvent(admin: User, input: EventInput) {
+  if (!EVENT_KINDS.some((k) => k.id === input.kind)) fail('kind', 'Pick the kind of event.');
+  if (input.kind !== 'cross_campus' && input.campus === 'all') fail('campus', 'Pick the host campus.');
   if (input.title.trim().length < 3) fail('title', 'Give the event a title.');
   if (input.password.trim().length < 4) fail('password', 'Event password: at least 4 characters.');
   if (new Date(input.endsAt) <= new Date(input.startsAt)) fail('endsAt', 'End time must be after the start.');
@@ -675,8 +720,9 @@ export async function createEvent(input: EventInput): Promise<YacEvent> {
   await delay();
   const admin = requireRole('admin', 'chair');
   validateEvent(admin, input);
-  const e: YacEvent = { ...input, title: input.title.trim(), password: input.password.trim(), id: nextId('evt'), attendeeCount: 0, activityId: input.crossCampus || input.campus === 'all' ? 'cross_campus_event' : input.kind === 'panel' ? 'panel_mentorship' : 'home_event' };
+  const e: YacEvent = { ...normalizeEvent(input), title: input.title.trim(), password: input.password.trim(), id: nextId('evt'), attendeeCount: 0, activityId: kindInfo(input.kind).activityId };
   load().events.push(e);
+  logAction('event_created', undefined, { title: e.title, kind: e.kind, campus: e.campus }, admin);
   save();
   return e;
 }
@@ -687,7 +733,8 @@ export async function updateEvent(id: string, input: EventInput): Promise<YacEve
   const e = load().events.find((x) => x.id === id);
   if (!e || !canManage(admin)) return fail('forbidden', 'Not found.');
   validateEvent(admin, input);
-  Object.assign(e, input, { title: input.title.trim(), password: input.password.trim(), activityId: input.crossCampus || input.campus === 'all' ? 'cross_campus_event' : input.kind === 'panel' ? 'panel_mentorship' : 'home_event' });
+  Object.assign(e, normalizeEvent(input), { title: input.title.trim(), password: input.password.trim(), activityId: kindInfo(input.kind).activityId });
+  logAction('event_updated', undefined, { title: e.title, kind: e.kind, campus: e.campus }, admin);
   save();
   return e;
 }
@@ -700,6 +747,7 @@ export async function deleteEvent(id: string): Promise<void> {
   if (!e || !canManage(admin)) return fail('forbidden', 'Not found.');
   if (e.attendeeCount > 0) fail('has_attendees', 'People already checked in — this event can’t be deleted.');
   d.events = d.events.filter((x) => x.id !== id);
+  logAction('event_deleted', undefined, { title: e.title, kind: e.kind, campus: e.campus }, admin);
   save();
 }
 
@@ -711,11 +759,12 @@ export async function listClaims(): Promise<PrizeClaim[]> {
 
 export async function markFulfilled(spot: number): Promise<void> {
   await delay();
-  requireRole('chair');
+  const chair = requireRole('chair');
   const c = load().claims.find((x) => x.spot === spot && x.status !== 'revoked');
   if (!c) return fail('not_found', 'Claim not found.');
   c.status = 'fulfilled';
   c.fulfilledAt = now();
+  logAction('prize_fulfilled', { displayName: c.displayName }, { spot: c.spot, reason: null }, chair);
   notify(c.userId, 'prize_update', 'Your prize is on the way!', `Your ${PRIZE.name} has been sent. Reference ${c.reference ?? '—'}.`);
   save();
 }
@@ -750,26 +799,7 @@ export async function adminOverview(): Promise<AdminOverview> {
   };
 }
 
-// Google Sheets two-way sync (proposal §5). The backend owns the real job;
-// the front end only shows status and can trigger a manual run.
-export async function syncStatus(): Promise<SyncStatus> {
-  await delay();
-  requireRole('chair');
-  return load().sync;
-}
-
-export async function runSync(): Promise<SyncStatus> {
-  requireRole('chair');
-  const d = load();
-  d.sync = { ...d.sync, state: 'syncing' };
-  save();
-  await delay(1200);
-  d.sync = { ...d.sync, state: 'ok', lastSyncAt: now(), rowsPushed: d.ledger.length, rowsPulled: 0, conflicts: 0 };
-  save();
-  return d.sync;
-}
-
-/** CSV of the full ledger — for the Sheet, audits and the year-end archive. */
+/** CSV of the full ledger — for audits and the year-end archive. */
 export async function exportLedgerCsv(): Promise<string> {
   await delay();
   requireRole('chair');
@@ -783,26 +813,19 @@ export async function exportLedgerCsv(): Promise<string> {
   return [header.join(','), ...rows].join('\n');
 }
 
-export async function weeklyReportPreview(): Promise<{ subject: string; lines: string[] }> {
-  const o = await adminOverview();
-  const top = await leaderboard(5);
-  return {
-    subject: `YACquest weekly report — ${new Date().toLocaleDateString()}`,
-    lines: [
-      `${o.activeThisWeek} of ${o.participants} participants earned points this week (${o.pointsThisWeek} pts total).`,
-      `${o.newSignupsThisWeek} new sign-ups. ${o.pendingReviews} submissions waiting for review.`,
-      `Prize race: ${o.prize.remaining} of ${o.prize.total} spots left.`,
-      `Top 5: ${top.map((r) => `${r.displayName} (${r.points})`).join(', ')}`,
-    ],
-  };
+export async function weeklyReportPreview(): Promise<WeeklyReport> {
+  await delay();
+  requireRole('admin', 'chair');
+  return { ...buildWeeklyReport(), recipients: reportRecipients() };
 }
 
 /** End-of-cycle reset (proposal §3): archive, then zero everyone. Chair only. */
 export async function resetCycle(confirmText: string): Promise<void> {
   await delay(600);
-  requireRole('chair');
+  const chair = requireRole('chair');
   if (confirmText !== 'RESET') fail('confirm', 'Type RESET to confirm.');
   const d = load();
+  logAction('cycle_reset', undefined, { name: CYCLE.name }, chair);
   d.archives.push({ cycle: CYCLE.name, archivedAt: now(), ledgerRows: d.ledger.length, winners: d.claims });
   d.ledger = [];
   d.claims = [];
@@ -866,7 +889,9 @@ export function seed(): Db {
     notifications: [],
     suggestions: [],
     archives: [],
-    sync: { lastSyncAt: iso(-2 * H), rowsPushed: 0, rowsPulled: 0, conflicts: 0, state: 'ok', sheetUrl: 'https://docs.google.com/spreadsheets/' },
+    reportSettings: defaultReportSettings(),
+    outbox: [],
+    actions: [],
     seq: 1000,
   };
   db = d;
@@ -915,14 +940,14 @@ export function seed(): Db {
   // Events: past, live now (so check-in works in a demo), and upcoming.
   const ev = (e: Omit<YacEvent, 'id' | 'attendeeCount' | 'checkInGraceMinutes'>, attendees = 0) =>
     d.events.push({ ...e, id: nextId('evt'), attendeeCount: attendees, checkInGraceMinutes: 60 });
-  ev({ title: 'Kickoff Mixer', campus: 'duke', crossCampus: false, kind: 'social', location: 'Duke Gardens', startsAt: iso(-12 * D), endsAt: iso(-12 * D + 2 * H), password: 'KICKOFF', activityId: 'home_event' }, 34);
-  ev({ title: 'Trivia Night', campus: 'unc', crossCampus: false, kind: 'game_night', location: 'Top of the Hill', startsAt: iso(-6 * D), endsAt: iso(-6 * D + 2 * H), password: 'TARHEEL', activityId: 'home_event' }, 41);
-  ev({ title: 'Study Break Social', campus: 'duke', crossCampus: false, kind: 'social', location: 'Bryan Center', startsAt: iso(-1 * H), endsAt: iso(3 * H), password: 'BLUEDEVIL', activityId: 'home_event' });
+  ev({ title: 'Kickoff Mixer', campus: 'duke', crossCampus: false, kind: 'home', location: 'Duke Gardens', startsAt: iso(-12 * D), endsAt: iso(-12 * D + 2 * H), password: 'KICKOFF', activityId: 'home_event' }, 34);
+  ev({ title: 'Trivia Night', campus: 'unc', crossCampus: false, kind: 'home', location: 'Top of the Hill', startsAt: iso(-6 * D), endsAt: iso(-6 * D + 2 * H), password: 'TARHEEL', activityId: 'home_event' }, 41);
+  ev({ title: 'Study Break Social', campus: 'duke', crossCampus: false, kind: 'home', location: 'Bryan Center', startsAt: iso(-1 * H), endsAt: iso(3 * H), password: 'BLUEDEVIL', activityId: 'home_event' });
   ev({ title: 'Career Panel: First Jobs', campus: 'unc', crossCampus: false, kind: 'panel', location: 'Gerrard Hall', startsAt: iso(-1 * H), endsAt: iso(3 * H), password: 'PANEL', activityId: 'panel_mentorship' });
-  ev({ title: 'Pack Game Watch', campus: 'ncsu', crossCampus: false, kind: 'game_night', location: 'Talley Student Union', startsAt: iso(-1 * H), endsAt: iso(3 * H), password: 'WOLFPACK', activityId: 'home_event' });
-  ev({ title: 'Triangle Trivia Showdown', campus: 'all', crossCampus: true, kind: 'game_night', location: 'American Tobacco Campus, Durham', startsAt: iso(-1 * H), endsAt: iso(4 * H), password: 'TRIANGLE', activityId: 'cross_campus_event' });
+  ev({ title: 'Pack Game Watch', campus: 'ncsu', crossCampus: false, kind: 'home', location: 'Talley Student Union', startsAt: iso(-1 * H), endsAt: iso(3 * H), password: 'WOLFPACK', activityId: 'home_event' });
+  ev({ title: 'Triangle Trivia Showdown', campus: 'all', crossCampus: true, kind: 'cross_campus', location: 'American Tobacco Campus, Durham', startsAt: iso(-1 * H), endsAt: iso(4 * H), password: 'TRIANGLE', activityId: 'cross_campus_event' });
   ev({ title: 'Mentorship Circle', campus: 'duke', crossCampus: false, kind: 'panel', location: 'Perkins Library', startsAt: iso(5 * D), endsAt: iso(5 * D + 90 * 60_000), password: 'MENTOR', activityId: 'panel_mentorship' });
-  ev({ title: 'Winter Service Day', campus: 'all', crossCampus: true, kind: 'service', location: 'NCSSM Durham', startsAt: iso(17 * D), endsAt: iso(17 * D + 4 * H), password: 'SERVE', activityId: 'cross_campus_event' });
+  ev({ title: 'Winter Service Day', campus: 'all', crossCampus: true, kind: 'cross_campus', location: 'NCSSM Durham', startsAt: iso(17 * D), endsAt: iso(17 * D + 4 * H), password: 'SERVE', activityId: 'cross_campus_event' });
 
   // Demo participant history
   const kickoff = d.events[0];
@@ -945,12 +970,21 @@ export function seed(): Db {
   }
 
   d.suggestions.push({ id: nextId('sug'), userId: participants[3].id, idea: 'Chick-fil-A gift cards!', createdAt: iso(-4 * D) });
-  d.sync.rowsPushed = d.ledger.length;
+
+  // A little admin history so the activity log isn't empty in the demo.
+  const [iesha, jacob] = d.users;
+  const seedAction = (actor: User, action: string, target: string | undefined, details: Record<string, unknown>, createdAt: string) =>
+    d.actions.push({ id: d.actions.length + 1, actorName: actor.displayName, action, targetName: target, details, createdAt });
+  seedAction(iesha, 'event_created', undefined, { title: kickoff.title, kind: 'home', campus: 'duke' }, iso(-14 * D));
+  seedAction(jacob, 'submission_approved', demo.displayName, { activityId: 'follow_ig', reason: null }, iso(-10 * D));
+  seedAction(jacob, 'submission_rejected', demo.displayName, { activityId: 'repost', reason: 'Screenshot was cropped — we couldn’t see the YAC post.' }, iso(-7 * D));
+  seedAction(iesha, 'points_added', demo.displayName, { amount: TIER_POINTS[2], reason: 'Win a Game or Competition: Kickoff cornhole', activityId: 'game_win' }, kickoff.endsAt);
+  d.actions.sort((a, b) => a.createdAt.localeCompare(b.createdAt)).forEach((a, i) => (a.id = i + 1));
   return d;
 }
 
 // Expose for tests
-export const __test = { load, pointsOf, rankedParticipants, setSession, addLedger };
+export const __test = { load, pointsOf, rankedParticipants, setSession, addLedger, deliverOutbox };
 
 // ───────────────────────────── team (chairs only) ─────────────────────────────
 
@@ -970,7 +1004,9 @@ export async function setRole(userId: string, role: 'participant' | 'admin'): Pr
   const u = load().users.find((x) => x.id === userId);
   if (!u) return fail('not_found', 'Person not found.');
   if (u.role === 'chair') return fail('forbidden', 'A chair can’t be changed here.');
+  const from = u.role;
   u.role = role;
+  if (from !== role) logAction('role_changed', u, { from, to: role });
   notify(u.id, 'announcement', role === 'admin' ? 'You are now a YACquest admin' : 'Your admin access was removed', role === 'admin' ? 'You can now review submissions and award points.' : 'You are back to being a regular adventurer.');
   refreshPrizeRace();
   save();
@@ -986,11 +1022,327 @@ export async function transferChair(userId: string): Promise<void> {
   if (!target) return fail('not_found', 'Person not found.');
   if (target.role === 'chair') return fail('chair_limit', 'That person is already a chair.');
   if (d.users.filter((u) => u.role === 'chair').length > 2) return fail('chair_limit', 'There can only be 2 chairs.');
+  const from = target.role;
   target.role = 'chair';
   caller.role = 'admin';
+  logAction('role_changed', target, { from, to: 'chair' }, caller);
+  logAction('role_changed', caller, { from: 'chair', to: 'admin' }, caller);
   notify(target.id, 'announcement', 'You are now a YAC Chair', `${caller.displayName} handed you their chair seat.`);
   notify(caller.id, 'announcement', 'Chair seat handed over', `${target.displayName} is now a YAC Chair. You are an admin.`);
   refreshPrizeRace();
   save();
   emitChange();
+}
+
+// ───────────────────────────── emails + action log (chairs) ─────────────────────────────
+// Mirrors 0004_emails_and_audit.sql. In the real app the Edge Function `send-emails` sends
+// the outbox every 10 minutes; here a timer "sends" each email a second or two later.
+
+function defaultReportSettings(): ReportSettings {
+  return {
+    weeklyEnabled: true,
+    weeklyDay: 1,
+    weeklyHour: 9,
+    nearGoalPoints: 150,
+    recipients: [],
+    includeChairs: true,
+    includeAdmins: true,
+    prizeAlertsEnabled: true,
+    updatedAt: undefined,
+  };
+}
+
+/** SERVER RULE (triggers in 0004): every admin change is appended to admin_actions. */
+function logAction(action: string, target: { displayName: string } | undefined, details: Record<string, unknown> = {}, actor?: User | null) {
+  const d = load();
+  const who = actor === undefined ? d.users.find((u) => u.id === sessionUserId()) ?? null : actor;
+  const id = (d.actions[d.actions.length - 1]?.id ?? 0) + 1;
+  d.actions.push({ id, actorName: who?.displayName ?? '', action, targetName: target?.displayName, details, createdAt: now() });
+}
+
+/** Extra recipients ∪ chairs ∪ admins (per settings), lower-case, no duplicates. */
+function reportRecipients(): string[] {
+  const d = load();
+  const s = d.reportSettings;
+  const out = new Set(s.recipients.map((e) => e.trim().toLowerCase()).filter(Boolean));
+  for (const u of d.users) {
+    if ((u.role === 'chair' && s.includeChairs) || (u.role === 'admin' && s.includeAdmins)) out.add(u.email.toLowerCase());
+  }
+  return [...out].sort();
+}
+
+/** Inserts into the outbox unless the dedupe key was already used. Returns true if queued. */
+function enqueueEmail(kind: EmailKind, to: string[], subject: string, text: string, html: string, dedupeKey: string): boolean {
+  const d = load();
+  if (!to.length || d.outbox.some((r) => r.dedupeKey === dedupeKey)) return false;
+  d.outbox.push({ id: nextId('eml'), kind, toEmails: to, subject, text, html, dedupeKey, status: 'pending', attempts: 0, createdAt: now() });
+  scheduleDelivery();
+  return true;
+}
+
+/** Demo stand-in for SMTP: addresses at *.invalid bounce, so the Retry button can be tried. */
+const bounces = (r: OutboxRow) => r.toEmails.some((e) => /\.invalid$/i.test(e));
+
+function startSending() {
+  for (const r of load().outbox)
+    if (r.status === 'pending') {
+      r.status = 'sending';
+      r.attempts++;
+    }
+}
+function finishSending() {
+  for (const r of load().outbox)
+    if (r.status === 'sending') {
+      if (bounces(r)) {
+        r.status = 'failed';
+        r.lastError = '550 5.1.1 Recipient address rejected (demo)';
+      } else {
+        r.status = 'sent';
+        r.sentAt = now();
+        r.lastError = undefined;
+      }
+    }
+}
+/** Sends everything pending right away (tests use this instead of waiting for the timer). */
+function deliverOutbox() {
+  startSending();
+  finishSending();
+  save();
+}
+let deliveryTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleDelivery() {
+  if (deliveryTimer) return;
+  deliveryTimer = setTimeout(() => {
+    startSending();
+    save();
+    setTimeout(() => {
+      deliveryTimer = null;
+      finishSending();
+      save();
+    }, 900);
+  }, 700);
+}
+
+const esc = (v: unknown) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
+/** SERVER RULE (prize alert triggers): email the committee when someone wins / sends delivery info. */
+function prizeAlert(kind: 'prize_qualified' | 'prize_info', c: PrizeClaim) {
+  const d = load();
+  if (!d.reportSettings?.prizeAlertsEnabled) return;
+  const to = reportRecipients();
+  if (!to.length) return;
+  const campus = CAMPUSES.find((x) => x.id === c.campus)?.name ?? c.campus;
+  if (kind === 'prize_qualified') {
+    const subject = `🏆 YACquest: ${c.displayName} won spot #${c.spot}`;
+    const lines = [
+      `${c.displayName} (${campus}) just reached ${PRIZE.goal} points and won spot #${c.spot} of ${PRIZE.count} — a ${PRIZE.name}.`,
+      'We’re waiting for them to send their delivery info. You’ll get another email when they do.',
+    ];
+    enqueueEmail(kind, to, subject, lines.join('\n\n'), emailHtml(subject, lines.map((l) => `<p>${esc(l)}</p>`).join('')), `prize_qualified:${c.userId}:${c.spot}:${c.qualifiedAt}`);
+  } else {
+    const k = c.contact!;
+    const subject = `URGENT 🎁 YACquest winner info: ${c.displayName} (spot #${c.spot})`;
+    const rows: [string, string][] = [
+      ['Full name', k.fullName],
+      ['Email', k.email],
+      ['Phone', k.phone],
+      ['Mailing address', k.address],
+      ['Gift card preference', k.preference || 'No preference'],
+      ['Notes', k.notes || '—'],
+      ['Reference', c.reference ?? '—'],
+      ['Campus', campus],
+    ];
+    const text = [`${c.displayName} sent their delivery info for spot #${c.spot} (${PRIZE.name}).`, '', ...rows.map(([a, b]) => `${a}: ${b}`)].join('\n');
+    const html = emailHtml(subject, `<p>${esc(c.displayName)} sent their delivery info for spot #${c.spot} (${esc(PRIZE.name)}).</p><table cellpadding="6" style="border-collapse:collapse">${rows
+      .map(([a, b]) => `<tr><td style="font-weight:bold;vertical-align:top">${esc(a)}</td><td style="white-space:pre-wrap">${esc(b)}</td></tr>`)
+      .join('')}</table>`);
+    enqueueEmail(kind, to, subject, text, html, `prize_info:${c.userId}:${c.spot}:${JSON.stringify(k)}`);
+  }
+}
+
+function emailHtml(title: string, body: string) {
+  return `<!doctype html><html><body style="margin:0;background:#e9f0fb;font-family:Arial,Helvetica,sans-serif;color:#14213d"><div style="max-width:600px;margin:0 auto;background:#fffdf6;border:4px solid #0b2a5b"><div style="background:#0b2a5b;color:#ffd97a;padding:14px 18px;font-size:20px;font-weight:bold">${esc(title)}</div><div style="padding:16px 18px;font-size:15px;line-height:1.5">${body}</div><div style="padding:10px 18px;font-size:12px;color:#4a5672;border-top:2px solid #f2b33d">Sent by YACquest. Change who gets this in Admin → System.</div></div></body></html>`;
+}
+
+/** Current day-of-week (0=Sun), hour, and ISO week key in America/New_York. */
+function easternNow(at = new Date()) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', hourCycle: 'h23', weekday: 'short' })
+      .formatToParts(at)
+      .map((p) => [p.type, p.value]),
+  );
+  const day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(parts.weekday);
+  // ISO week of the Eastern calendar date
+  const date = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)));
+  const isoDay = (date.getUTCDay() + 6) % 7;
+  date.setUTCDate(date.getUTCDate() - isoDay + 3);
+  const isoYear = date.getUTCFullYear();
+  const firstThu = new Date(Date.UTC(isoYear, 0, 4));
+  const week = 1 + Math.round(((date.getTime() - firstThu.getTime()) / 86_400_000 - 3 + ((firstThu.getUTCDay() + 6) % 7)) / 7);
+  return { day, hour: Number(parts.hour), weekKey: `${isoYear}-${String(week).padStart(2, '0')}` };
+}
+
+function buildWeeklyReport(): Omit<WeeklyReport, 'recipients'> {
+  const d = load();
+  const s = d.reportSettings;
+  const ranked = rankedParticipants();
+  const prize = prizeStatusSync();
+  const claimed = new Set(prize.claims.map((c) => c.userId));
+  const close = ranked.filter((r) => !claimed.has(r.userId) && r.points >= PRIZE.goal - s.nearGoalPoints);
+  const participants = new Set(ranked.map((r) => r.userId));
+  const wk = weekStart(now());
+  const thisWeek = d.ledger.filter((l) => participants.has(l.userId) && new Date(l.createdAt).getTime() >= wk);
+  const active = new Set(thisWeek.map((l) => l.userId)).size;
+  const pts = thisWeek.reduce((sum, l) => sum + Math.max(0, l.amount), 0);
+  const signups = d.users.filter((u) => participants.has(u.id) && new Date(u.createdAt).getTime() >= wk).length;
+  const pending = d.submissions.filter((x) => x.status === 'pending').length;
+  const daysLeft = Math.max(0, Math.ceil((new Date(CYCLE.end).getTime() - Date.now()) / 86_400_000));
+  const cup = CAMPUSES.map((c) => {
+    const rows = ranked.filter((r) => r.campus === c.id);
+    const total = rows.reduce((sum, r) => sum + r.points, 0);
+    return { name: c.name, members: rows.length, perCapita: rows.length ? Math.round((total / rows.length) * 10) / 10 : 0 };
+  }).sort((a, b) => b.perCapita - a.perCapita);
+  const cname = (id: CampusId) => CAMPUSES.find((c) => c.id === id)?.name ?? id;
+  const dateLabel = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
+  const subject = `YACquest weekly report — ${dateLabel}`;
+
+  const text = [
+    `Prize race: ${prize.remaining} of ${prize.total} spots left (goal ${PRIZE.goal} pts, ${PRIZE.name}).`,
+    '',
+    `CLOSE TO THE PRIZE (within ${s.nearGoalPoints} pts)`,
+    ...(close.length ? close.map((r) => `- ${r.displayName} (${cname(r.campus)}): ${r.points} pts, ${PRIZE.goal - r.points} to go`) : ['- Nobody yet.']),
+    '',
+    'TOP 5',
+    ...ranked.slice(0, 5).map((r) => `${r.rank}. ${r.displayName} (${cname(r.campus)}) — ${r.points}`),
+    '',
+    'CAMPUS CUP (points per member)',
+    ...cup.map((c, i) => `${i + 1}. ${c.name}: ${c.perCapita} (${c.members} members)`),
+    '',
+    'THIS WEEK',
+    `- ${active} active participants, ${pts} points awarded, ${signups} new sign-ups`,
+    `- ${pending} submissions waiting for review`,
+    `- ${daysLeft} days left in the cycle`,
+  ].join('\n');
+
+  const h2 = (t: string) => `<h2 style="font-size:16px;color:#0b2a5b;margin:18px 0 6px;border-bottom:2px solid #f2b33d">${esc(t)}</h2>`;
+  const li = (t: string) => `<li style="margin:2px 0">${t}</li>`;
+  const html = emailHtml(
+    subject,
+    `<p style="font-size:17px;margin:0"><b style="color:#0b2a5b">${prize.remaining} of ${prize.total}</b> prize spots left <span style="color:#4a5672">(goal ${PRIZE.goal} pts · ${esc(PRIZE.name)})</span></p>` +
+      h2(`Close to the prize (within ${s.nearGoalPoints} pts)`) +
+      (close.length
+        ? `<ul style="padding-left:18px;margin:0">${close.map((r) => li(`<b>${esc(r.displayName)}</b> (${esc(cname(r.campus))}) — ${r.points} pts, <b>${PRIZE.goal - r.points} to go</b>`)).join('')}</ul>`
+        : '<p style="margin:0;color:#4a5672">Nobody yet.</p>') +
+      h2('Top 5') +
+      `<ol style="padding-left:22px;margin:0">${ranked.slice(0, 5).map((r) => li(`${esc(r.displayName)} (${esc(cname(r.campus))}) — ${r.points}`)).join('')}</ol>` +
+      h2('Campus Cup (points per member)') +
+      `<ol style="padding-left:22px;margin:0">${cup.map((c) => li(`${esc(c.name)}: <b>${c.perCapita}</b> <span style="color:#4a5672">(${c.members} members)</span>`)).join('')}</ol>` +
+      h2('This week') +
+      `<ul style="padding-left:18px;margin:0">${li(`${active} active participants · ${pts} points awarded · ${signups} new sign-ups`)}${li(`${pending} submissions waiting for review`)}${li(`${daysLeft} days left in the cycle`)}</ul>`,
+  );
+  return { subject, text, html };
+}
+
+/** SERVER RULE (enqueue_weekly_report_if_due, run by the Edge Function): once per ISO week after the set day/hour. */
+function maybeEnqueueWeekly(): boolean {
+  const s = load().reportSettings;
+  if (!s.weeklyEnabled) return false;
+  const t = easternNow();
+  const monIdx = (day: number) => (day + 6) % 7;
+  const due = monIdx(t.day) > monIdx(s.weeklyDay) || (t.day === s.weeklyDay && t.hour >= s.weeklyHour);
+  if (!due) return false;
+  const r = buildWeeklyReport();
+  const queued = enqueueEmail('weekly_report', reportRecipients(), r.subject, r.text, r.html, `weekly:${t.weekKey}`);
+  if (queued) save();
+  return queued;
+}
+
+export async function getReportSettings(): Promise<ReportSettings> {
+  await delay();
+  requireRole('chair');
+  return { ...load().reportSettings, recipients: [...load().reportSettings.recipients] };
+}
+
+export async function updateReportSettings(patch: Partial<ReportSettings>): Promise<ReportSettings> {
+  await delay();
+  const chair = requireRole('chair');
+  const d = load();
+  const next: ReportSettings = { ...d.reportSettings };
+  const isInt = (v: unknown, lo: number, hi: number) => Number.isInteger(v) && (v as number) >= lo && (v as number) <= hi;
+  if (patch.weeklyDay !== undefined && !isInt(patch.weeklyDay, 0, 6)) fail('weeklyDay', 'Pick a day of the week.');
+  if (patch.weeklyHour !== undefined && !isInt(patch.weeklyHour, 0, 23)) fail('weeklyHour', 'Pick an hour between 12 am and 11 pm.');
+  if (patch.nearGoalPoints !== undefined && !isInt(patch.nearGoalPoints, 0, 1000)) fail('nearGoalPoints', '“Close to the prize” must be 0–1000 points.');
+  if (patch.recipients !== undefined) {
+    const list = [...new Set(patch.recipients.map((e) => e.trim().toLowerCase()).filter(Boolean))];
+    const bad = list.find((e) => !isEmail(e));
+    if (bad) fail('recipients', `“${bad}” isn’t a valid email.`);
+    if (list.length > 20) fail('recipients', 'Up to 20 extra recipients.');
+    patch = { ...patch, recipients: list };
+  }
+  const keys: (keyof ReportSettings)[] = ['weeklyEnabled', 'weeklyDay', 'weeklyHour', 'nearGoalPoints', 'recipients', 'includeChairs', 'includeAdmins', 'prizeAlertsEnabled'];
+  const changed: Record<string, unknown> = {};
+  for (const k of keys) {
+    if (patch[k] === undefined) continue;
+    if (JSON.stringify(patch[k]) !== JSON.stringify(next[k])) changed[k] = patch[k];
+    (next as unknown as Record<string, unknown>)[k] = patch[k];
+  }
+  next.updatedAt = now();
+  d.reportSettings = next;
+  if (Object.keys(changed).length) logAction('report_settings_changed', undefined, changed, chair);
+  save();
+  return { ...next, recipients: [...next.recipients] };
+}
+
+export async function sendWeeklyReportNow(): Promise<void> {
+  await delay();
+  requireRole('chair');
+  const to = reportRecipients();
+  if (!to.length) fail('no_recipients', 'Nobody would get it — turn on chairs/admins or add a recipient first.');
+  const r = buildWeeklyReport();
+  enqueueEmail('weekly_report', to, r.subject, r.text, r.html, `weekly-manual:${Date.now()}:${Math.random()}`);
+  save();
+}
+
+export async function sendTestEmail(): Promise<void> {
+  await delay();
+  const chair = requireRole('chair');
+  const subject = 'YACquest test email ✅';
+  const text = `Hi ${chair.displayName}, this is a test from YACquest. If you're reading this, the weekly report and prize alerts can reach you.`;
+  enqueueEmail('test', [chair.email.toLowerCase()], subject, text, emailHtml(subject, `<p>${esc(text)}</p>`), `test:${nextId('t')}`);
+  save();
+}
+
+export async function emailLog(limit = 50): Promise<EmailLogRow[]> {
+  await delay();
+  requireRole('chair');
+  maybeEnqueueWeekly(); // stands in for the 10-minute cron in the demo
+  return load()
+    .outbox.slice()
+    .reverse()
+    .slice(0, limit)
+    .map(({ text: _t, html: _h, dedupeKey: _k, ...row }) => ({ ...row, toEmails: [...row.toEmails] }));
+}
+
+export async function retryEmail(id: string): Promise<void> {
+  await delay();
+  requireRole('chair');
+  const r = load().outbox.find((x) => x.id === id);
+  if (!r) return fail('not_found', 'Email not found.');
+  r.status = 'pending';
+  r.attempts = 0;
+  r.lastError = undefined;
+  scheduleDelivery();
+  save();
+}
+
+export async function adminActionLog(opts: { before?: number; limit?: number } = {}): Promise<AdminAction[]> {
+  await delay();
+  requireRole('chair');
+  const limit = opts.limit ?? 50;
+  return load()
+    .actions.filter((a) => opts.before == null || a.id < opts.before)
+    .slice()
+    .reverse()
+    .slice(0, limit)
+    .map((a) => ({ ...a, details: { ...a.details } }));
 }

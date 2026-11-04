@@ -1,0 +1,84 @@
+/** Friendly sentences for the chair-only admin activity log (src/screens/admin/ActivityLog.tsx). */
+import { CAMPUSES } from '../config';
+import type { AdminAction } from '../types';
+import { activityById } from './activities';
+import { EVENT_KINDS } from './eventKinds';
+import { DAY_NAMES, hourLabel } from './validate';
+
+const s = (v: unknown) => (v === null || v === undefined ? '' : String(v));
+const activityTitle = (id: unknown) => (id ? activityById(String(id))?.title ?? String(id) : '');
+const campusLabel = (c: unknown) => (c === 'all' ? 'all campuses' : CAMPUSES.find((x) => x.id === c)?.name ?? s(c));
+const possessive = (name: string) => (name.endsWith('s') ? `${name}’` : `${name}’s`);
+const ROLE: Record<string, string> = { participant: 'a participant', admin: 'an admin', chair: 'a chair' };
+
+const SETTING_LABELS: Record<string, string> = {
+  weeklyEnabled: 'weekly email on/off',
+  weeklyDay: 'day',
+  weeklyHour: 'time',
+  nearGoalPoints: '“close to the prize” range',
+  recipients: 'recipients',
+  includeChairs: 'include chairs',
+  includeAdmins: 'include admins',
+  prizeAlertsEnabled: 'prize alerts',
+};
+
+function settingsChange(details: Record<string, unknown>): string {
+  const keys = Array.isArray(details.changed) ? (details.changed as unknown[]).map(String) : Array.isArray(details.keys) ? (details.keys as unknown[]).map(String) : Object.keys(details);
+  const parts = keys.map((k) => {
+    const label = SETTING_LABELS[k] ?? k;
+    const v = details[k];
+    if (k === 'weeklyDay' && typeof v === 'number') return `day → ${DAY_NAMES[v] ?? v}`;
+    if (k === 'weeklyHour' && typeof v === 'number') return `time → ${hourLabel(v)}`;
+    if (typeof v === 'boolean') return `${label} ${v ? 'on' : 'off'}`;
+    if (typeof v === 'number') return `${label} → ${v}`;
+    return label;
+  });
+  return parts.length ? ` (${parts.join(', ')})` : '';
+}
+
+/** Turns one log row into a plain-English sentence, e.g. “Iesha L. added +35 to Jade G. — Game win”. */
+export function describeAction(a: AdminAction): string {
+  const actor = a.actorName || 'System';
+  const target = a.targetName || 'someone';
+  const d = a.details ?? {};
+  const reason = s(d.reason) ? ` — ${s(d.reason)}` : '';
+  const amount = Number(d.amount);
+  switch (a.action) {
+    case 'points_added':
+      return `${actor} added +${Math.abs(amount) || '?'} to ${target}${reason}`;
+    case 'points_removed':
+      return `${actor} removed ${Math.abs(amount) || '?'} points from ${target}${reason}`;
+    case 'submission_approved':
+      return `${actor} approved ${possessive(target)} ${activityTitle(d.activityId) || 'submission'}`;
+    case 'submission_rejected':
+      return `${actor} rejected ${possessive(target)} ${activityTitle(d.activityId) || 'submission'}${reason}`;
+    case 'role_changed': {
+      const from = s(d.from);
+      const to = s(d.to);
+      if (to === 'chair') return `${actor} made ${target} a chair`;
+      if (from === 'chair' && to === 'admin') return a.actorName && a.actorName === a.targetName ? `${actor} stepped down from chair to admin` : `${actor} moved ${target} from chair to admin`;
+      if (to === 'admin') return `${actor} made ${target} an admin`;
+      if (from === 'admin' && to === 'participant') return `${actor} removed ${possessive(target)} admin access`;
+      return `${actor} made ${target} ${ROLE[to] ?? to}`;
+    }
+    case 'event_created':
+    case 'event_updated':
+    case 'event_deleted': {
+      const verb = a.action === 'event_created' ? 'created' : a.action === 'event_updated' ? 'edited' : 'deleted';
+      const kind = EVENT_KINDS.find((k) => k.id === d.kind)?.label ?? '';
+      const extra = [kind, d.campus ? campusLabel(d.campus) : ''].filter(Boolean).join(', ');
+      return `${actor} ${verb} the event “${s(d.title) || 'untitled'}”${extra ? ` (${extra})` : ''}`;
+    }
+    case 'prize_fulfilled':
+      return `${actor} marked ${possessive(target)} prize (spot #${s(d.spot) || '?'}) as delivered`;
+    case 'prize_revoked':
+      return `${target} lost prize spot #${s(d.spot) || '?'}${reason}${a.actorName ? ` (after a change by ${a.actorName})` : ''}`;
+    case 'cycle_reset':
+      return `${actor} ended the cycle${d.name ? ` “${s(d.name)}”` : ''} and reset everyone’s points`;
+    case 'report_settings_changed':
+      return `${actor} changed the weekly email settings${settingsChange(d)}`;
+    default:
+      return `${actor}: ${a.action.replace(/_/g, ' ')}${a.targetName ? ` — ${a.targetName}` : ''}`;
+  }
+}
+

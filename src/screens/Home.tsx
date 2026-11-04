@@ -39,10 +39,10 @@ export default function Home() {
       <Panel tone="gold" title="Your points">
         <div className="row" style={{ marginBottom: 10 }}>
           <span className="coin" aria-hidden />
-          <span style={{ fontFamily: 'var(--font-pixel)', fontSize: 28 }}>{d.points}</span>
+          <span style={{ fontFamily: 'var(--font-num)', fontWeight: 800, fontSize: 34 }}>{d.points}</span>
         </div>
         <ProgressBar value={d.points} max={PRIZE.goal} label={`${Math.min(d.points, PRIZE.goal)} / ${PRIZE.goal}`} />
-        <p style={{ margin: '10px 0 0', fontSize: 22 }}>
+        <p style={{ margin: '10px 0 0', fontSize: 18 }}>
           {d.myClaim ? (
             <>You won spot #{d.myClaim.spot}! <Link to="/prize">Claim your {PRIZE.name}</Link></>
           ) : d.prize.remaining === 0 ? (
@@ -51,14 +51,14 @@ export default function Home() {
             <>{toGo} more points to win</>
           )}
         </p>
-        <p className="muted" style={{ margin: '8px 0 0', fontSize: 14 }}>Prizes must be earned legitimately: if points are later removed and you drop below {PRIZE.goal}, your prize spot is revoked and goes to the next person who qualified.</p>
+        <p className="muted" style={{ margin: '8px 0 0', fontSize: 13 }}>Prizes must be earned legitimately: if points are later removed and you drop below {PRIZE.goal}, your prize spot is revoked and goes to the next person who qualified.</p>
       </Panel>
 
       <Link to="/prize" style={{ textDecoration: 'none', color: 'inherit' }}>
         <Panel tone="navy">
           <div className="spread">
             <span><Sprite id="chest" size={32} /></span>
-            <b style={{ fontSize: 22 }}>{d.prize.remaining} of {PRIZE.count} prizes left</b>
+            <b style={{ fontSize: 18 }}>{d.prize.remaining} of {PRIZE.count} prizes left</b>
             <span aria-hidden>▶</span>
           </div>
         </Panel>
@@ -111,11 +111,11 @@ export default function Home() {
 
       <Panel title="Your friend code">
         <div className="spread">
-          <b style={{ fontFamily: 'var(--font-pixel)', fontSize: 16 }}>{d.user.friendCode}</b>
+          <b style={{ fontFamily: 'var(--font-num)', fontWeight: 800, fontSize: 22 }}>{d.user.friendCode}</b>
           <button className="btn small" onClick={copy}>Copy</button>
         </div>
         <p style={{ margin: '8px 0 0' }}>
-          Bring a friend: +{TIER_POINTS[1]} when they attend their first event ({d.referralsUsed}/{CAPS.referralsPerCycle} used)
+          Bring a friend: you both get +{TIER_POINTS[1]} when they attend their first event ({d.referralsUsed}/{CAPS.referralsPerCycle} used)
         </p>
       </Panel>
     </div>

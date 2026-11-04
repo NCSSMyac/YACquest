@@ -126,7 +126,7 @@ function EventCard({ e, now, onDone }: { e: Ev; now: number; onDone: (pts: numbe
     <Panel tone={live && !e.checkedIn ? 'gold' : undefined}>
       <div className="stack">
         <div className="spread">
-          <strong style={{ fontSize: 22 }}>{e.title}</strong>
+          <strong style={{ fontSize: 18 }}>{e.title}</strong>
           {live && !e.checkedIn && <span className="chip t1 blink">● LIVE</span>}
         </div>
         <div className="row" style={{ flexWrap: 'wrap' }}>
@@ -140,7 +140,7 @@ function EventCard({ e, now, onDone }: { e: Ev; now: number; onDone: (pts: numbe
         ) : live ? (
           <form className="stack" onSubmit={submit}>
             <label className="field">
-              <span>Event password (ask your lead)</span>
+              <span>Event password (announced at the event)</span>
               <input className="input" value={pw} onChange={(x) => setPw(x.target.value)} autoComplete="off" autoCapitalize="off" required />
             </label>
             <ErrorText error={err} />
@@ -161,7 +161,7 @@ function Quests({ goEvents }: { goEvents: () => void }) {
     <>
       {([1, 2, 3] as Tier[]).map((t) => (
         <section key={t} className="stack" aria-label={TIER_TITLES[t]}>
-          <h2 className="pixel" style={{ fontSize: 12, margin: '8px 0 0' }}>{TIER_TITLES[t]} · +{TIER_POINTS[t]} each</h2>
+          <h2 className="pixel" style={{ fontSize: 16, margin: '8px 0 0' }}>{TIER_TITLES[t]} · +{TIER_POINTS[t]} each</h2>
           {ACTIVITIES.filter((a) => a.tier === t).map((a) => (
             <QuestCard key={a.id} a={a} goEvents={goEvents} onProof={() => setProof(a)} />
           ))}
@@ -190,7 +190,7 @@ function QuestCard({ a, goEvents, onProof }: { a: Activity; goEvents: () => void
     <Panel>
       <div className="stack">
         <div className="spread">
-          <strong style={{ fontSize: 21 }}>{a.title}</strong>
+          <strong style={{ fontSize: 17 }}>{a.title}</strong>
           <TierChip tier={a.tier} />
         </div>
         <p style={{ margin: 0 }}>{a.description}</p>
@@ -202,10 +202,10 @@ function QuestCard({ a, goEvents, onProof }: { a: Activity; goEvents: () => void
         )}
         {(a.method === 'screenshot' || a.method === 'photo') && <button className="btn small" onClick={onProof}>Submit proof</button>}
         {a.method === 'event_password' && <button className="btn blue small" onClick={goEvents}>See events</button>}
-        {a.method === 'lead_award' && <p className="muted" style={{ margin: 0 }}>Your campus lead awards this at events.</p>}
+        {a.method === 'lead_award' && <p className="muted" style={{ margin: 0 }}>A YAC admin awards this at events.</p>}
         {a.method === 'referral' && (
           <div className="row" style={{ flexWrap: 'wrap' }}>
-            <span className="pixel" style={{ fontSize: 12 }} aria-label="Your friend code">{user?.friendCode}</span>
+            <span className="pixel" style={{ fontSize: 16 }} aria-label="Your friend code">{user?.friendCode}</span>
             <button className="btn ghost small" onClick={copy}>Copy</button>
             <span className="muted">Max {CAPS.referralsPerCycle} friends</span>
           </div>

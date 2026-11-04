@@ -121,7 +121,7 @@ export default function Signup() {
                 style={{ margin: 0, padding: 6, cursor: 'pointer', textAlign: 'center', background: avatar === id ? 'var(--gold-300)' : undefined, color: avatar === id ? 'var(--navy-900)' : 'var(--text)', minWidth: 0, borderColor: avatar === id ? 'var(--gold-500)' : undefined }}
               >
                 <Sprite id={id} size={48} />
-                <div style={{ fontSize: 16 }}>{AVATAR_NAMES[id]}</div>
+                <div style={{ fontSize: 13 }}>{AVATAR_NAMES[id]}</div>
               </button>
             ))}
           </div>

@@ -36,7 +36,13 @@ create or replace function auth.jwt() returns jsonb language sql stable as $$
                   jsonb_build_object('sub', current_setting('request.jwt.claim.sub', true)));
 $$;
 
-grant execute on function auth.uid(), auth.jwt() to anon, authenticated, service_role;
+-- Supabase's auth.role(): the JWT "role" claim (tests set request.jwt.claim.role).
+create or replace function auth.role() returns text language sql stable as $$
+  select coalesce(nullif(current_setting('request.jwt.claim.role', true), ''),
+                  nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role');
+$$;
+
+grant execute on function auth.uid(), auth.jwt(), auth.role() to anon, authenticated, service_role;
 
 -- ---- storage ----------------------------------------------------------------
 create schema if not exists storage;

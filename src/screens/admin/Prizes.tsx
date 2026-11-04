@@ -51,7 +51,14 @@ export default function Prizes() {
                 </div>
                 <span className="muted">{campusName(c.campus)} · qualified {fmtDate(c.qualifiedAt)}{c.reference && ` · ref ${c.reference}`}</span>
                 {c.contact ? (
-                  <span>{c.contact.fullName} · {c.contact.email} · prefers {c.contact.preference}{c.contact.notes && ` · ${c.contact.notes}`}</span>
+                  <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '2px 10px', fontSize: 15 }}>
+                    <dt className="muted">Name</dt><dd style={{ margin: 0 }}>{c.contact.fullName}</dd>
+                    <dt className="muted">Email</dt><dd style={{ margin: 0, wordBreak: 'break-word' }}><a href={`mailto:${c.contact.email}`}>{c.contact.email}</a></dd>
+                    <dt className="muted">Phone</dt><dd style={{ margin: 0 }}>{c.contact.phone ? <a href={`tel:${c.contact.phone.replace(/[^\d+]/g, '')}`}>{c.contact.phone}</a> : '—'}</dd>
+                    <dt className="muted">Address</dt><dd style={{ margin: 0, whiteSpace: 'pre-line' }}>{c.contact.address || '—'}</dd>
+                    <dt className="muted">Card</dt><dd style={{ margin: 0 }}>{c.contact.preference || 'No preference'}</dd>
+                    {c.contact.notes && <><dt className="muted">Notes</dt><dd style={{ margin: 0 }}>{c.contact.notes}</dd></>}
+                  </dl>
                 ) : <span className="muted">No contact info submitted yet.</span>}
                 {c.status === 'fulfilled' ? (
                   <span className="muted">Fulfilled {c.fulfilledAt && fmtDate(c.fulfilledAt)}</span>

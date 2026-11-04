@@ -1,31 +1,31 @@
-# How the points were tuned
+# How the points work (and why)
 
-**Targets:** about 300 participants, a cycle that ends **May 1, 2027**, and about **5 winners**, so the race should stay open nearly all year.
+**Goal:** the $75 gift card should be **hard** to win. Only the most dedicated few should make it, near the end of the year. The first 4 people to reach the goal win. If fewer than 4 make it, the leftover budget is saved.
 
-## Settings (`src/config.ts`)
+## The three tiers (from the YAC proposal)
 
-| | Points | Examples |
+| Tier | Points | What counts | Limits |
+|---|---|---|---|
+| **High-Impact Engagement** | **35** | Annual fund gift · bringing a new alum (you **and** your friend each get 35 when they attend their first event) · official cross-campus events · event photos | Annual fund once · 3 friends · photos 1 per event, 4 per year |
+| **Active Participation** | **20** | Home-campus events · panels & mentorship circles · winning a game (admin awards) · tagging YAC in a post | Tags 2 per month |
+| **Digital Connection** | **5** | Surveys · following @ncssmyoungalumni (once) · reposts · polls · story games | 1 digital action per week |
+| **Prize goal** | **650** | First 4 people to reach it win a $75 gift card ($300 of the $350 budget) | |
+
+**Every award uses one of these three numbers.** Check-ins, approved screenshots, game wins and friend codes all pull from the tier value automatically. Manual admin additions are capped at **+35 per entry**, the size of one High-Impact action, so no one can be pushed to the prize with a single click. Removals can go up to −650 to fix mistakes or cheating.
+
+## What the simulation says (`python3 scripts/simulate-points.py`)
+
+The model has 300 people, events from Nov 8 to May 1 (about 10 home events, 4 panels and 3 cross-campus events), and engagement where most people are light and a few are superfans.
+
+| Points (T1/T2/T3) | Reach 650 by May 1 | 1st winner around |
 |---|---|---|
-| Tier 1, High-Impact | **40** | Annual fund gift (once), bringing a new alum (max 3), official cross-campus events, event photos (1 per event, 4 per cycle) |
-| Tier 2, Active | **20** | Campus events (home or visiting), panels/mentorship circles, game wins (lead-awarded), tagging YAC (2 per month) |
-| Tier 3, Digital | **5** | Surveys, following Instagram (once), reposts, polls, story games. All digital combined: 1 per week |
-| **Prize goal** | **650** | First 5 to reach it win a $50 gift card ($250 total) |
+| 40 / 20 / 5 | ~4 | early April |
+| **35 / 20 / 5** ✅ | **~3** | **mid-April** |
+| 40 / 15 / 5 | ~1 | last week (too risky) |
 
-The proposal's original values were 50/25/10. They're lowered so that a single tier can't carry anyone to the goal, and Tier 3 is kept small because it's the easiest to repeat.
-
-## The model (`scripts/simulate-points.py`)
-
-The model assumes these opportunities over the cycle: about 10 campus events, 4 panels, 4 cross-campus events, 6 game-win chances, 13 social-tag slots and 22 weeks of digital quests. Engagement follows a Beta(1.1, 4.5) curve: most people are light, a few are superfans. The model runs 200 times with 300 people each.
-
-| Goal | People reaching it by May 1 | Median participant |
-|---|---|---|
-| 500 | ~16 | ~105 |
-| 600 | ~8 | ~105 |
-| **650** | **~5–6** | ~105 |
-
-Doing every single thing earns about 1,080 points, so 650 is hard but doesn't need perfection.
+With 35/20/5: about 40 people get past halfway (325), the median participant ends near 120, and doing literally everything earns about 1,160.
 
 ## Check-ins during the year
-- **Feb 1:** if almost nobody is past 300, lower the goal (a one-line change in `config.ts`) and announce it.
-- If YAC plans more or fewer events than assumed, edit `OPP` in the script and rerun `python3 scripts/simulate-points.py`.
-- **Open question for YAC:** does someone keep their spot if points are removed after they qualify? Right now they do.
+- **Feb 1:** if almost nobody is past 250, lower the goal and announce it. The goal, number of spots and gift card value live in `src/config.ts` (`PRIZE`) **and** the database (`app_config.prize_goal`, `prize_count`, `prize_value_usd`).
+- If YAC plans more or fewer events, edit `OPP` in the script and rerun it.
+- **Revoked prizes:** if points are removed and a winner drops below 650, their spot goes to the next person who qualified.

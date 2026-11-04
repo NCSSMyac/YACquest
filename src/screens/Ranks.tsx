@@ -57,7 +57,7 @@ function Row({ r, me }: { r: LeaderRow; me: boolean }) {
       <Sprite id={r.avatar} size={28} />
       <strong style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.displayName}{me ? ' (you)' : ''}</strong>
       <span className="chip neutral" style={{ color: campusColor(r.campus) }}>{campusName(r.campus)}</span>
-      <span className="pixel" style={{ fontSize: 11 }}>{r.points}</span>
+      <span className="pixel" style={{ fontSize: 15 }}>{r.points}</span>
     </li>
   );
 }
@@ -123,7 +123,7 @@ function Cup() {
           <div key={r.campus} className="stack" style={{ gap: 4 }}>
             <div className="spread">
               <strong>{i === 0 && r.perCapita > 0 && <Sprite id="trophy" size={28} className="bob" />} {campusName(r.campus)}</strong>
-              <span className="pixel" style={{ fontSize: 11 }}>{r.perCapita.toFixed(1)} avg</span>
+              <span className="pixel" style={{ fontSize: 15 }}>{r.perCapita.toFixed(1)} avg</span>
             </div>
             <div style={{ background: 'rgba(11,42,91,0.12)', border: '3px solid var(--navy-900)', height: 22 }} role="img" aria-label={`${campusName(r.campus)} average ${r.perCapita.toFixed(1)} points per person`}>
               <div style={{ width: `${(r.perCapita / max) * 100}%`, height: '100%', background: campusColor(r.campus) }} />

@@ -1,4 +1,6 @@
+import { Link } from 'react-router-dom';
 import * as api from '../../api';
+import { useAuth } from '../../lib/auth';
 import { PRIZE, campusName } from '../../config';
 import { Empty, ErrorText, Loading, Panel, ProgressBar } from '../../components/ui';
 import { fmtDate } from '../../lib/format';
@@ -7,6 +9,7 @@ import { useAsync } from '../../lib/useAsync';
 export default function AdminHome() {
   const o = useAsync(() => api.adminOverview(), [], { live: true });
   const rep = useAsync(() => api.weeklyReportPreview(), []);
+  const isChair = useAuth().user?.role === 'chair';
   if (o.loading && !o.data) return <Loading lines={4} />;
   if (!o.data) return <ErrorText error={o.error ?? 'Could not load.'} />;
   const d = o.data;
@@ -60,14 +63,27 @@ export default function AdminHome() {
         )}
       </Panel>
 
-      <Panel title="Weekly email preview">
+      <Panel title="Weekly email preview" action={isChair ? <Link to="/admin/system" className="btn small ghost" style={{ textDecoration: 'none' }}>Settings</Link> : undefined}>
         {rep.data ? (
-          <div style={{ background: '#fff', color: '#222', border: '2px solid #ccc', padding: 14, fontFamily: 'Georgia, serif', fontSize: 17 }}>
-            <div style={{ borderBottom: '1px solid #ddd', paddingBottom: 8, marginBottom: 10, fontSize: 14, color: '#666' }}>
-              <div><b>To:</b> YAC admins &amp; chairs</div>
-              <div><b>Subject:</b> {rep.data.subject}</div>
+          <div className="stack" style={{ gap: 8 }}>
+            <div style={{ fontSize: 15 }}>
+              <div><strong>Subject:</strong> {rep.data.subject}</div>
+              <div style={{ wordBreak: 'break-word' }}>
+                <strong>To:</strong>{' '}
+                {rep.data.recipients.length ? rep.data.recipients.join(', ') : <span className="muted">nobody yet — a chair can add recipients in Admin → System</span>}
+              </div>
             </div>
-            {rep.data.lines.map((l, i) => <p key={i} style={{ margin: '0 0 8px' }}>{l}</p>)}
+            {rep.data.html ? (
+              <iframe
+                title="Weekly email preview"
+                sandbox=""
+                srcDoc={rep.data.html}
+                style={{ width: '100%', height: 420, border: 'var(--px) solid var(--border)', background: '#fff' }}
+              />
+            ) : (
+              <pre style={{ whiteSpace: 'pre-wrap', margin: 0, padding: 12, background: 'var(--paper)', border: 'var(--px) solid var(--border)', fontFamily: 'var(--font-body)', fontSize: 15 }}>{rep.data.text}</pre>
+            )}
+            <button className="btn small ghost" onClick={() => void rep.reload()}>Refresh preview</button>
           </div>
         ) : rep.error ? <ErrorText error={rep.error} /> : <Loading />}
       </Panel>

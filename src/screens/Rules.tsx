@@ -9,7 +9,7 @@ const TIERS: Tier[] = [1, 2, 3];
 /** Rules text, generated from config so it can never disagree with the game. Also shown in the signup modal. */
 export function RulesContent() {
   return (
-    <div className="stack" style={{ fontSize: 20 }}>
+    <div className="stack" style={{ fontSize: 16 }}>
       <section>
         <h3>How points work</h3>
         <p>

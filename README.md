@@ -2,7 +2,7 @@
 
 The year-round engagement app for the **NCSSM Young Alumni Council (YAC)**: part fast-food rewards app, part ClassDojo, styled like an old-school pixel treasure quest.
 
-Alumni at **Duke, UNC-Chapel Hill and NC State** earn points for showing up and staying connected. The **first 5 people to reach 650 points** each win a **$50 gift card**. The cycle ends **May 1, 2027**.
+Alumni at **Duke, UNC-Chapel Hill and NC State** earn points for showing up and staying connected. The **first 4 people to reach 650 points** each win a **$75 gift card** ($300 of the $350 budget). The cycle ends **May 1, 2027**.
 
 > **Status:** front end in progress. Data comes from a **mock API in the browser** (`src/api.ts`) seeded with ~300 fake participants. The backend team replaces that one file with real requests.
 
@@ -17,11 +17,11 @@ npm run dev        # http://localhost:5173
 |---|---|---|
 | `yak001` | Participant (Duke) | Check in, submit quests, race for the prize |
 | `admin` | Admin ("YAC Helper") | Review screenshots, award points, run events, **for all campuses** |
-| `iesha`, `jacob` | YAC Chair (max 2) | Everything an admin does, plus prizes and fulfillment, Team (grant/remove admin, hand over chair seat), Sheets sync, CSV export, cycle reset |
+| `iesha`, `jacob` | YAC Chair (max 2) | Everything an admin does, plus prizes and fulfillment, Team (grant/remove admin, hand over chair seat), admin activity log, weekly email settings and delivery log, CSV export, cycle reset |
 
 Any password works in the demo. Live demo events have passwords `BLUEDEVIL` (Duke), `PANEL` (UNC), `WOLFPACK` (NC State), `TRIANGLE` (all campuses). Admins can see passwords under **Admin → Events**. **Me → Reset demo data** starts over (demo mode only).
 
-**Live mode** (real accounts and data) needs a Supabase project: see `docs/SETUP.md` (being written).
+**Live mode** (real accounts and data) needs a Supabase project: see `docs/SETUP.md`. Emails are sent by the Edge Function in `supabase/functions/send-emails/`.
 
 ## Scripts
 
@@ -50,11 +50,11 @@ scripts/simulate-points.py ← rerun the points model if YAC changes plans
 
 ## Features
 
-**Participants:** sign up (campus, character, friend code, rules accepted before account creation) · log in / forgot password · dashboard (points, progress to the prize, overall and campus rank, days left, recent activity, friend code) · Quest Board (event check-in with password, screenshot/photo quests with in-browser image shrinking, submission status) · Treasure Vault (live "N of 5 left" counter, spot grid, Winners' Circle, claim form with reference number) · leaderboards (top 10, top 3 per campus, per-capita Campus Cup) · notifications · rules · profile, theme, prize suggestions.
+**Participants:** sign up (campus, character, friend code, rules accepted before account creation) · log in / forgot password · dashboard (points, progress to the prize, overall and campus rank, days left, recent activity, friend code) · Quest Board (event check-in with password, screenshot/photo quests with in-browser image shrinking, submission status) · Treasure Vault (live "N of 4 left" counter, spot grid, Winners' Circle, winner form (name, email, phone, mailing address, card preference) with reference number) · leaderboards (top 10, top 3 per campus, per-capita Campus Cup) · notifications · rules · profile, theme, prize suggestions.
 
 **Admins (all campuses):** overview · review queue (approve / reject with reason) · player search, quick "+20 game win", manual adjustments with required reason · create/edit events and passwords.
 
-**Chair:** everything above · team management (grant/remove admin, hand over the chair seat) · revoked prize spots refill automatically when points are removed · prize claims and fulfillment · prize suggestions · Google Sheets sync status · ledger CSV export · weekly report preview · end-of-cycle reset with archive.
+**Chair:** everything above · team management (grant/remove admin, hand over the chair seat) · revoked prize spots refill automatically when points are removed · prize claims (with phone and mailing address) and fulfillment · prize suggestions · **weekly committee email** (day/time/recipients, test email, send now, delivery log with retry) · **prize alert emails** when someone wins and when a winner sends their info · **admin activity log** (every points change, review, role change, event edit) · ledger CSV export · end-of-cycle reset with archive.
 
 ## Hooking up the backend
 
