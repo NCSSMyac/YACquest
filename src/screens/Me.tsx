@@ -31,7 +31,7 @@ function applyTheme(t: Theme) {
   else document.documentElement.dataset.theme = t;
 }
 
-const ROLE = { participant: 'Participant', campus_lead: 'Campus lead', chair: 'YAC chair' } as const;
+const ROLE = { participant: 'Adventurer', admin: 'Admin', chair: 'YAC Chair' } as const;
 
 export default function Me() {
   const { user, refresh, signOut } = useAuth();
@@ -204,7 +204,7 @@ export default function Me() {
       </Panel>
 
       <button className="btn block navy" onClick={async () => { await signOut(); nav('/login'); }}>Sign out</button>
-      <button className="btn block red small" onClick={() => setConfirmReset(true)}>Reset demo data (demo only)</button>
+      {api.isMock && <button className="btn block red small" onClick={() => setConfirmReset(true)}>Reset demo data (demo only)</button>}
 
       <Modal open={confirmReset} onClose={() => setConfirmReset(false)} title="Reset demo data?">
         <div className="stack">

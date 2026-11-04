@@ -1,0 +1,98 @@
+# YACquest backend (Supabase) — contract
+
+The database SQL (`supabase/migrations/*.sql`) and the front end's live API (`src/api/live.ts`) **both follow this file**. If you change one, update this file and the other.
+
+## Principles
+- **Points only change through the `ledger` table**, and only via `security definer` RPC functions that check the caller's role. Nobody (not even admins) can insert into `ledger`, `prize_claims` or `profiles.role` directly.
+- **Row Level Security (RLS) is on for every table.** Reads go through table selects (allowed by RLS) or RPCs; all writes go through RPCs.
+- Settings live in the one-row `app_config` table. Defaults match `src/config.ts`; keep them in sync.
+- Times are `timestamptz`. IDs are `uuid` (`gen_random_uuid()`), except `activities.id` (text slug) and `ledger.id` (bigint identity).
+- Every RPC raises errors as `raise exception using errcode = 'P0001', message = '<code>: <friendly message>'`. The front end splits on the first `': '` → `ApiError(code, message)`. Codes match the mock (`wrong_password`, `expired`, `duplicate`, `not_open`, `limit`, `forbidden`, `reason`, `amount`, `confirm`, `not_found`, `already_reviewed`, `has_attendees`, `chair_limit`, `not_verified`, `last_chair`, `handle`, `friendCode`, …).
+
+## Roles
+| role | who | can |
+|---|---|---|
+| `participant` | anyone who signs up | earn points, submit proof, claim prize |
+| `admin` | helpers granted by a chair | review submissions, award/adjust points, create/edit events, see event passwords, search players, see suggestions, overview — **all campuses** |
+| `chair` | the 2 YAC chairs | everything admins can + grant/remove admin, hand over chair seat, prize claims & fulfillment, export, sync, cycle reset |
+
+- **Bootstrap:** table `chair_bootstrap(email)` seeded with `iesha.landis.yac@ncssm.edu`, `jacob.rodriguez.yac@ncssm.edu`. When an auth user is created with one of those emails, their profile starts as `chair`. (They still must confirm the email before they can log in.)
+- **Max 2 chairs.** `set_role` can't create chairs. A chair passes their seat with `transfer_chair(target)` → target becomes `chair`, caller becomes `admin`, in one transaction. A chair cannot demote the other chair. Emergency recovery: run SQL in the Supabase dashboard (see SETUP.md).
+- Only accounts with a **confirmed email** (`auth.users.email_confirmed_at is not null`) can be made admin or chair (`not_verified`).
+- Helper SQL functions: `is_admin()` (admin or chair), `is_chair()`, both `stable security definer` reading `profiles.role` for `auth.uid()`.
+
+## Tables (public schema)
+- `app_config` (id int pk check id=1, prize_goal int 650, prize_count int 5, prize_value_usd int 50, fulfill_by date '2027-05-15', tier1_points 40, tier2_points 20, tier3_points 5, digital_per_week 1, social_tag_per_month 2, referrals_per_cycle 3, photos_per_event 1, photos_per_cycle 4)
+- `cycles` (id uuid, name text, starts_at, ends_at, is_active bool, archived_at) — exactly one active. Seed: '2026–27 Pilot', 2026-10-15 → 2027-05-01 23:59:59 America/New_York. Helper `active_cycle_id()`.
+- `chair_bootstrap` (email citext pk)
+- `activities` (id text pk, tier int 1–3, title text, method text check in ('event_password','screenshot','photo','lead_award','referral')) — seeded with the 13 ids in `src/lib/activities.ts`.
+- `profiles` (id uuid pk → auth.users on delete cascade, handle citext unique 3–20 `[a-zA-Z0-9_.]`, display_name text 2–24, email citext, campus text check in ('duke','unc','ncsu'), role text default 'participant', avatar text check in ('yak','knight','mage','ranger'), friend_code text unique like 'YAC-XXXX', referred_by uuid → profiles, email_opt_in bool default true, points int default 0 **(current cycle total, maintained by ledger trigger)**, created_at)
+- `events` (id uuid, cycle_id, title, campus text check in ('duke','unc','ncsu','all'), cross_campus bool, kind text check in ('social','panel','service','game_night'), location, starts_at, ends_at, check_in_grace_minutes int default 60, activity_id text → activities, attendee_count int default 0, created_by uuid, created_at)
+- `event_secrets` (event_id uuid pk → events on delete cascade, password text) — admins only.
+- `submissions` (id uuid, cycle_id, user_id, activity_id, event_id null, image_path text — storage path in bucket `proofs`, note text ≤280, status text 'pending'|'approved'|'rejected', reviewer_id, review_reason, created_at, reviewed_at)
+- `ledger` (id bigint identity, cycle_id, user_id, amount int ≠ 0, source text check in ('checkin','submission','manual','referral'), activity_id null, ref_id text null, reason text, created_by uuid null, created_at)
+- `prize_claims` (id uuid, cycle_id, spot int, user_id, display_name text, campus text, qualified_at, status text 'qualified'|'info_submitted'|'fulfilled'|'revoked', reference text, contact jsonb {fullName,email,preference,notes}, fulfilled_at, revoked_at, revoke_reason). Partial unique indexes: (cycle_id, spot) where status <> 'revoked'; (cycle_id, user_id) where status <> 'revoked'.
+- `notifications` (id uuid, user_id, kind text, title, body, read bool default false, created_at)
+- `prize_suggestions` (id uuid, user_id, idea text ≤300, created_at)
+- `sync_status` (id int pk =1, last_sync_at, rows_pushed, rows_pulled, conflicts, state text default 'not_configured', sheet_url text)
+
+### RLS read rules
+- `profiles`: own row; admins read all.
+- `events`: any authenticated user. `event_secrets`: admins only.
+- `activities`, `app_config`, `cycles`: any authenticated user (app_config/activities also anon).
+- `submissions`, `ledger`, `notifications`: own rows; admins read all (notifications: own only).
+- `prize_claims`: own rows; chairs read all. (Public view of the race is the `prize_status()` RPC — no contact info.)
+- `prize_suggestions`: admins.
+- `sync_status`: chairs.
+- Storage bucket `proofs` (private): authenticated users may upload only under `<their uid>/…`; read own files; admins read all.
+
+## Triggers
+1. **New auth user → profile** (`after insert on auth.users`, security definer). Reads `raw_user_meta_data`: `handle`, `display_name`, `campus`, `avatar`, `friend_code` (optional, the *referrer's* code). Generates a unique `friend_code` (`YAC-` + 4 chars from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`). Role = `chair` if email in `chair_bootstrap`, else `participant`. Inserts a welcome notification. Invalid/duplicate handle → raise so signup fails (front end pre-checks with `handle_available`).
+2. **Ledger insert → points + prize race** (`after insert on ledger`): recompute `profiles.points` = sum of ledger for user in active cycle, then call `refresh_prize_race(cycle_id)` which, under `lock table prize_claims in share row exclusive mode`:
+   - **revokes** any non-revoked, non-fulfilled claim whose user now has `points < prize_goal` (status 'revoked', revoked_at, revoke_reason 'Points fell below the goal after a correction', notify the user);
+   - **fills open spots** (lowest free spot numbers 1..prize_count) with eligible participants (`role='participant'`, `points >= prize_goal`, no active claim) **ordered by the time they most recently crossed the goal** (running ledger sum; tie → ledger id), notify each winner ("You won spot #N!").
+
+## RPC functions (all `security definer`, `set search_path = public`)
+Anon-callable:
+- `handle_available(p_handle text) → boolean`
+- `friend_code_exists(p_code text) → boolean`
+
+Participant (authenticated):
+- `dashboard_stats() → json {points, rankOverall, rankCampus, participants, referralsUsed, unreadCount}` (ranks: 1 + count of participants with more points; participants = count role 'participant')
+- `leaderboard(p_limit int default 10, p_campus text default null) → table(rank int, user_id uuid, display_name text, campus text, avatar text, points int)` — participants only, ordered points desc, display_name asc; ties share rank (`rank()` window).
+- `my_rank() → same row shape` (null if not a participant)
+- `campus_cup() → table(campus text, members int, total_points int, per_capita numeric)` per-capita desc
+- `prize_status() → json {goal, total, remaining, claims:[{spot,userId,displayName,campus,qualifiedAt,status}]}` (non-revoked claims, spot asc)
+- `check_in(p_event_id uuid, p_password text) → json {points int, activityId text}` — rules: event exists (`not_found`); now ≥ starts_at − 30 min (`not_open`); now ≤ ends_at + grace (`expired`); not already checked in (ledger source 'checkin' ref_id = event id → `duplicate`); password case-insensitive trimmed match (`wrong_password`). Activity: cross_campus or campus='all' → `cross_campus_event` (tier 1); kind 'panel' → `panel_mentorship`; else `home_event`. Inserts ledger, bumps attendee_count. **Referral:** if this is the user's first check-in this cycle and `referred_by` is set and the referrer has < referrals_per_cycle 'referral' rows this cycle → ledger tier-1 'referral' for referrer (activity `bring_new_alum`, ref_id = new user id) + notification.
+- `can_submit(p_activity_id text, p_event_id uuid default null) → text` (null = OK, else friendly reason) — same rules as the mock's `submissionBlocker`: method must be screenshot/photo; once-per-cycle for `annual_fund`, `follow_ig`; tier-3 combined ≤ digital_per_week per ISO week (America/New_York, Monday start), counting pending+approved; `social_tag` ≤ social_tag_per_month per calendar month; `event_photos` needs an event the user checked into, ≤ photos_per_event per event, ≤ photos_per_cycle per cycle.
+- `submit_proof(p_activity_id text, p_event_id uuid, p_image_path text, p_note text) → submissions row` — re-runs `can_submit` (`limit`), image_path must start with `<uid>/` (`file_type`), note ≤ 280.
+- `submit_claim_info(p_full_name text, p_email text, p_preference text, p_notes text) → json claim` — own active claim (`no_claim`), not fulfilled; sets contact, status 'info_submitted', reference `YQ-<year>-<spot 2 digits><4 random>` if null.
+- `suggest_prize(p_idea text)` (3–300 chars)
+- `mark_notifications_read(p_ids uuid[] default null)` (null = all own)
+- `update_profile(p_display_name text, p_avatar text, p_email_opt_in boolean) → profiles row` (nulls = unchanged; also updates display_name on own claims)
+
+Admin (`is_admin()` else `forbidden`):
+- `review_submission(p_id uuid, p_decision text, p_reason text)` — pending only (`already_reviewed`); reject needs reason (`reason`); approve → ledger tier points (source 'submission', ref_id submission id) + notification; reject → notification with reason.
+- `adjust_points(p_user_id uuid, p_amount int, p_reason text)` — integer, ≠0, |x| ≤ 500 (`amount`); reason ≥3 chars (`reason`); ledger source 'manual' + notification.
+- `award_activity(p_user_id uuid, p_activity_id text, p_note text)` — ledger tier points, source 'manual', reason "<title>: <note>" + notification.
+- `search_users(p_query text, p_limit int default 20) → table(id, handle, display_name, email, campus, role, points)`
+- `admin_list_events() → table(events.* + password text)` newest first
+- `create_event(p_event jsonb) → json event incl. password` — keys: title, campus, crossCampus, kind, location, startsAt, endsAt, checkInGraceMinutes, password. Validates title ≥3, password ≥4, ends > starts. Derives activity_id like check_in.
+- `update_event(p_id uuid, p_event jsonb) → json event`
+- `delete_event(p_id uuid)` — refuse if attendee_count > 0 (`has_attendees`)
+- `admin_overview() → json {participants, activeThisWeek, pointsThisWeek, pendingReviews, newSignupsThisWeek, prize (same as prize_status), nearGoal:[leaderboard rows within 100 of goal, unclaimed, top 10]}`
+
+Chair (`is_chair()` else `forbidden`):
+- `list_team() → table(id, display_name, handle, email, role, email_verified boolean)` — admins + chairs
+- `set_role(p_user_id uuid, p_role text)` — p_role in ('participant','admin') only; target must not be a chair (`forbidden`); for 'admin' target email must be confirmed (`not_verified`); notify target.
+- `transfer_chair(p_user_id uuid)` — target ≠ caller, email confirmed; chairs count stays ≤ 2: target → chair, caller → admin; notify both.
+- `list_claims() → setof prize_claims` (all statuses, spot asc then revoked last)
+- `mark_fulfilled(p_spot int)` — active claim in active cycle + notify.
+- `reset_cycle(p_confirm text, p_name text, p_ends_at timestamptz)` — p_confirm = 'RESET' (`confirm`); archive current cycle (is_active false, archived_at now()), create new active cycle, set all profiles.points = 0, notify all participants. Ledger/claims/submissions stay (they belong to the old cycle_id).
+- `archives() → table(cycle name, archived_at, ledger_rows bigint, winners json)`
+
+## Storage
+Bucket `proofs`, private, 5 MB limit, image mime types only. Path: `<uid>/<uuid>.jpg`. Admin review screens use `createSignedUrls` (1 hour). Front end uploads after `can_submit` passes, then calls `submit_proof` with the path.
+
+## Auth (Supabase dashboard settings — see SETUP.md)
+Email + password; **Confirm email ON**; min password length 8; PKCE flow. Redirects: confirmation → `<site>?confirmed=1`, password reset → `<site>?reset=1` (query string, not hash, because the app uses HashRouter).

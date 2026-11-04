@@ -64,7 +64,7 @@ export default function AdminHome() {
         {rep.data ? (
           <div style={{ background: '#fff', color: '#222', border: '2px solid #ccc', padding: 14, fontFamily: 'Georgia, serif', fontSize: 17 }}>
             <div style={{ borderBottom: '1px solid #ddd', paddingBottom: 8, marginBottom: 10, fontSize: 14, color: '#666' }}>
-              <div><b>To:</b> YAC leads &amp; chair</div>
+              <div><b>To:</b> YAC admins &amp; chairs</div>
               <div><b>Subject:</b> {rep.data.subject}</div>
             </div>
             {rep.data.lines.map((l, i) => <p key={i} style={{ margin: '0 0 8px' }}>{l}</p>)}

@@ -11,8 +11,8 @@ export default function Prizes() {
   const sugg = useAsync(() => api.listSuggestions(), []);
   const [confirm, setConfirm] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
-  const target = claims.data?.find((c) => c.spot === confirm);
-  const remaining = PRIZE.count - (claims.data?.length ?? 0);
+  const target = claims.data?.find((c) => c.spot === confirm && c.status !== 'revoked');
+  const remaining = PRIZE.count - (claims.data?.filter((c) => c.status !== 'revoked').length ?? 0);
 
   async function fulfil() {
     if (confirm == null) return;
@@ -35,7 +35,15 @@ export default function Prizes() {
         <p className="muted">{claims.data ? `${remaining} of ${PRIZE.count} spots remaining.` : ''} Fulfill by {PRIZE.fulfillBy}.</p>
         {claims.loading && !claims.data ? <Loading /> : claims.error ? <ErrorText error={claims.error} /> : !claims.data?.length ? <Empty>No winners yet.</Empty> : (
           <ul className="list">
-            {[...claims.data].sort((a, b) => a.spot - b.spot).map((c) => (
+            {[...claims.data].sort((a, b) => Number(a.status === 'revoked') - Number(b.status === 'revoked') || a.spot - b.spot).map((c) => c.status === 'revoked' ? (
+              <li key={`${c.spot}-${c.userId}`} className="stack" style={{ gap: 4, opacity: 0.55 }}>
+                <div className="spread">
+                  <strong>#{c.spot} {c.displayName}</strong>
+                  <span className="chip neutral">revoked</span>
+                </div>
+                <span className="muted">{campusName(c.campus)} · revoked {c.revokedAt && fmtDate(c.revokedAt)} · {c.revokeReason ?? 'Points fell below the goal'}</span>
+              </li>
+            ) : (
               <li key={c.spot} className="stack" style={{ gap: 4 }}>
                 <div className="spread">
                   <strong>#{c.spot} {c.displayName}</strong>

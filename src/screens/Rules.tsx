@@ -39,12 +39,15 @@ export function RulesContent() {
         <p>
           The first {PRIZE.count} people to reach {PRIZE.goal} points each win a {PRIZE.name}. Spots go in the order people reach the goal. When the {PRIZE.count} spots are gone, they’re gone, but you can keep climbing the leaderboard! Prizes are delivered after the cycle ends, by {longDate(PRIZE.fulfillBy)}.
         </p>
+        <p>
+          Prizes must be earned legitimately: if points are later removed and you drop below {PRIZE.goal}, your prize spot is revoked and goes to the next person who qualified.
+        </p>
       </section>
       <section>
         <h3>Verification</h3>
         <ul>
-          <li>Event check-ins use a password announced by your campus lead at the event.</li>
-          <li>Screenshots and photos are reviewed by campus leads.</li>
+          <li>Event check-ins use a password announced by a YAC organizer at the event.</li>
+          <li>Screenshots and photos are reviewed by YAC admins.</li>
           <li>False or doctored submissions are removed, and points may be taken back.</li>
         </ul>
       </section>

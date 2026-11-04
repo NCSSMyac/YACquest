@@ -36,7 +36,6 @@ export default function Events() {
   const [form, setForm] = useState<Form | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const isChair = user?.role === 'chair';
 
   function open(e: YacEvent | 'new') {
     setErr(null);
@@ -45,7 +44,7 @@ export default function Events() {
       const s = new Date(Date.now() + 86400000);
       s.setHours(18, 0, 0, 0);
       const en = new Date(s.getTime() + 2 * 3600000);
-      setForm({ title: '', campus: user!.campus, crossCampus: false, kind: 'social', location: '', start: toLocal(s.toISOString()), end: toLocal(en.toISOString()), grace: 60, password: genPassword() });
+      setForm({ title: '', campus: user?.campus ?? 'duke', crossCampus: false, kind: 'social', location: '', start: toLocal(s.toISOString()), end: toLocal(en.toISOString()), grace: 60, password: genPassword() });
     } else {
       setForm({ title: e.title, campus: e.campus, crossCampus: e.crossCampus, kind: e.kind, location: e.location, start: toLocal(e.startsAt), end: toLocal(e.endsAt), grace: e.checkInGraceMinutes, password: e.password ?? '' });
     }
@@ -115,9 +114,9 @@ export default function Events() {
             <label className="field"><span>Title</span><input className="input" value={form.title} onChange={(e) => set('title', e.target.value)} required /></label>
             <label className="field">
               <span>Campus</span>
-              <select value={form.campus} disabled={!isChair} onChange={(e) => set('campus', e.target.value as CampusId | 'all')}>
-                {isChair && <option value="all">All campuses</option>}
-                {CAMPUSES.filter((c) => isChair || c.id === user?.campus).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              <select value={form.campus} onChange={(e) => set('campus', e.target.value as CampusId | 'all')}>
+                <option value="all">All campuses</option>
+                {CAMPUSES.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </label>
             <label className="row"><input type="checkbox" checked={form.crossCampus} onChange={(e) => set('crossCampus', e.target.checked)} /> Cross-campus event (open to other campuses)</label>

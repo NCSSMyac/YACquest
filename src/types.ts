@@ -4,7 +4,12 @@
  */
 import type { CampusId, Tier } from './config';
 
-export type Role = 'participant' | 'campus_lead' | 'chair';
+/**
+ * participant — anyone who signs up.
+ * admin       — helpers: review submissions, award/adjust points, run events (all campuses).
+ * chair       — the 2 YAC chairs: everything, incl. granting admin, prizes, reset. Max 2 at a time.
+ */
+export type Role = 'participant' | 'admin' | 'chair';
 
 export type AvatarId = 'yak' | 'knight' | 'mage' | 'ranger';
 
@@ -20,6 +25,8 @@ export interface User {
   referredBy?: string; // user id
   createdAt: string;
   emailOptIn: boolean;
+  /** False until the person clicks the link in their confirmation email (live backend only). */
+  emailVerified?: boolean;
 }
 
 /** How an activity is verified. */
@@ -88,7 +95,8 @@ export interface LedgerEntry {
   createdAt: string;
 }
 
-export type ClaimStatus = 'qualified' | 'info_submitted' | 'fulfilled';
+/** 'revoked' = points were later removed and the winner fell below the goal; the spot reopens. */
+export type ClaimStatus = 'qualified' | 'info_submitted' | 'fulfilled' | 'revoked';
 
 export interface PrizeClaim {
   spot: number; // 1..PRIZE.count, in the order people crossed the goal
@@ -100,6 +108,8 @@ export interface PrizeClaim {
   reference?: string;
   contact?: { fullName: string; email: string; preference: string; notes?: string };
   fulfilledAt?: string;
+  revokedAt?: string;
+  revokeReason?: string;
 }
 
 export interface PrizeStatus {

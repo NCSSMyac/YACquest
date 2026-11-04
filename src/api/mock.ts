@@ -10,8 +10,8 @@
  * else has to change. Rules marked "SERVER RULE" must also be enforced by the backend —
  * the front end checks are only for friendly error messages.
  */
-import { CAPS, CAMPUSES, CYCLE, PRIZE, TIER_POINTS, type CampusId } from './config';
-import { ACTIVITIES, ONCE_PER_CYCLE, activityById } from './lib/activities';
+import { CAPS, CAMPUSES, CYCLE, PRIZE, TIER_POINTS, type CampusId } from '../config';
+import { ACTIVITIES, ONCE_PER_CYCLE, activityById } from '../lib/activities';
 import type {
   Activity,
   AppNotification,
@@ -30,15 +30,18 @@ import type {
   SyncStatus,
   User,
   YacEvent,
-} from './types';
+} from '../types';
 
 // ───────────────────────────── errors ─────────────────────────────
 
-export class ApiError extends Error {
-  constructor(public code: string, message: string) {
-    super(message);
-  }
-}
+import { ApiError, emitChange, subscribe } from './shared';
+export { subscribe } from './shared';
+export type { AdminOverview, AdminUserRow, EventInput, QueueItem, SignupInput, SignupResult, TeamMember } from './shared';
+import type { AdminOverview, AdminUserRow, EventInput, QueueItem, SignupInput, SignupResult, TeamMember } from './shared';
+
+/** True in the browser-only demo. Screens use it to show demo hints. */
+export const isMock: boolean = true;
+
 const fail = (code: string, message: string): never => {
   throw new ApiError(code, message);
 };
@@ -61,10 +64,9 @@ interface Db {
 
 const DB_KEY = 'yacquest-db-v1';
 const SESSION_KEY = 'yacquest-session';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let db: Db | null = null;
-const listeners = new Set<() => void>();
 
 function load(): Db {
   if (db) return db;
@@ -88,13 +90,7 @@ function save() {
   } catch {
     /* quota exceeded or private mode: keep working in memory */
   }
-  listeners.forEach((fn) => fn());
-}
-
-/** Subscribe to any data change (used for the header badge and live counters). */
-export function subscribe(fn: () => void): () => void {
-  listeners.add(fn);
-  return () => listeners.delete(fn);
+  emitChange();
 }
 
 const delay = (ms = 120 + Math.random() * 180) => new Promise((r) => setTimeout(r, ms));
@@ -134,9 +130,8 @@ function requireRole(...roles: Role[]): User {
   return user;
 }
 
-/** Campus leads only see their own campus; the chair sees everything. */
-const canManage = (admin: User, target: { campus: CampusId }) =>
-  admin.role === 'chair' || (admin.role === 'campus_lead' && admin.campus === target.campus);
+/** Admins and chairs manage every campus. */
+const canManage = (admin: User, _target?: { campus: CampusId }) => admin.role === 'admin' || admin.role === 'chair';
 
 // ───────────────────────────── points helpers ─────────────────────────────
 
@@ -179,14 +174,51 @@ function notify(userId: string, kind: NotificationKind, title: string, body: str
 function addLedger(entry: Omit<LedgerEntry, 'id' | 'createdAt'>, createdAt = now()) {
   const d = load();
   d.ledger.push({ ...entry, id: nextId('led'), createdAt });
-  const user = d.users.find((u) => u.id === entry.userId);
-  if (!user || user.role !== 'participant') return;
-  const total = pointsOf(user.id);
-  const already = d.claims.some((c) => c.userId === user.id);
-  if (total >= PRIZE.goal && !already && d.claims.length < PRIZE.count) {
-    const spot = d.claims.length + 1;
-    d.claims.push({ spot, userId: user.id, displayName: user.displayName, campus: user.campus, qualifiedAt: createdAt, status: 'qualified' });
-    notify(user.id, 'prize_qualified', `You won spot #${spot}!`, `You reached ${PRIZE.goal} points and claimed a ${PRIZE.name}. Open Prize to send your delivery info.`);
+  refreshPrizeRace();
+}
+
+/** When did this user most recently cross the goal (walking their ledger in order)? null if not at/above it. */
+function crossedGoalAt(userId: string): string | null {
+  let sum = 0;
+  let at: string | null = null;
+  for (const row of load().ledger) {
+    if (row.userId !== userId) continue;
+    const before = sum;
+    sum += row.amount;
+    if (sum >= PRIZE.goal && before < PRIZE.goal) at = row.createdAt;
+    else if (sum < PRIZE.goal) at = null;
+  }
+  return sum >= PRIZE.goal ? at : null;
+}
+
+/** SERVER RULE (refresh_prize_race): revoke claims that fell below the goal, then refill open spots. */
+function refreshPrizeRace() {
+  const d = load();
+  const totals = pointsByUser();
+  for (const c of d.claims) {
+    if (c.status === 'revoked' || c.status === 'fulfilled') continue;
+    if ((totals.get(c.userId) ?? 0) < PRIZE.goal) {
+      c.status = 'revoked';
+      c.revokedAt = now();
+      c.revokeReason = 'Points fell below the goal after a correction';
+      notify(c.userId, 'prize_update', 'Prize spot revoked', `Your points dropped below ${PRIZE.goal} after a correction, so spot #${c.spot} reopened. Earn it back to qualify again.`);
+    }
+  }
+  const active = d.claims.filter((c) => c.status !== 'revoked');
+  const activeUsers = new Set(active.map((c) => c.userId));
+  const taken = new Set(active.map((c) => c.spot));
+  const free: number[] = [];
+  for (let n = 1; n <= PRIZE.count; n++) if (!taken.has(n)) free.push(n);
+  if (!free.length) return;
+  const eligible = d.users
+    .filter((u) => u.role === 'participant' && !activeUsers.has(u.id) && (totals.get(u.id) ?? 0) >= PRIZE.goal)
+    .map((u) => ({ u, at: crossedGoalAt(u.id) ?? now() }))
+    .sort((a, b) => a.at.localeCompare(b.at));
+  for (const { u, at } of eligible) {
+    const spot = free.shift();
+    if (spot == null) break;
+    d.claims.push({ spot, userId: u.id, displayName: u.displayName, campus: u.campus, qualifiedAt: at, status: 'qualified' });
+    notify(u.id, 'prize_qualified', `You won spot #${spot}!`, `You reached ${PRIZE.goal} points and claimed a ${PRIZE.name}. Open Prize to send your delivery info.`);
   }
 }
 
@@ -223,18 +255,8 @@ export async function logout(): Promise<void> {
   save();
 }
 
-export interface SignupInput {
-  handle: string;
-  displayName: string;
-  email: string;
-  password: string;
-  campus: CampusId;
-  avatar: AvatarId;
-  friendCode?: string;
-  acceptedRules: boolean;
-}
 
-export async function signup(input: SignupInput): Promise<User> {
+export async function signup(input: SignupInput): Promise<SignupResult> {
   await delay();
   const d = load();
   if (!input.acceptedRules) fail('rules', 'Please read and accept the rules.');
@@ -267,7 +289,31 @@ export async function signup(input: SignupInput): Promise<User> {
   notify(user.id, 'announcement', 'Welcome to YACquest!', `Earn points all year. The first ${PRIZE.count} people to reach ${PRIZE.goal} win a ${PRIZE.name}.`);
   setSession(user.id);
   save();
-  return user;
+  return { user, needsEmailConfirmation: false };
+}
+
+/** Mock has no email step. */
+export async function resendConfirmation(_email: string): Promise<void> {
+  await delay(300);
+}
+
+/** Called after the user follows a password-reset link. */
+export async function updatePassword(newPassword: string): Promise<void> {
+  await delay();
+  me();
+  if (newPassword.length < 8) fail('password', 'Password must be at least 8 characters.');
+}
+
+/** Notifies when someone logs in or out. Returns an unsubscribe function. */
+export function onAuthChange(cb: (user: User | null) => void): () => void {
+  let last = sessionUserId();
+  return subscribe(() => {
+    const id = sessionUserId();
+    if (id !== last) {
+      last = id;
+      cb(id ? load().users.find((u) => u.id === id) ?? null : null);
+    }
+  });
 }
 
 /** Always resolves, so the form never reveals whether an email has an account. */
@@ -301,7 +347,7 @@ export async function getDashboard(): Promise<Dashboard> {
     rankCampus: campus.find((r) => r.userId === user.id)?.rank ?? 0,
     participants: overall.length,
     prize: prizeStatusSync(),
-    myClaim: d.claims.find((c) => c.userId === user.id),
+    myClaim: d.claims.find((c) => c.userId === user.id && c.status !== 'revoked'),
     recentSubmissions: d.submissions.filter((s) => s.userId === user.id).slice(-5).reverse(),
     recentLedger: d.ledger.filter((l) => l.userId === user.id).slice(-8).reverse(),
     unreadCount: d.notifications.filter((n) => n.userId === user.id && !n.read).length,
@@ -329,7 +375,7 @@ export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Pr
     })
     .sort((a, b) => (scope === 'past' ? b.startsAt.localeCompare(a.startsAt) : a.startsAt.localeCompare(b.startsAt)))
     .map((e) => ({
-      ...strip(e, isAdmin && canManage(user, { campus: e.campus === 'all' ? user.campus : e.campus })),
+      ...strip(e, isAdmin && canManage(user)),
       checkedIn: d.ledger.some((l) => l.userId === user.id && l.source === 'checkin' && l.refId === e.id),
     }));
 }
@@ -353,7 +399,7 @@ export async function checkIn(eventId: string, password: string): Promise<{ poin
   if (t < new Date(e.startsAt).getTime() - 30 * 60_000) fail('not_open', 'Check-in opens 30 minutes before the event starts.');
   if (t > new Date(e.endsAt).getTime() + e.checkInGraceMinutes * 60_000) fail('expired', 'Check-in for this event has closed.');
   if (d.ledger.some((l) => l.userId === user.id && l.source === 'checkin' && l.refId === e.id)) fail('duplicate', 'You already checked in to this event.');
-  if (!password.trim() || password.trim().toLowerCase() !== (e.password ?? '').toLowerCase()) fail('wrong_password', 'Wrong password. Ask your campus lead for the event code.');
+  if (!password.trim() || password.trim().toLowerCase() !== (e.password ?? '').toLowerCase()) fail('wrong_password', 'Wrong password. Ask a YAC organizer for the event code.');
   const activity = checkInActivity(e, user);
   const points = TIER_POINTS[activity.tier];
   addLedger({ userId: user.id, amount: points, source: 'checkin', activityId: activity.id, refId: e.id, reason: `Checked in: ${e.title}` });
@@ -463,7 +509,7 @@ export async function myRank(): Promise<LeaderRow | null> {
 // ───────────────────────────── prize race ─────────────────────────────
 
 function prizeStatusSync(): PrizeStatus {
-  const claims = load().claims.slice().sort((a, b) => a.spot - b.spot);
+  const claims = load().claims.filter((c) => c.status !== 'revoked').sort((a, b) => a.spot - b.spot);
   return { goal: PRIZE.goal, total: PRIZE.count, remaining: Math.max(0, PRIZE.count - claims.length), claims };
 }
 
@@ -475,7 +521,7 @@ export async function prizeStatus(): Promise<PrizeStatus> {
 export async function submitClaimInfo(contact: { fullName: string; email: string; preference: string; notes?: string }): Promise<PrizeClaim> {
   await delay(400);
   const user = me();
-  const claim = load().claims.find((c) => c.userId === user.id);
+  const claim = load().claims.find((c) => c.userId === user.id && c.status !== 'revoked');
   if (!claim) return fail('no_claim', 'You haven’t won a spot yet.');
   if (claim.status === 'fulfilled') fail('fulfilled', 'This prize was already delivered.');
   if (contact.fullName.trim().length < 2) fail('fullName', 'Enter your full name.');
@@ -515,17 +561,12 @@ export async function markNotificationsRead(ids?: string[]): Promise<void> {
   save();
 }
 
-// ───────────────────────────── admin (campus leads + chair) ─────────────────────────────
+// ───────────────────────────── admin (admins + chairs) ─────────────────────────────
 
-export interface QueueItem extends Submission {
-  user: Pick<User, 'id' | 'displayName' | 'campus' | 'handle'>;
-  activity: Activity;
-  eventTitle?: string;
-}
 
 export async function reviewQueue(filters: { status?: SubmissionStatus; campus?: CampusId; activityId?: string } = {}): Promise<QueueItem[]> {
   await delay();
-  const admin = requireRole('campus_lead', 'chair');
+  const admin = requireRole('admin', 'chair');
   const d = load();
   const status = filters.status ?? 'pending';
   return d.submissions
@@ -545,12 +586,12 @@ export async function reviewQueue(filters: { status?: SubmissionStatus; campus?:
 
 export async function reviewSubmission(id: string, decision: 'approved' | 'rejected', reason?: string): Promise<void> {
   await delay();
-  const admin = requireRole('campus_lead', 'chair');
+  const admin = requireRole('admin', 'chair');
   const d = load();
   const s = d.submissions.find((x) => x.id === id);
   if (!s) return fail('not_found', 'Submission not found.');
   const owner = d.users.find((u) => u.id === s.userId)!;
-  if (!canManage(admin, owner)) fail('forbidden', 'That participant is on another campus.');
+  if (!canManage(admin, owner)) fail('forbidden', 'That participant was not found.');
   if (s.status !== 'pending') fail('already_reviewed', 'Someone already reviewed this one.');
   if (decision === 'rejected' && !reason?.trim()) fail('reason', 'Add a reason so the participant knows what to fix.');
   const a = activityById(s.activityId)!;
@@ -567,19 +608,10 @@ export async function reviewSubmission(id: string, decision: 'approved' | 'rejec
   save();
 }
 
-export interface AdminUserRow {
-  id: string;
-  handle: string;
-  displayName: string;
-  email: string;
-  campus: CampusId;
-  role: Role;
-  points: number;
-}
 
 export async function searchUsers(query: string, limit = 20): Promise<AdminUserRow[]> {
   await delay();
-  const admin = requireRole('campus_lead', 'chair');
+  const admin = requireRole('admin', 'chair');
   const q = query.trim().toLowerCase();
   const totals = pointsByUser();
   return load()
@@ -590,7 +622,7 @@ export async function searchUsers(query: string, limit = 20): Promise<AdminUserR
 
 export async function userLedger(userId: string): Promise<LedgerEntry[]> {
   await delay();
-  const admin = requireRole('campus_lead', 'chair');
+  const admin = requireRole('admin', 'chair');
   const u = load().users.find((x) => x.id === userId);
   if (!u || !canManage(admin, u)) return fail('forbidden', 'Not found.');
   return load().ledger.filter((l) => l.userId === userId).slice().reverse();
@@ -599,9 +631,9 @@ export async function userLedger(userId: string): Promise<LedgerEntry[]> {
 /** Manual add/remove. Reason is required and is shown to the participant. */
 export async function adjustPoints(userId: string, amount: number, reason: string): Promise<void> {
   await delay();
-  const admin = requireRole('campus_lead', 'chair');
+  const admin = requireRole('admin', 'chair');
   const u = load().users.find((x) => x.id === userId);
-  if (!u || !canManage(admin, u)) return fail('forbidden', 'You can only adjust participants on your campus.');
+  if (!u || !canManage(admin, u)) return fail('forbidden', 'That person was not found.');
   if (!Number.isInteger(amount) || amount === 0 || Math.abs(amount) > 500) fail('amount', 'Enter a whole number between -500 and 500 (not 0).');
   if (reason.trim().length < 3) fail('reason', 'A reason is required.');
   addLedger({ userId, amount, source: 'manual', reason: reason.trim(), createdBy: admin.id });
@@ -612,23 +644,22 @@ export async function adjustPoints(userId: string, amount: number, reason: strin
 /** Award a lead-verified activity (e.g. winning a game) at its tier value. */
 export async function awardActivity(userId: string, activityId: string, note: string): Promise<void> {
   await delay();
-  const admin = requireRole('campus_lead', 'chair');
+  const admin = requireRole('admin', 'chair');
   const u = load().users.find((x) => x.id === userId);
   const a = activityById(activityId);
-  if (!u || !canManage(admin, u)) return fail('forbidden', 'You can only award participants on your campus.');
+  if (!u || !canManage(admin, u)) return fail('forbidden', 'That person was not found.');
   if (!a) return fail('activity', 'Unknown activity.');
   addLedger({ userId, amount: TIER_POINTS[a.tier], source: 'manual', activityId, reason: note.trim() ? `${a.title}: ${note.trim()}` : a.title, createdBy: admin.id });
   notify(userId, 'points_adjusted', `+${TIER_POINTS[a.tier]} pts — ${a.title}`, note.trim() || `Awarded by ${admin.displayName}`);
   save();
 }
 
-export type EventInput = Omit<YacEvent, 'id' | 'attendeeCount' | 'activityId'> & { password: string };
 
 export async function adminListEvents(): Promise<YacEvent[]> {
   await delay();
-  const admin = requireRole('campus_lead', 'chair');
+  const admin = requireRole('admin', 'chair');
   return load()
-    .events.filter((e) => admin.role === 'chair' || e.campus === admin.campus || e.campus === 'all')
+    .events.filter(() => canManage(admin))
     .slice()
     .sort((a, b) => b.startsAt.localeCompare(a.startsAt));
 }
@@ -637,12 +668,12 @@ function validateEvent(admin: User, input: EventInput) {
   if (input.title.trim().length < 3) fail('title', 'Give the event a title.');
   if (input.password.trim().length < 4) fail('password', 'Event password: at least 4 characters.');
   if (new Date(input.endsAt) <= new Date(input.startsAt)) fail('endsAt', 'End time must be after the start.');
-  if (admin.role === 'campus_lead' && input.campus !== admin.campus) fail('campus', 'Campus leads can only create events for their campus.');
+  void admin;
 }
 
 export async function createEvent(input: EventInput): Promise<YacEvent> {
   await delay();
-  const admin = requireRole('campus_lead', 'chair');
+  const admin = requireRole('admin', 'chair');
   validateEvent(admin, input);
   const e: YacEvent = { ...input, title: input.title.trim(), password: input.password.trim(), id: nextId('evt'), attendeeCount: 0, activityId: input.crossCampus || input.campus === 'all' ? 'cross_campus_event' : input.kind === 'panel' ? 'panel_mentorship' : 'home_event' };
   load().events.push(e);
@@ -652,9 +683,9 @@ export async function createEvent(input: EventInput): Promise<YacEvent> {
 
 export async function updateEvent(id: string, input: EventInput): Promise<YacEvent> {
   await delay();
-  const admin = requireRole('campus_lead', 'chair');
+  const admin = requireRole('admin', 'chair');
   const e = load().events.find((x) => x.id === id);
-  if (!e || (admin.role !== 'chair' && e.campus !== admin.campus)) return fail('forbidden', 'Not found.');
+  if (!e || !canManage(admin)) return fail('forbidden', 'Not found.');
   validateEvent(admin, input);
   Object.assign(e, input, { title: input.title.trim(), password: input.password.trim(), activityId: input.crossCampus || input.campus === 'all' ? 'cross_campus_event' : input.kind === 'panel' ? 'panel_mentorship' : 'home_event' });
   save();
@@ -663,10 +694,10 @@ export async function updateEvent(id: string, input: EventInput): Promise<YacEve
 
 export async function deleteEvent(id: string): Promise<void> {
   await delay();
-  const admin = requireRole('campus_lead', 'chair');
+  const admin = requireRole('admin', 'chair');
   const d = load();
   const e = d.events.find((x) => x.id === id);
-  if (!e || (admin.role !== 'chair' && e.campus !== admin.campus)) return fail('forbidden', 'Not found.');
+  if (!e || !canManage(admin)) return fail('forbidden', 'Not found.');
   if (e.attendeeCount > 0) fail('has_attendees', 'People already checked in — this event can’t be deleted.');
   d.events = d.events.filter((x) => x.id !== id);
   save();
@@ -675,13 +706,13 @@ export async function deleteEvent(id: string): Promise<void> {
 export async function listClaims(): Promise<PrizeClaim[]> {
   await delay();
   requireRole('chair');
-  return prizeStatusSync().claims;
+  return load().claims.slice().sort((a, b) => Number(a.status === 'revoked') - Number(b.status === 'revoked') || a.spot - b.spot);
 }
 
 export async function markFulfilled(spot: number): Promise<void> {
   await delay();
   requireRole('chair');
-  const c = load().claims.find((x) => x.spot === spot);
+  const c = load().claims.find((x) => x.spot === spot && x.status !== 'revoked');
   if (!c) return fail('not_found', 'Claim not found.');
   c.status = 'fulfilled';
   c.fulfilledAt = now();
@@ -691,32 +722,23 @@ export async function markFulfilled(spot: number): Promise<void> {
 
 export async function listSuggestions(): Promise<(PrizeSuggestion & { displayName: string })[]> {
   await delay();
-  requireRole('campus_lead', 'chair');
+  requireRole('admin', 'chair');
   const d = load();
   return d.suggestions
     .map((s) => ({ ...s, displayName: d.users.find((u) => u.id === s.userId)?.displayName ?? 'Unknown' }))
     .reverse();
 }
 
-export interface AdminOverview {
-  participants: number;
-  activeThisWeek: number;
-  pointsThisWeek: number;
-  pendingReviews: number;
-  newSignupsThisWeek: number;
-  prize: PrizeStatus;
-  nearGoal: LeaderRow[]; // people within 100 pts of the goal who haven't claimed
-}
 
 export async function adminOverview(): Promise<AdminOverview> {
   await delay();
-  const admin = requireRole('campus_lead', 'chair');
+  const admin = requireRole('admin', 'chair');
   const d = load();
-  const campus = admin.role === 'campus_lead' ? admin.campus : undefined;
-  const inScope = new Set(d.users.filter((u) => u.role === 'participant' && (!campus || u.campus === campus)).map((u) => u.id));
+  void admin;
+  const inScope = new Set(d.users.filter((u) => u.role === 'participant').map((u) => u.id));
   const wk = weekStart(now());
   const thisWeek = d.ledger.filter((l) => inScope.has(l.userId) && new Date(l.createdAt).getTime() >= wk);
-  const claimed = new Set(d.claims.map((c) => c.userId));
+  const claimed = new Set(d.claims.filter((c) => c.status !== 'revoked').map((c) => c.userId));
   return {
     participants: inScope.size,
     activeThisWeek: new Set(thisWeek.map((l) => l.userId)).size,
@@ -724,7 +746,7 @@ export async function adminOverview(): Promise<AdminOverview> {
     pendingReviews: d.submissions.filter((s) => s.status === 'pending' && inScope.has(s.userId)).length,
     newSignupsThisWeek: d.users.filter((u) => inScope.has(u.id) && new Date(u.createdAt).getTime() >= wk).length,
     prize: prizeStatusSync(),
-    nearGoal: rankedParticipants(campus).filter((r) => !claimed.has(r.userId) && r.points >= PRIZE.goal - 100).slice(0, 10),
+    nearGoal: rankedParticipants().filter((r) => !claimed.has(r.userId) && r.points >= PRIZE.goal - 100).slice(0, 10),
   };
 }
 
@@ -864,10 +886,9 @@ export function seed(): Db {
   };
 
   // Staff accounts
-  mkUser({ handle: 'admin', displayName: 'YAC Chair', campus: 'unc', role: 'chair', avatar: 'yak' }, CYCLE.start);
-  mkUser({ handle: 'lead.duke', displayName: 'Duke Lead', campus: 'duke', role: 'campus_lead', avatar: 'knight' }, CYCLE.start);
-  mkUser({ handle: 'lead.unc', displayName: 'UNC Lead', campus: 'unc', role: 'campus_lead', avatar: 'mage' }, CYCLE.start);
-  mkUser({ handle: 'lead.ncsu', displayName: 'NC State Lead', campus: 'ncsu', role: 'campus_lead', avatar: 'ranger' }, CYCLE.start);
+  mkUser({ handle: 'iesha', displayName: 'Iesha L.', campus: 'duke', role: 'chair', avatar: 'mage', email: 'iesha.landis.yac@ncssm.edu', emailVerified: true }, CYCLE.start);
+  mkUser({ handle: 'jacob', displayName: 'Jacob R.', campus: 'unc', role: 'chair', avatar: 'knight', email: 'jacob.rodriguez.yac@ncssm.edu', emailVerified: true }, CYCLE.start);
+  mkUser({ handle: 'admin', displayName: 'YAC Helper', campus: 'ncsu', role: 'admin', avatar: 'ranger', emailVerified: true }, CYCLE.start);
 
   // Demo participant
   const demo = mkUser({ handle: 'yak001', displayName: 'Yak001', campus: 'duke', role: 'participant', avatar: 'yak', email: 'yak001@example.edu' }, CYCLE.start);
@@ -930,3 +951,46 @@ export function seed(): Db {
 
 // Expose for tests
 export const __test = { load, pointsOf, rankedParticipants, setSession, addLedger };
+
+// ───────────────────────────── team (chairs only) ─────────────────────────────
+
+export async function listTeam(): Promise<TeamMember[]> {
+  await delay();
+  requireRole('chair');
+  return load()
+    .users.filter((u) => u.role === 'admin' || u.role === 'chair')
+    .sort((a, b) => Number(b.role === 'chair') - Number(a.role === 'chair') || a.displayName.localeCompare(b.displayName))
+    .map((u) => ({ id: u.id, displayName: u.displayName, handle: u.handle, email: u.email, role: u.role, emailVerified: true }));
+}
+
+export async function setRole(userId: string, role: 'participant' | 'admin'): Promise<void> {
+  await delay();
+  requireRole('chair');
+  if (role !== 'participant' && role !== 'admin') return fail('chair_limit', 'Chairs can only be changed with “hand over chair seat”.');
+  const u = load().users.find((x) => x.id === userId);
+  if (!u) return fail('not_found', 'Person not found.');
+  if (u.role === 'chair') return fail('forbidden', 'A chair can’t be changed here.');
+  u.role = role;
+  notify(u.id, 'announcement', role === 'admin' ? 'You are now a YACquest admin' : 'Your admin access was removed', role === 'admin' ? 'You can now review submissions and award points.' : 'You are back to being a regular adventurer.');
+  refreshPrizeRace();
+  save();
+  emitChange();
+}
+
+export async function transferChair(userId: string): Promise<void> {
+  await delay();
+  const caller = requireRole('chair');
+  if (userId === caller.id) return fail('forbidden', 'Pick someone else.');
+  const d = load();
+  const target = d.users.find((x) => x.id === userId);
+  if (!target) return fail('not_found', 'Person not found.');
+  if (target.role === 'chair') return fail('chair_limit', 'That person is already a chair.');
+  if (d.users.filter((u) => u.role === 'chair').length > 2) return fail('chair_limit', 'There can only be 2 chairs.');
+  target.role = 'chair';
+  caller.role = 'admin';
+  notify(target.id, 'announcement', 'You are now a YAC Chair', `${caller.displayName} handed you their chair seat.`);
+  notify(caller.id, 'announcement', 'Chair seat handed over', `${target.displayName} is now a YAC Chair. You are an admin.`);
+  refreshPrizeRace();
+  save();
+  emitChange();
+}

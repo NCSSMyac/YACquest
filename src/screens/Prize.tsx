@@ -96,6 +96,7 @@ export default function Prize() {
             </p>
           )}
         </div>
+        <p className="muted" style={{ margin: '12px 0 0', fontSize: 14 }}>Prizes must be earned legitimately: if points are later removed and you drop below {PRIZE.goal}, your prize spot is revoked and goes to the next person who qualified.</p>
       </Panel>
 
       <Suggest />

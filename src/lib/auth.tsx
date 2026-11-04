@@ -21,6 +21,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
   useEffect(() => {
     void refresh();
+    // Email-link logins, sign-outs in another tab, role changes, expired sessions…
+    return api.onAuthChange((u) => {
+      setUser(u);
+      setReady(true);
+    });
   }, [refresh]);
   const signOut = useCallback(async () => {
     await api.logout();

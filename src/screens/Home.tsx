@@ -51,6 +51,7 @@ export default function Home() {
             <>{toGo} more points to win</>
           )}
         </p>
+        <p className="muted" style={{ margin: '8px 0 0', fontSize: 14 }}>Prizes must be earned legitimately: if points are later removed and you drop below {PRIZE.goal}, your prize spot is revoked and goes to the next person who qualified.</p>
       </Panel>
 
       <Link to="/prize" style={{ textDecoration: 'none', color: 'inherit' }}>

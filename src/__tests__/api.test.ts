@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import * as api from '../api';
+import * as api from '../api/mock';
 import { PRIZE, TIER_POINTS } from '../config';
 
 // Runs in Node: there's no localStorage, so the mock API keeps data in memory.
@@ -58,10 +58,19 @@ describe('anti-farming caps', () => {
 });
 
 describe('admin permissions', () => {
-  it('campus leads cannot adjust another campus', async () => {
-    asUser('lead.unc');
-    const duke = load().users.find((u) => u.handle === 'yak001')!;
-    await expect(api.adjustPoints(duke.id, 10, 'test')).rejects.toMatchObject({ code: 'forbidden' });
+  it('admins can adjust any campus', async () => {
+    asUser('admin');
+    for (const campus of ['duke', 'unc', 'ncsu'] as const) {
+      const u = load().users.find((x) => x.role === 'participant' && x.campus === campus)!;
+      const before = pointsOf(u.id);
+      await api.adjustPoints(u.id, 10, 'test');
+      expect(pointsOf(u.id)).toBe(before + 10);
+    }
+  });
+  it('participants cannot adjust points', async () => {
+    asUser('yak001');
+    const other = load().users.find((u) => u.handle === 'alum001')!;
+    await expect(api.adjustPoints(other.id, 10, 'test')).rejects.toMatchObject({ code: 'forbidden' });
   });
   it('requires a reason to reject', async () => {
     asUser('admin');
@@ -70,15 +79,67 @@ describe('admin permissions', () => {
   });
 });
 
+const boostTo = async (id: string, target: number) => {
+  while (pointsOf(id) < target) await api.adjustPoints(id, Math.min(500, target - pointsOf(id)), 'boost');
+};
+
 describe('prize race', () => {
   it('gives spots in order and stops at PRIZE.count', async () => {
     asUser('admin');
     const people = load().users.filter((u) => u.role === 'participant').slice(0, PRIZE.count + 2);
-    for (const u of people) await api.adjustPoints(u.id, Math.min(500, PRIZE.goal - pointsOf(u.id) + 5), 'test boost');
-    for (const u of people) if (pointsOf(u.id) < PRIZE.goal) await api.adjustPoints(u.id, PRIZE.goal - pointsOf(u.id), 'top up');
+    for (const u of people) await boostTo(u.id, PRIZE.goal);
     const status = await api.prizeStatus();
     expect(status.remaining).toBe(0);
     expect(status.claims.map((c) => c.spot)).toEqual(Array.from({ length: PRIZE.count }, (_, i) => i + 1));
     expect(status.claims.map((c) => c.userId)).toEqual(people.slice(0, PRIZE.count).map((u) => u.id));
+  });
+  it('revokes a spot when points are removed and refills it with the next qualifier', async () => {
+    asUser('admin');
+    const people = load().users.filter((u) => u.role === 'participant').slice(0, PRIZE.count + 1);
+    for (const u of people) await boostTo(u.id, PRIZE.goal);
+    await api.adjustPoints(people[1].id, -50, 'correction');
+    const status = await api.prizeStatus();
+    expect(status.remaining).toBe(0);
+    const spot2 = status.claims.find((c) => c.spot === 2)!;
+    expect(spot2.userId).toBe(people[PRIZE.count].id);
+    expect(status.claims.some((c) => c.userId === people[1].id)).toBe(false);
+    asUser('iesha');
+    const all = await api.listClaims();
+    const revoked = all.find((c) => c.status === 'revoked')!;
+    expect(revoked.userId).toBe(people[1].id);
+    expect(revoked.revokeReason).toMatch(/fell below/);
+    expect(all[all.length - 1].status).toBe('revoked');
+  });
+});
+
+describe('team roles', () => {
+  it('lists admins and chairs for a chair only', async () => {
+    asUser('admin');
+    await expect(api.listTeam()).rejects.toMatchObject({ code: 'forbidden' });
+    asUser('iesha');
+    const team = await api.listTeam();
+    expect(team.map((m) => m.handle).sort()).toEqual(['admin', 'iesha', 'jacob']);
+  });
+  it('lets a chair grant and remove admin, but not touch a chair or make a third chair', async () => {
+    asUser('iesha');
+    const yak = load().users.find((u) => u.handle === 'yak001')!;
+    const jacob = load().users.find((u) => u.handle === 'jacob')!;
+    await api.setRole(yak.id, 'admin');
+    expect(load().users.find((u) => u.id === yak.id)!.role).toBe('admin');
+    await api.setRole(yak.id, 'participant');
+    expect(load().users.find((u) => u.id === yak.id)!.role).toBe('participant');
+    await expect(api.setRole(jacob.id, 'participant')).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(api.setRole(yak.id, 'chair' as never)).rejects.toMatchObject({ code: 'chair_limit' });
+    await expect(api.transferChair(jacob.id)).rejects.toMatchObject({ code: 'chair_limit' });
+  });
+  it('transfer swaps roles', async () => {
+    asUser('iesha');
+    const helper = load().users.find((u) => u.handle === 'admin')!;
+    await api.transferChair(helper.id);
+    const users = load().users;
+    expect(users.find((u) => u.handle === 'iesha')!.role).toBe('admin');
+    expect(users.find((u) => u.handle === 'admin')!.role).toBe('chair');
+    expect(users.filter((u) => u.role === 'chair').length).toBe(2);
+    await expect(api.listTeam()).rejects.toMatchObject({ code: 'forbidden' });
   });
 });

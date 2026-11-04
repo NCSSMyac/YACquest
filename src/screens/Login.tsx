@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import * as api from '../api';
 import { Sprite } from '../components/Sprite';
-import { ErrorText, Panel } from '../components/ui';
+import { ErrorText, Panel, useToast } from '../components/ui';
 import { useAuth } from '../lib/auth';
 import { errorMessage } from '../lib/useAsync';
 
@@ -13,18 +13,34 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [needsConfirm, setNeedsConfirm] = useState(false);
+  const [resending, setResending] = useState(false);
+  const toast = useToast();
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setNeedsConfirm(false);
     try {
       const user = await api.login(handle, password);
       setUser(user);
       nav('/');
     } catch (err) {
       setError(errorMessage(err));
+      setNeedsConfirm(err instanceof api.ApiError && err.code === 'not_verified');
       setBusy(false);
+    }
+  }
+
+  async function resend() {
+    setResending(true);
+    try {
+      await api.resendConfirmation(handle.trim());
+      nav('/check-email', { state: { email: handle.trim(), justSent: true } });
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+      setResending(false);
     }
   }
 
@@ -39,14 +55,19 @@ export default function Login() {
         <Panel title="Log in">
           <form className="stack" onSubmit={submit}>
             <label className="field">
-              <span>Username or email</span>
-              <input className="input" value={handle} onChange={(e) => setHandle(e.target.value)} autoComplete="username" autoCapitalize="none" required />
+              <span>{api.isMock ? 'Email (or demo username)' : 'Email'}</span>
+              <input className="input" type={api.isMock ? 'text' : 'email'} value={handle} onChange={(e) => setHandle(e.target.value)} autoComplete={api.isMock ? 'username' : 'email'} autoCapitalize="none" required />
             </label>
             <label className="field">
               <span>Password</span>
               <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
             </label>
             <ErrorText error={error} />
+            {needsConfirm && (
+              <button type="button" className="btn block ghost" disabled={resending} onClick={resend}>
+                {resending ? 'Sending…' : 'Resend confirmation email'}
+              </button>
+            )}
             <button className="btn block" disabled={busy}>{busy ? 'Logging in…' : 'Log in'}</button>
             <div className="spread">
               <Link to="/signup">Create account</Link>
@@ -54,14 +75,16 @@ export default function Login() {
             </div>
           </form>
         </Panel>
-        <Panel title="Demo accounts" tone="flat">
-          <ul className="list" style={{ fontSize: 18 }}>
-            <li><b>yak001</b> — participant (Duke)</li>
-            <li><b>lead.duke</b>, <b>lead.unc</b>, <b>lead.ncsu</b> — campus leads</li>
-            <li><b>admin</b> — YAC chair</li>
-          </ul>
-          <p className="muted" style={{ margin: '6px 0 0' }}>Any password works in the demo.</p>
-        </Panel>
+        {api.isMock && (
+          <Panel title="Demo accounts" tone="flat">
+            <ul className="list" style={{ fontSize: 18 }}>
+              <li><b>yak001</b> — participant (Duke)</li>
+              <li><b>admin</b> — admin helper</li>
+              <li><b>iesha</b>, <b>jacob</b> — YAC chairs</li>
+            </ul>
+            <p className="muted" style={{ margin: '6px 0 0' }}>Any password works in the demo.</p>
+          </Panel>
+        )}
       </div>
     </div>
   );

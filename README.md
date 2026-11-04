@@ -16,10 +16,12 @@ npm run dev        # http://localhost:5173
 | Log in as | Role | What you can do |
 |---|---|---|
 | `yak001` | Participant (Duke) | Check in, submit quests, race for the prize |
-| `lead.duke`, `lead.unc`, `lead.ncsu` | Campus lead | Review screenshots, award points, run events, **for their campus only** |
-| `admin` | YAC Program Chair | Everything, plus prize fulfillment, Sheets sync, CSV export, cycle reset |
+| `admin` | Admin ("YAC Helper") | Review screenshots, award points, run events, **for all campuses** |
+| `iesha`, `jacob` | YAC Chair (max 2) | Everything an admin does, plus prizes and fulfillment, Team (grant/remove admin, hand over chair seat), Sheets sync, CSV export, cycle reset |
 
-Any password works in the mock. Live demo events have passwords `BLUEDEVIL` (Duke), `PANEL` (UNC), `WOLFPACK` (NC State), `TRIANGLE` (all campuses). Leads can see passwords under **Admin → Events**. **Me → Reset demo data** starts over.
+Any password works in the demo. Live demo events have passwords `BLUEDEVIL` (Duke), `PANEL` (UNC), `WOLFPACK` (NC State), `TRIANGLE` (all campuses). Admins can see passwords under **Admin → Events**. **Me → Reset demo data** starts over (demo mode only).
+
+**Live mode** (real accounts and data) needs a Supabase project: see `docs/SETUP.md` (being written).
 
 ## Scripts
 
@@ -40,7 +42,7 @@ src/
   lib/activities.ts  ← the ways to earn points (from the proposal)
   components/        ← shared UI: Panel, ProgressBar, Modal, toasts, Sprite, Layout
   screens/           ← one file per participant screen
-  screens/admin/     ← campus lead + chair screens
+  screens/admin/     ← admin + chair screens
   styles/theme.css   ← NCSSM navy/gold pixel theme (colors are CSS variables)
 docs/POINTS.md       ← why the numbers are what they are
 scripts/simulate-points.py ← rerun the points model if YAC changes plans
@@ -50,9 +52,9 @@ scripts/simulate-points.py ← rerun the points model if YAC changes plans
 
 **Participants:** sign up (campus, character, friend code, rules accepted before account creation) · log in / forgot password · dashboard (points, progress to the prize, overall and campus rank, days left, recent activity, friend code) · Quest Board (event check-in with password, screenshot/photo quests with in-browser image shrinking, submission status) · Treasure Vault (live "N of 5 left" counter, spot grid, Winners' Circle, claim form with reference number) · leaderboards (top 10, top 3 per campus, per-capita Campus Cup) · notifications · rules · profile, theme, prize suggestions.
 
-**Campus leads:** overview · review queue (approve / reject with reason) · player search, quick "+20 game win", manual adjustments with required reason · create/edit events and passwords.
+**Admins (all campuses):** overview · review queue (approve / reject with reason) · player search, quick "+20 game win", manual adjustments with required reason · create/edit events and passwords.
 
-**Chair:** everything above for all campuses · prize claims and fulfillment · prize suggestions · Google Sheets sync status · ledger CSV export · weekly report preview · end-of-cycle reset with archive.
+**Chair:** everything above · team management (grant/remove admin, hand over the chair seat) · revoked prize spots refill automatically when points are removed · prize claims and fulfillment · prize suggestions · Google Sheets sync status · ledger CSV export · weekly report preview · end-of-cycle reset with archive.
 
 ## Hooking up the backend
 

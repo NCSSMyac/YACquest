@@ -46,8 +46,12 @@ export default function Signup() {
     if (!campus) return;
     setBusy(true);
     try {
-      const user = await api.signup({ handle, displayName, email, password, campus, avatar, friendCode: friendCode.trim() || undefined, acceptedRules: true });
-      setUser(user);
+      const res = await api.signup({ handle, displayName, email, password, campus, avatar, friendCode: friendCode.trim() || undefined, acceptedRules: true });
+      if (res.needsEmailConfirmation || !res.user) {
+        nav('/check-email', { state: { email: email.trim() } });
+        return;
+      }
+      setUser(res.user);
       nav('/');
     } catch (err) {
       const code = (err as api.ApiError).code;

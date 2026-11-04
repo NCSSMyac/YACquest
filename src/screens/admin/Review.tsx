@@ -3,7 +3,6 @@ import * as api from '../../api';
 import { ACTIVITIES } from '../../lib/activities';
 import { CAMPUSES, campusName, type CampusId } from '../../config';
 import { Empty, ErrorText, Loading, Modal, Panel, TierChip, useToast } from '../../components/ui';
-import { useAuth } from '../../lib/auth';
 import { fmtDateTime, timeAgo } from '../../lib/format';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 import type { SubmissionStatus } from '../../types';
@@ -12,7 +11,6 @@ const QUICK = ['Screenshot unclear', 'Duplicate', "Doesn't show YAC content"];
 const TABS: [SubmissionStatus, string][] = [['pending', 'Pending'], ['approved', 'Approved'], ['rejected', 'Rejected']];
 
 export default function Review() {
-  const { user } = useAuth();
   const toast = useToast();
   const [status, setStatus] = useState<SubmissionStatus>('pending');
   const [campus, setCampus] = useState<CampusId | ''>('');
@@ -55,15 +53,13 @@ export default function Review() {
         ))}
       </div>
       <div className="grid-2">
-        {user?.role === 'chair' && (
-          <label className="field">
+        <label className="field">
             <span>Campus</span>
             <select value={campus} onChange={(e) => setCampus(e.target.value as CampusId | '')}>
               <option value="">All campuses</option>
               {CAMPUSES.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-          </label>
-        )}
+        </label>
         <label className="field">
           <span>Activity</span>
           <select value={activityId} onChange={(e) => setActivityId(e.target.value)}>

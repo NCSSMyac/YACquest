@@ -1,6 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import * as api from '../../api';
-import { campusName } from '../../config';
 import { useAuth } from '../../lib/auth';
 import { useAsync } from '../../lib/useAsync';
 
@@ -14,13 +13,13 @@ export default function AdminLayout() {
     { to: '/admin/review', label: 'Review', badge: count },
     { to: '/admin/players', label: 'Players' },
     { to: '/admin/events', label: 'Events' },
-    ...(isChair ? [{ to: '/admin/prizes', label: 'Prizes' }, { to: '/admin/system', label: 'System' }] : []),
+    ...(isChair ? [{ to: '/admin/prizes', label: 'Prizes' }, { to: '/admin/team', label: 'Team' }, { to: '/admin/system', label: 'System' }] : []),
   ];
   return (
     <div className="stack">
       <div className="spread">
         <h1 style={{ margin: 0 }}>Admin</h1>
-        <span className="chip t1">{isChair ? 'YAC Chair' : `${user ? campusName(user.campus) : ''} Lead`}</span>
+        <span className="chip t1">{isChair ? 'YAC Chair' : 'Admin'}</span>
       </div>
       <nav aria-label="Admin sections" style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 6 }}>
         {links.map((l) => (
