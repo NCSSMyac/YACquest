@@ -22,17 +22,17 @@ export default function Players() {
     <div className="stack">
       <label className="field">
         <span>Search players</span>
-        <input className="input" type="search" placeholder="Name, handle or email" value={text} onChange={(e) => setText(e.target.value)} />
+        <input className="input" type="search" placeholder="Name, username or email" value={text} onChange={(e) => setText(e.target.value)} />
       </label>
       {list.loading && !list.data ? <Loading lines={3} /> : list.error ? <ErrorText error={list.error} /> : !list.data?.length ? (
         <Empty>No players found.</Empty>
       ) : (
-        <ul className="list panel">
+        <ul className="list panel" style={{ padding: '4px 14px' }}>
           {list.data.map((u) => (
-            <li key={u.id}>
-              <button className="btn ghost block" style={{ textAlign: 'left', justifyContent: 'space-between' }} onClick={() => setSel(u)}>
-                <span>{u.displayName} <span className="muted">@{u.handle} · {campusName(u.campus)}</span></span>
-                <span>{u.points} pts</span>
+            <li key={u.id} style={{ padding: '2px 0' }}>
+              <button type="button" className="row-btn" onClick={() => setSel(u)}>
+                <span><strong>{u.displayName}</strong> <span className="muted">@{u.handle} · {campusName(u.campus)}</span></span>
+                <strong>{u.points} pts</strong>
               </button>
             </li>
           ))}
@@ -53,6 +53,22 @@ function PlayerModal({ user, onClose }: { user: api.AdminUserRow; onClose: () =>
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [adjErr, setAdjErr] = useState<string | null>(null);
+  const [newName, setNewName] = useState(user.displayName);
+  const [renameErr, setRenameErr] = useState<string | null>(null);
+
+  async function rename(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setRenameErr(null);
+    try {
+      await api.adminRenameUser(user.id, newName);
+      toast(`Renamed to ${newName.trim()}.`, 'success');
+    } catch (e) {
+      setRenameErr(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function award(id: string, n: string) {
     setBusy(true);
@@ -87,7 +103,7 @@ function PlayerModal({ user, onClose }: { user: api.AdminUserRow; onClose: () =>
   return (
     <Modal open onClose={onClose} title={user.displayName}>
       <div className="stack">
-        <p className="muted">@{user.handle} · {campusName(user.campus)} · {user.role === 'chair' ? 'YAC Chair' : user.role === 'admin' ? 'Admin' : 'Adventurer'} · {user.email}</p>
+        <p className="muted wrap-anywhere">@{user.handle} · {campusName(user.campus)} · {user.role === 'chair' ? 'YAC Chair' : user.role === 'admin' ? 'Admin' : 'Adventurer'} · {user.email}</p>
         <div className="stat panel"><div className="num">{user.points}</div><div className="lbl">points</div></div>
 
         <button className="btn green block" disabled={busy} onClick={() => award(gameWin.id, '')}>
@@ -117,7 +133,18 @@ function PlayerModal({ user, onClose }: { user: api.AdminUserRow; onClose: () =>
           <button className="btn blue" disabled={busy || !amount || !reason.trim()}>Adjust</button>
         </form>
 
-        <h3>Ledger history</h3>
+        <form className="stack" onSubmit={rename}>
+          <h3>Rename</h3>
+          <label className="field">
+            <span>New display name</span>
+            <input className="input" value={newName} onChange={(e) => setNewName(e.target.value)} maxLength={24} />
+          </label>
+          <p className="muted" style={{ margin: 0 }}>Fix a name that isn’t friendly. The player gets a notification.</p>
+          <ErrorText error={renameErr} />
+          <button className="btn" disabled={busy || newName.trim().length < 2 || newName.trim() === user.displayName}>Save name</button>
+        </form>
+
+        <h3>Points history</h3>
         {ledger.loading && !ledger.data ? <Loading /> : !ledger.data?.length ? <Empty>No entries yet.</Empty> : (
           <ul className="list">
             {ledger.data.map((l) => (

@@ -23,14 +23,13 @@ export default function AdminLayout() {
         <h1 style={{ margin: 0 }}>Admin</h1>
         <span className="chip t1">{isChair ? 'YAC Chair' : 'Admin'}</span>
       </div>
-      <nav aria-label="Admin sections" style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 6 }}>
+      <nav aria-label="Admin sections" className="admin-nav">
         {links.map((l) => (
           <NavLink
             key={l.to}
             to={l.to}
             end={l.end}
             className={({ isActive }) => `btn small ${isActive ? 'navy' : 'ghost'}`}
-            style={{ flex: '0 0 auto', textDecoration: 'none' }}
           >
             {l.label}
             {!!l.badge && <span className="chip pending" style={{ marginLeft: 6 }} aria-label={`${l.badge} pending`}>{l.badge}</span>}

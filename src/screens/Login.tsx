@@ -72,8 +72,8 @@ export default function Login() {
             <div className="spread" style={{ flexWrap: 'wrap' }}>
               <Link to="/signup">Create account</Link>
               <Link to="/forgot">Forgot password?</Link>
-              <Link to="/help">Need help?</Link>
             </div>
+            <p className="center" style={{ margin: 0 }}><Link to="/help">Need help?</Link></p>
           </form>
         </Panel>
         {api.isMock && (

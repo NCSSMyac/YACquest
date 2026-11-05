@@ -48,7 +48,7 @@ export function InstallApp() {
 
   return (
     <Panel title="📲 Get the app">
-      <p style={{ marginTop: 0 }}>Put YACquest on your home screen. It opens full-screen like a regular app. It's free, with no app store needed.</p>
+      <p style={{ marginTop: 0 }}>Put YACquest on your home screen. It opens full-screen like a regular app. It’s free, with no app store needed.</p>
       {canPrompt ? (
         <button className="btn block" onClick={install}>Install YACquest</button>
       ) : isIOS() ? (

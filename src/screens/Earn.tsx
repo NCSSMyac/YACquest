@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import * as api from '../api';
-import { CAMPUSES, CAPS, INSTAGRAM_HANDLE, INSTAGRAM_URL, TIER_LABELS, TIER_POINTS, UPLOAD, campusName, type Tier } from '../config';
+import { INSTAGRAM_HANDLE, INSTAGRAM_URL, TIER_POINTS, UPLOAD, campusName, type Tier } from '../config';
 import { ACTIVITIES, activityById } from '../lib/activities';
 import { useAuth } from '../lib/auth';
 import { downloadIcs, googleCalendarUrl, type CalEvent } from '../lib/calendar';
@@ -18,7 +18,7 @@ type TabId = 'events' | 'quests' | 'subs';
 const TABS: { id: TabId; label: string }[] = [
   { id: 'events', label: 'Events' },
   { id: 'quests', label: 'Quests' },
-  { id: 'subs', label: 'My Submissions' },
+  { id: 'subs', label: 'My proofs' },
 ];
 const TIER_TITLES: Record<Tier, string> = { 1: 'Tier 1 · High-Impact', 2: 'Tier 2 · Active', 3: 'Tier 3 · Digital' };
 const OPEN_BEFORE_MIN = 30;
@@ -136,8 +136,8 @@ function EventCard({ e, now, onDone }: { e: Ev; now: number; onDone: (pts: numbe
         ) : live ? (
           <form className="stack" onSubmit={submit}>
             <label className="field">
-              <span>Event password (announced at the event)</span>
-              <input className="input" value={pw} onChange={(x) => setPw(x.target.value)} autoComplete="off" autoCapitalize="off" required />
+              <span>Event password</span>
+              <input className="input" placeholder="Announced at the event" value={pw} onChange={(x) => setPw(x.target.value)} autoComplete="off" autoCapitalize="off" required />
             </label>
             <ErrorText error={err} />
             <button className="btn green" disabled={busy || !pw.trim()}>{busy ? 'Checking…' : 'Check in'}</button>
@@ -234,7 +234,8 @@ function QuestCard({ a, goEvents, onProof }: { a: Activity; goEvents: () => void
       <div className="stack">
         <div className="spread">
           <strong style={{ fontSize: 17 }}>{a.title}</strong>
-          <TierChip tier={a.tier} />
+          {/* The section heading already names the tier; the chip just shows the points. */}
+          <span className={`chip t${a.tier}`} aria-label={`${TIER_POINTS[a.tier]} points`}>+{TIER_POINTS[a.tier]}</span>
         </div>
         <p style={{ margin: 0 }}>{a.description}</p>
         {a.limitLabel && <span className="chip neutral" style={{ alignSelf: 'flex-start' }}>{a.limitLabel}</span>}
@@ -245,12 +246,10 @@ function QuestCard({ a, goEvents, onProof }: { a: Activity; goEvents: () => void
         )}
         {(a.method === 'screenshot' || a.method === 'photo') && <button className="btn small" onClick={onProof}>Submit proof</button>}
         {a.method === 'event_password' && <button className="btn blue small" onClick={goEvents}>See events</button>}
-        {a.method === 'lead_award' && <p className="muted" style={{ margin: 0 }}>A YAC admin awards this at events.</p>}
         {a.method === 'referral' && (
           <div className="row" style={{ flexWrap: 'wrap' }}>
             <span className="pixel" style={{ fontSize: 16 }} aria-label="Your friend code">{user?.friendCode}</span>
             <button className="btn ghost small" onClick={copy}>Copy</button>
-            <span className="muted">Max {CAPS.referralsPerCycle} friends</span>
           </div>
         )}
       </div>
@@ -316,7 +315,7 @@ function ProofModal({ activity, onClose }: { activity: Activity; onClose: () => 
   return (
     <Modal open onClose={onClose} title={`Proof: ${activity.title}`}>
       <form className="stack" onSubmit={send}>
-        <TierChip tier={activity.tier} />
+        <span style={{ alignSelf: 'flex-start' }}><TierChip tier={activity.tier} /></span>
         {needsEvent && (
           <label className="field">
             <span>Which event?</span>
@@ -336,13 +335,13 @@ function ProofModal({ activity, onClose }: { activity: Activity; onClose: () => 
         <label className="field">
           <span>Note (optional)</span>
           <textarea className="input" rows={2} maxLength={280} value={note} onChange={(e) => setNote(e.target.value)} />
-          <span className="muted" aria-live="polite">{note.length}/280</span>
+          <small className="muted" aria-live="polite">{note.length}/280</small>
         </label>
         {blocker && <p className="field-error" role="alert">{blocker}</p>}
         <ErrorText error={err} />
-        <div className="row">
+        <div className="btn-row">
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn" disabled={busy || !!blocker}>{busy ? 'Sending…' : 'Send for review'}</button>
+          <button className="btn" disabled={busy || !!blocker}>{busy ? 'Sending…' : 'Submit'}</button>
         </div>
       </form>
     </Modal>
@@ -376,5 +375,3 @@ function Submissions() {
   );
 }
 
-void CAMPUSES;
-void TIER_LABELS;

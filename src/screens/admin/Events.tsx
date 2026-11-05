@@ -94,9 +94,13 @@ export default function Events() {
                 <strong>{e.title}</strong>
                 <span className={`chip ${p === 'LIVE' ? 'approved' : p === 'Upcoming' ? 'pending' : 'neutral'}`}>{p}</span>
               </div>
-              <p className="muted">{fmtDateTime(e.startsAt)} – {fmtDateTime(e.endsAt)} · {e.location} · {e.campus === 'all' ? 'All campuses' : campusName(e.campus)} · Tier {kindTier(e.kind)} {kindInfo(e.kind).label} (+{kindPoints(e.kind)})</p>
+              <p className="muted">
+                🕒 {fmtDateTime(e.startsAt)} – {fmtDateTime(e.endsAt)}
+                <br />📍 {e.location} · {e.campus === 'all' ? 'All campuses' : campusName(e.campus)}
+                <br />Tier {kindTier(e.kind)} · {kindInfo(e.kind).label} (+{kindPoints(e.kind)})
+              </p>
               <p>Password: <strong style={{ fontFamily: 'monospace', fontSize: 18 }}>{e.password}</strong> · {e.attendeeCount} checked in</p>
-              <div className="grid-2">
+              <div className="btn-row">
                 <button className="btn small blue" onClick={() => open(e)}>Edit</button>
                 <button className="btn small red" onClick={() => del(e)}>Delete</button>
               </div>
@@ -141,7 +145,7 @@ export default function Events() {
               </div>
             </label>
             <ErrorText error={err} />
-            <div className="grid-2">
+            <div className="btn-row">
               <button type="button" className="btn ghost" onClick={() => setEditing(null)}>Cancel</button>
               <button className="btn" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
             </div>

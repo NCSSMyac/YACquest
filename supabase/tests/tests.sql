@@ -1390,5 +1390,76 @@ select t.ok(:'sh_null'::boolean, 'shout-out: null when nobody gained points') \g
 select t.ok(:'rep_none'::boolean and :'rep_none_html'::boolean, 'weekly report: "No points earned this week yet."') \g /dev/null
 
 -- =============================================================================
+-- 0010. NAME FILTER: name_is_clean, sign-up, update_profile, handle_available, admin_rename_user
+-- =============================================================================
+:as_super
+do $$
+declare n text;
+begin
+  foreach n in array array['Alice A.', 'Cassie', 'Classy Cat', 'Dickens', 'Peacock', 'Hancock', 'Sussex', 'Essex',
+                           'Titan', 'Matilda', 'Grape Ape', 'player_42', 'Erin the Great', 'Analyst'] loop
+    perform t.ok(name_is_clean(n), format('name_is_clean: %s is clean', n));
+  end loop;
+  foreach n in array array['f.u.c.k', 'Sh1t', 'big ass', 'ASS', 'b1tch', 'xXslutXx', 'Scunthorpe', 'a.s.s', 'Mr Dick',
+                           'peacock cock', 'S3XY', 'p0rn_star', 'hoe', '$h!t'] loop
+    perform t.ok(not name_is_clean(n), format('name_is_clean: %s is blocked', n));
+  end loop;
+  perform t.ok(name_is_clean(''), 'name_is_clean: empty string has nothing blocked');
+  perform t.ok(name_is_clean(null), 'name_is_clean: null treated as empty');
+  perform t.ok((select provolatile = 'i' from pg_proc where proname = 'name_is_clean'), 'name_is_clean is immutable');
+
+  -- sign-up
+  perform t.throws($q$insert into auth.users (email, raw_user_meta_data) values ('nf1@example.edu', '{"handle":"sh1tlord","display_name":"Nice Name","campus":"unc"}')$q$, 'handle', 'sign-up: unclean handle rejected');
+  perform t.throws($q$insert into auth.users (email, raw_user_meta_data) values ('nf2@example.edu', '{"handle":"nicehandle","display_name":"big ass","campus":"unc"}')$q$, 'displayName', 'sign-up: unclean display name rejected');
+  perform t.ok(not exists (select 1 from profiles where handle in ('sh1tlord', 'nicehandle')), 'sign-up: no profile created for rejected names');
+  insert into auth.users (email) values ('fuckface99@example.edu');
+  perform t.ok((select handle::text ~ '^player[0-9]{1,4}$' and display_name = handle::text
+                  from profiles where email = 'fuckface99@example.edu'), 'sign-up: unclean email fallback → player#### handle and name');
+  insert into auth.users (email, raw_user_meta_data) values ('nf3@example.edu', '{"handle":"peacock","display_name":"Classy Cassie","campus":"duke"}');
+  perform t.ok(exists (select 1 from profiles where handle = 'peacock' and display_name = 'Classy Cassie'), 'sign-up: tricky-but-clean names accepted');
+end $$;
+
+:as_anon
+do $$ begin
+  perform t.eq(handle_available('b1tch'), false, 'handle_available: unclean handle is not available');
+  perform t.eq(handle_available('xXslutXx'), false, 'handle_available: squashed unclean handle is not available');
+  perform t.eq(handle_available('dickens'), true, 'handle_available: Dickens is fine');
+  perform t.denied('select name_is_clean(''x'')', 'anon cannot call name_is_clean');
+  perform t.denied($q$select admin_rename_user('00000000-0000-0000-0000-0000000000a1', 'Hi there')$q$, 'anon cannot call admin_rename_user');
+end $$;
+
+:as_carol
+do $$ declare v_before text := (select display_name from profiles where id = auth.uid());
+begin
+  perform t.ok((select role = 'participant' from profiles where id = auth.uid()), 'name filter: carol is a participant');
+  perform t.throws('select update_profile(''Sh1t Head'', null, null)', 'displayName', 'update_profile rejects unclean name');
+  perform t.throws('select update_profile(''big  ass'', null, null)', 'displayName', 'update_profile rejects unclean whole word');
+  perform t.eq((select display_name from profiles where id = auth.uid()), v_before, 'update_profile: name unchanged after rejection');
+  perform t.eq((update_profile('Classy Cat', null, null)).display_name, 'Classy Cat', 'update_profile accepts Classy Cat');
+  perform t.denied('select name_is_clean(''x'')', 'authenticated cannot call name_is_clean (internal)');
+  perform t.throws($q$select admin_rename_user('00000000-0000-0000-0000-000000000e70', 'Hi there')$q$, 'forbidden', 'admin_rename_user: participant forbidden');
+end $$;
+
+:as_bob
+do $$ begin
+  perform t.throws($q$select admin_rename_user('00000000-0000-0000-0000-000000000e70', 'b1tch')$q$, 'displayName', 'admin_rename_user rejects unclean name');
+  perform t.throws($q$select admin_rename_user('00000000-0000-0000-0000-000000000e70', ' E ')$q$, 'displayName', 'admin_rename_user rejects too-short name');
+  perform t.throws($q$select admin_rename_user('00000000-0000-0000-0000-000000000e70', repeat('x', 25))$q$, 'displayName', 'admin_rename_user rejects too-long name');
+  perform t.throws($q$select admin_rename_user('00000000-0000-0000-0000-00000000dead', 'Nice Name')$q$, 'not_found', 'admin_rename_user: unknown user');
+  perform admin_rename_user(t.u('erin'), '  Erin the Kind  ');
+end $$;
+
+:as_super
+do $$ begin
+  perform t.eq((select display_name from profiles where id = t.u('erin')), 'Erin the Kind', 'admin_rename_user: profile renamed (trimmed)');
+  perform t.eq((select display_name from prize_claims where user_id = t.u('erin') and status <> 'revoked'), 'Erin the Kind', 'admin_rename_user: active claim renamed');
+  perform t.eq((select count(*) from notifications where user_id = t.u('erin') and title = 'Your display name was updated'
+                  and body like '%Erin the Kind%' and body like '%YAC admin%'), 1::bigint, 'admin_rename_user: user notified');
+  perform t.ok(exists (select 1 from admin_actions where action = 'user_renamed' and actor_id = t.u('bob') and target_user_id = t.u('erin')
+                         and details = jsonb_build_object('from', 'Erin the Great', 'to', 'Erin the Kind')), 'admin_rename_user: logged with from/to');
+  perform t.eq((select count(*) from admin_actions where action = 'user_renamed'), 1::bigint, 'admin_rename_user: rejected renames not logged');
+end $$;
+
+-- =============================================================================
 :as_super
 select 'PASSED: ' || current_setting('t.passed') || ' assertions' as result;

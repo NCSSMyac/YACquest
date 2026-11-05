@@ -8,6 +8,7 @@ import { Avatar } from '../components/Avatar';
 import { ErrorText, Modal, Panel } from '../components/ui';
 import { useAuth } from '../lib/auth';
 import type { AvatarId } from '../types';
+import { NAME_NOT_ALLOWED, nameIsClean } from '../lib/nameFilter';
 import { RulesContent } from './Rules';
 
 type Errors = Partial<Record<'handle' | 'displayName' | 'email' | 'password' | 'campus' | 'friendCode' | 'form', string>>;
@@ -31,7 +32,9 @@ export default function Signup() {
   function validate(): Errors {
     const e: Errors = {};
     if (!/^[a-zA-Z0-9_.]{3,20}$/.test(handle)) e.handle = 'Username: 3–20 letters, numbers, dots or underscores.';
+    else if (!nameIsClean(handle)) e.handle = NAME_NOT_ALLOWED;
     if (displayName.trim().length < 2 || displayName.length > 24) e.displayName = 'Display name: 2–24 characters.';
+    else if (!nameIsClean(displayName)) e.displayName = NAME_NOT_ALLOWED;
     if (!/^\S+@\S+\.\S+$/.test(email)) e.email = 'Enter a valid email.';
     if (password.length < 8) e.password = 'Password must be at least 8 characters.';
     if (!campus) e.campus = 'Pick your campus.';
@@ -81,13 +84,15 @@ export default function Signup() {
               <ErrorText error={errors.handle} />
             </label>
             <label className="field">
-              <span>Display name (shown on leaderboards)</span>
+              <span>Display name</span>
               <input className="input" value={displayName} onChange={(e) => setDisplayName(e.target.value)} maxLength={24} />
+              <small className="muted">Shown on the leaderboards.</small>
               <ErrorText error={errors.displayName} />
             </label>
             <label className="field">
               <span>Email</span>
               <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
+              <small className="muted">Use your personal email (like Gmail) — not a school or work address — so you keep access after you graduate.</small>
               <ErrorText error={errors.email} />
             </label>
             <label className="field">

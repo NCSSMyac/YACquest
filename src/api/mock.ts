@@ -51,6 +51,7 @@ import type {
 // ───────────────────────────── errors ─────────────────────────────
 
 import { ApiError, emitChange, subscribe } from './shared';
+import { NAME_NOT_ALLOWED, nameIsClean } from '../lib/nameFilter';
 export { subscribe } from './shared';
 export type { AdminOverview, AdminUserRow, EventInput, QueueItem, SignupInput, SignupResult, TeamMember } from './shared';
 import type { AdminOverview, AdminUserRow, EventInput, QueueItem, SignupInput, SignupResult, TeamMember } from './shared';
@@ -295,6 +296,8 @@ export async function signup(input: SignupInput): Promise<SignupResult> {
   if (!input.acceptedRules) fail('rules', 'Please read and accept the rules.');
   if (!/^[a-zA-Z0-9_.]{3,20}$/.test(input.handle)) fail('handle', 'Username: 3–20 letters, numbers, dots or underscores.');
   if (input.displayName.trim().length < 2 || input.displayName.length > 24) fail('displayName', 'Display name: 2–24 characters.');
+  if (!nameIsClean(input.handle)) fail('handle', NAME_NOT_ALLOWED);
+  if (!nameIsClean(input.displayName)) fail('displayName', NAME_NOT_ALLOWED);
   if (!/^\S+@\S+\.\S+$/.test(input.email)) fail('email', 'Enter a valid email.');
   if (input.password.length < 8) fail('password', 'Password must be at least 8 characters.');
   if (d.users.some((u) => u.handle.toLowerCase() === input.handle.toLowerCase())) fail('handle', 'That username is taken.');
@@ -359,6 +362,7 @@ export async function updateProfile(patch: Partial<Pick<User, 'displayName' | 'a
   const user = me();
   if (patch.displayName !== undefined && (patch.displayName.trim().length < 2 || patch.displayName.length > 24))
     fail('displayName', 'Display name: 2–24 characters.');
+  if (patch.displayName !== undefined && !nameIsClean(patch.displayName)) fail('displayName', NAME_NOT_ALLOWED);
   Object.assign(user, patch, patch.displayName ? { displayName: patch.displayName.trim() } : {});
   for (const c of load().claims) if (c.userId === user.id) c.displayName = user.displayName;
   save();
@@ -1046,6 +1050,25 @@ export async function setRole(userId: string, role: 'participant' | 'admin'): Pr
   if (from !== role) logAction('role_changed', u, { from, to: role });
   notify(u.id, 'announcement', role === 'admin' ? 'You are now a YACquest admin' : 'Your admin access was removed', role === 'admin' ? 'You can now review submissions and award points.' : 'You are back to being a regular adventurer.');
   refreshPrizeRace();
+  save();
+  emitChange();
+}
+
+/** SERVER RULE (admin_rename_user): admins/chairs can fix a display name the filter missed. */
+export async function adminRenameUser(userId: string, displayName: string): Promise<void> {
+  await delay();
+  requireRole('admin', 'chair');
+  const name = displayName.trim();
+  if (name.length < 2 || name.length > 24) fail('displayName', 'Display name: 2–24 characters.');
+  if (!nameIsClean(name)) fail('displayName', NAME_NOT_ALLOWED);
+  const d = load();
+  const u = d.users.find((x) => x.id === userId);
+  if (!u) return fail('not_found', 'Person not found.');
+  const from = u.displayName;
+  u.displayName = name;
+  for (const c of d.claims) if (c.userId === u.id && c.status !== 'revoked') c.displayName = name;
+  notify(u.id, 'announcement', 'Your display name was updated', `An admin changed your display name to “${name}”.`);
+  logAction('user_renamed', u, { from, to: name });
   save();
   emitChange();
 }

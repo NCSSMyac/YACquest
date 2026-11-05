@@ -27,6 +27,13 @@
   --border: var(--navy-800);
   --text: var(--ink);
   --text-soft: var(--ink-soft);
+  --link: var(--blue-500);
+  /* Dashed separators between list rows */
+  --rule: rgba(11, 42, 91, 0.2);
+  /* Campus colors for TEXT (config colors are for fills; some are too light/dark to read as text) */
+  --campus-duke: #00539b;
+  --campus-unc: #2f6f9e;
+  --campus-ncsu: #cc0000;
 
   /* Silkscreen keeps the retro quest-game look for titles, buttons and tabs (every letter is
      distinct, unlike some pixel fonts where c/o and 5/S blur); Nunito is easy to read for everything else. */
@@ -52,6 +59,11 @@
     --text-soft: #a9b6d6;
     --cream: #13285a;
     --paper: #0f2247;
+    --link: var(--blue-300);
+    --rule: rgba(169, 182, 214, 0.25);
+    --campus-duke: #7fb2ec;
+    --campus-unc: #9cc8e8;
+    --campus-ncsu: #ff7a7a;
   }
 }
 :root[data-theme='dark'] {
@@ -62,10 +74,17 @@
   --text-soft: #a9b6d6;
   --cream: #13285a;
   --paper: #0f2247;
+  --link: var(--blue-300);
+  --rule: rgba(169, 182, 214, 0.25);
+  --campus-duke: #7fb2ec;
+  --campus-unc: #9cc8e8;
+  --campus-ncsu: #ff7a7a;
 }
 
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; min-height: 100%; }
+/* Keep focused/scrolled-to things clear of the sticky top bar and the bottom nav */
+html { scroll-padding-top: 80px; scroll-padding-bottom: calc(var(--nav-h) + 16px); }
 body {
   background: var(--bg);
   background-image:
@@ -76,16 +95,19 @@ body {
   font-family: var(--font-body);
   font-size: 16px;
   line-height: 1.45;
+  /* Avoid single-word last lines ("off.", "EVENT)") */
+  text-wrap: pretty;
 }
 img, svg { image-rendering: pixelated; }
-h1, h2, h3 { font-family: var(--font-pixel); line-height: 1.25; letter-spacing: 0.5px; font-weight: 400; }
+h1, h2, h3 { font-family: var(--font-pixel); line-height: 1.25; letter-spacing: 0.5px; font-weight: 400; text-wrap: balance; }
 .pixel, .num { font-family: var(--font-num); font-weight: 800; letter-spacing: 0.3px; font-variant-numeric: tabular-nums; }
 h1.pixel, h2.pixel, h3.pixel { font-family: var(--font-pixel); font-weight: 400; }
 h1 { font-size: 22px; margin: 0 0 12px; }
 h2 { font-size: 17px; margin: 0 0 10px; }
 h3 { font-size: 14px; margin: 0 0 8px; }
 p { margin: 0 0 8px; }
-a { color: var(--blue-500); }
+a { color: var(--link); }
+.wrap-anywhere { overflow-wrap: anywhere; }
 small, .muted { color: var(--text-soft); }
 
 /* Layout */
@@ -106,7 +128,8 @@ small, .muted { color: var(--text-soft); }
   display: flex; align-items: center; justify-content: space-between;
 }
 .topbar .brand { font-family: var(--font-pixel); font-size: 18px; font-weight: 700; color: var(--gold-300); text-decoration: none; display: flex; gap: 8px; align-items: center; }
-.topbar .icon-btn { color: #fff; }
+.topbar .icon-btn { color: #fff; display: grid; place-items: center; min-width: 44px; min-height: 44px; }
+.topbar a:focus-visible, .bottom-nav a:focus-visible, .panel.navy :focus-visible { outline-color: var(--gold-300); }
 
 /* Light tile behind the yak so it stands out on navy */
 .sprite-badge {
@@ -140,6 +163,7 @@ small, .muted { color: var(--text-soft); }
 .panel.navy { background: var(--navy-800); color: #fff; }
 .panel.flat { box-shadow: none; }
 .panel-title { font-family: var(--font-pixel); font-size: 15px; font-weight: 400; margin: 0 0 10px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.panel-title > .btn, .panel-title > .chip { flex: none; white-space: nowrap; }
 
 /* Buttons */
 .btn {
@@ -152,19 +176,23 @@ small, .muted { color: var(--text-soft); }
 .btn:hover:not(:disabled) { filter: brightness(1.06); }
 .btn:active:not(:disabled) { top: var(--px); box-shadow: none; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn:focus-visible, .input:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible { outline: 3px dashed var(--blue-500); outline-offset: 2px; }
+.btn:focus-visible, .input:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible, button:focus-visible, summary:focus-visible { outline: 3px dashed var(--blue-500); outline-offset: 2px; }
 .btn.blue { background: var(--blue-500); color: #fff; }
 .btn.navy { background: var(--navy-800); color: #fff; }
 .btn.green { background: var(--green); color: #fff; }
 .btn.red { background: var(--red); color: #fff; }
 .btn.ghost { background: transparent; box-shadow: none; border-color: currentColor; color: inherit; }
-.btn.small { font-size: 11px; padding: 8px 10px; min-height: 34px; }
+.btn.small { font-size: 11px; padding: 8px 10px; min-height: 40px; }
+/* Two buttons side by side (Cancel / Confirm). Unlike .grid-2 it never collapses to one column. */
+.btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .btn.block { width: 100%; }
 .icon-btn { background: none; border: 0; cursor: pointer; padding: 6px; color: inherit; position: relative; }
 
 /* Forms */
 label.field { display: flex; flex-direction: column; gap: 6px; font-size: 16px; }
-label.field > span { font-family: var(--font-pixel); font-size: 12px; font-weight: 400; letter-spacing: 0.3px; }
+label.field > span, .field-legend { font-family: var(--font-pixel); font-size: 12px; font-weight: 400; letter-spacing: 0.3px; }
+.field-legend { padding: 0; margin-bottom: 6px; }
+label.field > small { font-size: 13px; }
 .input, select, textarea {
   font-family: var(--font-body); font-size: 16px; padding: 10px 12px;
   border: var(--px) solid var(--border); background: var(--paper); color: var(--text); width: 100%;
@@ -173,7 +201,8 @@ label.field > span { font-family: var(--font-pixel); font-size: 12px; font-weigh
 textarea { resize: vertical; min-height: 80px; }
 .field-error { color: var(--red); font-size: 15px; font-weight: 600; }
 .check { display: flex; gap: 10px; align-items: flex-start; font-size: 16px; }
-.check input { width: 22px; height: 22px; margin-top: 2px; accent-color: var(--navy-800); }
+.check input { width: 22px; height: 22px; margin-top: 2px; accent-color: var(--navy-800); flex: none; }
+input[type='radio'] { width: 20px; height: 20px; accent-color: var(--navy-800); flex: none; margin: 0; }
 
 /* Progress / XP bar */
 .xpbar { height: 22px; border: var(--px) solid var(--navy-900); background: var(--navy-900); position: relative; }
@@ -181,7 +210,7 @@ textarea { resize: vertical; min-height: 80px; }
   height: 100%; background: repeating-linear-gradient(90deg, var(--gold-500) 0 12px, var(--gold-300) 12px 16px);
   transition: width 0.6s steps(12);
 }
-.xpbar .label { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--font-num); font-size: 13px; font-weight: 800; color: #fff; text-shadow: 1px 1px 0 #000; }
+.xpbar .label { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--font-num); font-size: 13px; font-weight: 800; color: #fff; text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000; }
 
 /* Badges / chips */
 .chip { display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-num); font-size: 11px; font-weight: 800; letter-spacing: 0.4px; padding: 3px 7px; border: 2px solid currentColor; text-transform: uppercase; white-space: nowrap; }
@@ -201,7 +230,18 @@ textarea { resize: vertical; min-height: 80px; }
 
 /* Lists */
 .list { list-style: none; margin: 0; padding: 0; }
-.list > li { padding: 10px 0; border-bottom: 2px dashed rgba(11, 42, 91, 0.2); }
+.list > li { padding: 10px 0; border-bottom: 2px dashed var(--rule); }
+/* A whole list row that is tappable (Players, person search) */
+.row-btn {
+  display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px;
+  padding: 6px 4px; background: transparent; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.row-btn:hover { background: rgba(242, 179, 61, 0.18); }
+.row-btn > :first-child { min-width: 0; overflow-wrap: anywhere; }
+.row-btn > :last-child { flex: none; white-space: nowrap; }
+.campus-duke { color: var(--campus-duke); }
+.campus-unc { color: var(--campus-unc); }
+.campus-ncsu { color: var(--campus-ncsu); }
 .list > li:last-child { border-bottom: 0; }
 
 /* Tabs (segmented) */
@@ -347,9 +387,13 @@ textarea { resize: vertical; min-height: 80px; }
   display: block; text-align: left; padding: 12px 14px; min-height: 44px; font: inherit; font-size: 16px; font-weight: 700;
   color: var(--text); background: transparent; border: 0; text-decoration: none; cursor: pointer;
 }
-.cal-item + .cal-item { border-top: 2px dashed rgba(11, 42, 91, 0.25); }
+.cal-item + .cal-item { border-top: 2px dashed var(--rule); }
 .cal-item:hover, .cal-item:focus-visible { background: var(--gold-300); color: var(--navy-900); }
 
 /* Muted text stays readable on gold panels in dark mode too */
 .panel.gold .muted { color: #5a4512; }
 .panel.gold .chip.neutral { color: #5a4512; }
+
+/* Admin section pills: the strip runs to the screen edge so a cut-off pill hints that it scrolls */
+.admin-nav { display: flex; gap: 8px; overflow-x: auto; margin: 0 -16px; padding: 0 16px 6px; scrollbar-width: thin; }
+.admin-nav .btn { flex: 0 0 auto; text-decoration: none; }

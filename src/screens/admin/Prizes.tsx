@@ -2,7 +2,7 @@ import { useState } from 'react';
 import * as api from '../../api';
 import { PRIZE, campusName } from '../../config';
 import { Empty, ErrorText, Loading, Modal, Panel, useToast } from '../../components/ui';
-import { fmtDate, timeAgo } from '../../lib/format';
+import { fmtDate, fmtLongDate, timeAgo } from '../../lib/format';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 
 export default function Prizes() {
@@ -32,7 +32,7 @@ export default function Prizes() {
   return (
     <div className="stack">
       <Panel title="Prize claims">
-        <p className="muted">{claims.data ? `${remaining} of ${PRIZE.count} spots remaining.` : ''} Fulfill by {PRIZE.fulfillBy}.</p>
+        <p className="muted">{claims.data ? `${remaining} of ${PRIZE.count} spots remaining. ` : ''}Send prizes by {fmtLongDate(PRIZE.fulfillBy)}.</p>
         {claims.loading && !claims.data ? <Loading /> : claims.error ? <ErrorText error={claims.error} /> : !claims.data?.length ? <Empty>No winners yet.</Empty> : (
           <ul className="list">
             {[...claims.data].sort((a, b) => Number(a.status === 'revoked') - Number(b.status === 'revoked') || a.spot - b.spot).map((c) => c.status === 'revoked' ? (
@@ -63,7 +63,7 @@ export default function Prizes() {
                 {c.status === 'fulfilled' ? (
                   <span className="muted">Fulfilled {c.fulfilledAt && fmtDate(c.fulfilledAt)}</span>
                 ) : (
-                  <button className="btn small green" onClick={() => setConfirm(c.spot)}>Mark fulfilled</button>
+                  <button className="btn small green" style={{ alignSelf: 'flex-start' }} onClick={() => setConfirm(c.spot)}>Mark fulfilled</button>
                 )}
               </li>
             ))}
@@ -83,7 +83,7 @@ export default function Prizes() {
 
       <Modal open={confirm != null} onClose={() => setConfirm(null)} title="Mark as fulfilled?">
         <p>Confirm that the {PRIZE.name} for {target?.displayName} (spot #{confirm}) has been sent. They will be notified.</p>
-        <div className="grid-2">
+        <div className="btn-row">
           <button className="btn ghost" onClick={() => setConfirm(null)}>Cancel</button>
           <button className="btn green" disabled={busy} onClick={fulfil}>{busy ? 'Saving…' : 'Yes, fulfilled'}</button>
         </div>

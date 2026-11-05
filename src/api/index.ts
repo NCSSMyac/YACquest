@@ -78,6 +78,7 @@ export const {
   // chair
   listTeam,
   setRole,
+  adminRenameUser,
   transferChair,
   listClaims,
   markFulfilled,

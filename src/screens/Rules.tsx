@@ -2,8 +2,7 @@ import { CAMPUSES, CAPS, CONTACT_EMAILS, CYCLE, INSTAGRAM_HANDLE, INSTAGRAM_URL,
 import { ACTIVITIES } from '../lib/activities';
 import { PageHeader } from '../components/Layout';
 import { TierChip } from '../components/ui';
-
-const longDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+import { fmtLongDate as longDate } from '../lib/format';
 const TIERS: Tier[] = [1, 2, 3];
 
 /** Rules text, generated from config so it can never disagree with the game. Also shown in the signup modal. */

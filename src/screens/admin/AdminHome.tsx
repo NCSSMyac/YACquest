@@ -18,13 +18,13 @@ export default function AdminHome() {
     ['Active this week', d.activeThisWeek],
     ['Points this week', d.pointsThisWeek],
     ['Pending reviews', d.pendingReviews],
-    ['New sign-ups', d.newSignupsThisWeek],
+    ['New sign-ups this week', d.newSignupsThisWeek],
   ] as const;
   return (
     <div className="stack">
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 10 }}>
-        {tiles.map(([l, n]) => (
-          <div key={l} className="panel stat">
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+        {tiles.map(([l, n], i) => (
+          <div key={l} className="panel stat" style={i === tiles.length - 1 && tiles.length % 2 ? { gridColumn: '1 / -1' } : undefined}>
             <div className="num">{n}</div>
             <div className="lbl">{l}</div>
           </div>
@@ -33,7 +33,7 @@ export default function AdminHome() {
 
       <Panel title="Prize race">
         <ProgressBar value={d.prize.total - d.prize.remaining} max={d.prize.total} label={`${d.prize.remaining} of ${d.prize.total} spots left`} />
-        <p className="muted">First {d.prize.total} to reach {d.prize.goal} pts win a {PRIZE.name}.</p>
+        <p className="muted" style={{ margin: '8px 0' }}>First {d.prize.total} to reach {d.prize.goal} points win a {PRIZE.name}.</p>
         {d.prize.claims.length === 0 ? (
           <Empty>No one has qualified yet.</Empty>
         ) : (

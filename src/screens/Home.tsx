@@ -62,7 +62,7 @@ export default function Home() {
         </div>
       </div>
 
-      <Panel title="📣 Messages from YAC" action={<Link to="/notifications" className="btn small ghost">See all</Link>}>
+      <Panel title="📣 Messages" action={<Link to="/notifications" className="btn small ghost">See all</Link>}>
         {d.messages.length === 0 ? (
           <p className="muted" style={{ margin: 0 }}>No messages yet. Announcements from YAC will show up here.</p>
         ) : (
@@ -83,7 +83,7 @@ export default function Home() {
       <Shoutout meId={d.user.id} />
 
       <div className="grid-2">
-        <a className="btn blue block" href={INSTAGRAM_URL} target="_blank" rel="noreferrer" aria-label={`YAC on Instagram, ${INSTAGRAM_HANDLE}`}>📷 YAC Instagram</a>
+        <a className="btn blue block" href={INSTAGRAM_URL} target="_blank" rel="noreferrer" aria-label={`YAC on Instagram, ${INSTAGRAM_HANDLE}`}>📷 Instagram</a>
         <Link className="btn block" to="/help">❓ Help</Link>
       </div>
 
@@ -117,7 +117,7 @@ export default function Home() {
 
       <div className="grid-2" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
         <Panel className="stat"><div className="num">#{d.rankOverall}</div><div className="lbl">of {d.participants}</div></Panel>
-        <Panel className="stat"><div className="num">#{d.rankCampus}</div><div className="lbl">{campusName(d.user.campus)}</div></Panel>
+        <Panel className="stat"><div className="num">#{d.rankCampus}</div><div className="lbl">at {campusName(d.user.campus)}</div></Panel>
         <Panel className="stat"><div className="num">{d.daysLeft}</div><div className="lbl">days left</div></Panel>
       </div>
 
@@ -126,7 +126,7 @@ export default function Home() {
         <Link className="btn block blue" to="/earn">Submit a quest</Link>
       </div>
 
-      <Panel title="Recent submissions">
+      <Panel title="Recent proofs">
         {d.recentSubmissions.length === 0 ? (
           <p className="muted" style={{ margin: 0 }}>Nothing yet. Pick a quest to get started!</p>
         ) : (

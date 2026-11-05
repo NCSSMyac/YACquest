@@ -45,7 +45,7 @@ export default function CheckEmail() {
         <Panel title="Check your inbox">
           <div className="stack">
             <p style={{ margin: 0 }} role="status">
-              We sent a confirmation link to {state.email ? <b style={{ wordBreak: 'break-all' }}>{state.email}</b> : 'your email'}. Tap it to finish creating your account, then you can log in.
+              We sent a confirmation link to {state.email ? <b className="wrap-anywhere">{state.email}</b> : 'your email'}. Tap it to finish creating your account, then you can log in.
             </p>
             <p className="muted" style={{ margin: 0 }}>
               Can’t find it? Check your spam or promotions folder. The email comes from Supabase on behalf of YACquest.

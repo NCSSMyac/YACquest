@@ -1,3 +1,4 @@
+import { NAME_NOT_ALLOWED, nameIsClean } from '../lib/nameFilter';
 import { FeedbackForm } from '../components/FeedbackForm';
 import { InstallApp } from '../components/InstallApp';
 import { useEffect, useState, type FormEvent } from 'react';
@@ -48,8 +49,6 @@ export default function Me() {
   const [profileErr, setProfileErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [theme, setTheme] = useState<Theme>(readTheme);
-  const [idea, setIdea] = useState('');
-  const [ideaErr, setIdeaErr] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
 
   useEffect(() => {
@@ -63,6 +62,10 @@ export default function Me() {
 
   async function saveProfile(e: FormEvent) {
     e.preventDefault();
+    if (!nameIsClean(name)) {
+      setProfileErr(NAME_NOT_ALLOWED);
+      return;
+    }
     setSaving(true);
     setProfileErr(null);
     try {
@@ -90,19 +93,6 @@ export default function Me() {
     applyTheme(t);
   }
 
-  async function sendIdea(e: FormEvent) {
-    e.preventDefault();
-    setIdeaErr(null);
-    if (!idea.trim()) return setIdeaErr('Tell us your idea first.');
-    try {
-      await api.suggestPrize(idea.trim());
-      setIdea('');
-      toast('Thanks for the idea!', 'success');
-    } catch (err) {
-      setIdeaErr(errorMessage(err));
-    }
-  }
-
   async function doReset() {
     try {
       await api.resetDemoData();
@@ -122,7 +112,7 @@ export default function Me() {
           <div style={{ flex: 1, minWidth: 0 }}>
             <h1 style={{ margin: 0 }}>{user.displayName}</h1>
             <div className="muted">@{user.handle} · {campusName(user.campus)} · {ROLE[user.role]}</div>
-            <Link to="/prize?tab=wardrobe" className="btn small" style={{ marginTop: 8 }}>Wardrobe</Link>
+            <Link to="/prize?tab=wardrobe" className="btn small" style={{ marginTop: 8 }}>👒 Wardrobe</Link>
           </div>
         </div>
       </Panel>
@@ -178,17 +168,6 @@ export default function Me() {
 
       <FeedbackForm />
 
-      <Panel title="Suggest a prize">
-        <form className="stack" onSubmit={sendIdea}>
-          <label className="field">
-            <span>What would you love to win?</span>
-            <textarea className="input" rows={3} value={idea} onChange={(e) => setIdea(e.target.value)} maxLength={280} />
-          </label>
-          <ErrorText error={ideaErr} />
-          <button className="btn blue">Send idea</button>
-        </form>
-      </Panel>
-
       <Panel title="Points history">
         {ledger.loading && !ledger.data ? (
           <Loading />
@@ -207,14 +186,15 @@ export default function Me() {
       </Panel>
 
       <Panel title="More">
-        <div className="stack">
-          <Link to="/rules">Rules</Link> · <Link to="/help">Help</Link>
-          <Link to="/notifications">Notifications</Link>
+        <div className="stack" style={{ gap: 8 }}>
+          <Link className="btn small ghost block" to="/rules">📜 Rules</Link>
+          <Link className="btn small ghost block" to="/help">❓ Help</Link>
+          <Link className="btn small ghost block" to="/notifications">🔔 Notifications</Link>
         </div>
       </Panel>
 
       <button className="btn block navy" onClick={async () => { await signOut(); nav('/login'); }}>Sign out</button>
-      {api.isMock && <button className="btn block red small" onClick={() => setConfirmReset(true)}>Reset demo data (demo only)</button>}
+      {api.isMock && <button className="btn block red small" onClick={() => setConfirmReset(true)}>Reset demo data</button>}
 
       <Modal open={confirmReset} onClose={() => setConfirmReset(false)} title="Reset demo data?">
         <div className="stack">

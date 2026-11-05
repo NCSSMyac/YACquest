@@ -16,6 +16,8 @@ const TABS: { id: TabId; label: string }[] = [
 ];
 const MEDAL = ['#f2b33d', '#c0c8d6', '#cd7f32'];
 const campusColor = (id: string) => CAMPUSES.find((c) => c.id === id)?.color ?? 'var(--navy-800)';
+/** Readable text color for a campus (theme-aware; see --campus-* in theme.css). */
+const campusText = (id: string) => `campus-${id}`;
 
 export default function Ranks() {
   const [tab, setTab] = useState<TabId>('top');
@@ -43,7 +45,7 @@ function RankBadge({ rank }: { rank: number }) {
   return (
     <span
       className="chip"
-      style={{ minWidth: 34, justifyContent: 'center', color: medal ? '#14213d' : undefined, background: medal ? MEDAL[rank - 1] : undefined, borderColor: '#14213d' }}
+      style={{ minWidth: 34, justifyContent: 'center', color: medal ? '#14213d' : 'var(--text)', background: medal ? MEDAL[rank - 1] : undefined, borderColor: medal ? '#14213d' : 'var(--text-soft)' }}
       aria-label={`Rank ${rank}`}
     >
       {rank}
@@ -56,8 +58,8 @@ function Row({ r, me }: { r: LeaderRow; me: boolean }) {
     <li className="row" style={{ background: me ? 'rgba(242,179,61,0.25)' : undefined, padding: '8px 6px' }} aria-current={me ? 'true' : undefined}>
       <RankBadge rank={r.rank} />
       <Avatar id={r.avatar} look={r.look} campus={r.campus} size={32} />
-      <strong style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.displayName}{me ? ' (you)' : ''}</strong>
-      <span className="chip neutral" style={{ color: campusColor(r.campus) }}>{campusName(r.campus)}</span>
+      <strong style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.displayName}{me ? ' (you)' : ''}</strong>
+      <span className={`chip ${campusText(r.campus)}`}>{campusName(r.campus)}</span>
       <span className="pixel" style={{ fontSize: 15 }}>{r.points}</span>
     </li>
   );
@@ -95,7 +97,7 @@ function ByCampus() {
   return (
     <>
       {CAMPUSES.map((c) => (
-        <Panel key={c.id} title={<span style={{ color: c.color }}>{c.full}</span>}>
+        <Panel key={c.id} title={<span className={campusText(c.id)}>{c.full}</span>}>
           <div style={{ borderLeft: `6px solid ${c.color}`, paddingLeft: 6 }}>
             {data?.[c.id]?.length ? (
               <ol className="list">
@@ -126,7 +128,7 @@ function Cup() {
               <strong>{i === 0 && r.perCapita > 0 && <Sprite id="trophy" size={28} className="bob" />} {campusName(r.campus)}</strong>
               <span className="pixel" style={{ fontSize: 15 }}>{r.perCapita.toFixed(1)} avg</span>
             </div>
-            <div style={{ background: 'rgba(11,42,91,0.12)', border: '3px solid var(--navy-900)', height: 22 }} role="img" aria-label={`${campusName(r.campus)} average ${r.perCapita.toFixed(1)} points per person`}>
+            <div style={{ background: 'rgba(127,140,170,0.18)', border: '3px solid var(--border)', height: 22 }} role="img" aria-label={`${campusName(r.campus)} average ${r.perCapita.toFixed(1)} points per person`}>
               <div style={{ width: `${(r.perCapita / max) * 100}%`, height: '100%', background: campusColor(r.campus) }} />
             </div>
             <span className="muted">{r.members} members · {r.totalPoints} total pts</span>

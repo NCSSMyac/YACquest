@@ -80,7 +80,7 @@ export default function System() {
       </Panel>
 
       <Panel title="Danger zone">
-        <p>Ending the cycle archives all history and zeroes everyone's points. This cannot be undone.</p>
+        <p>Ending the cycle archives all history and zeroes everyone’s points. This can’t be undone.</p>
         <button className="btn red" onClick={() => { setResetOpen(true); setErr(null); setConfirmText(''); }}>End cycle &amp; reset points</button>
       </Panel>
 
@@ -92,7 +92,7 @@ export default function System() {
             <input className="input" value={confirmText} onChange={(e) => setConfirmText(e.target.value)} autoComplete="off" />
           </label>
           <ErrorText error={err} />
-          <div className="grid-2">
+          <div className="btn-row">
             <button className="btn ghost" onClick={() => setResetOpen(false)}>Cancel</button>
             <button className="btn red" disabled={confirmText !== 'RESET' || resetting} onClick={reset}>{resetting ? 'Resetting…' : 'Reset'}</button>
           </div>
@@ -206,7 +206,7 @@ function WeeklyEmail() {
         </label>
 
         <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0, gap: 8 }}>
-          <legend className="pixel" style={{ fontSize: 14, fontWeight: 600, padding: 0, marginBottom: 6 }}>Who gets it</legend>
+          <legend className="field-legend">Who gets it</legend>
           <label className="check">
             <input type="checkbox" checked={form.includeChairs} onChange={(e) => patch({ includeChairs: e.target.checked })} />
             <span>All chairs</span>
@@ -219,7 +219,7 @@ function WeeklyEmail() {
             <ul className="list" aria-label="Extra recipients">
               {form.recipients.map((r) => (
                 <li key={r} className="spread" style={{ padding: '6px 0' }}>
-                  <span style={{ wordBreak: 'break-all' }}>{r}</span>
+                  <span className="wrap-anywhere" style={{ minWidth: 0 }}>{r}</span>
                   <button type="button" className="btn small ghost" aria-label={`Remove ${r}`} onClick={() => patch({ recipients: form.recipients.filter((x) => x !== r) })}>Remove</button>
                 </li>
               ))}
@@ -257,7 +257,7 @@ function WeeklyEmail() {
 
       <div className="stack" style={{ marginTop: 14, gap: 8 }}>
         <button type="button" className="btn blue" disabled={busy !== null} onClick={() => void run('test')}>{busy === 'test' ? 'Queuing…' : 'Send test email to me'}</button>
-        <button type="button" className="btn" disabled={busy !== null} onClick={() => setConfirmSend(true)}>Send this week’s report now</button>
+        <button type="button" className="btn" disabled={busy !== null} onClick={() => setConfirmSend(true)}>Send report now</button>
         <Link to="/admin" className="btn small ghost" style={{ textDecoration: 'none' }}>Preview this week’s report</Link>
         {dirty && <span className="muted" style={{ fontSize: 13 }}>Save your changes first so the report uses them.</span>}
       </div>
@@ -265,7 +265,7 @@ function WeeklyEmail() {
       <Modal open={confirmSend} onClose={() => setConfirmSend(false)} title="Send the report now?">
         <div className="stack">
           <p>This emails this week’s report to everyone on the list right away. The automatic weekly email still goes out as scheduled.</p>
-          <div className="grid-2">
+          <div className="btn-row">
             <button className="btn ghost" onClick={() => setConfirmSend(false)}>Cancel</button>
             <button className="btn green" disabled={busy !== null} onClick={() => void run('now')}>{busy === 'now' ? 'Queuing…' : 'Send now'}</button>
           </div>
@@ -321,11 +321,11 @@ function EmailLog() {
             </thead>
             <tbody>
               {log.data.map((r) => (
-                <tr key={r.id} style={{ borderTop: '2px dashed rgba(11, 42, 91, 0.2)', verticalAlign: 'top' }}>
+                <tr key={r.id} style={{ borderTop: '2px dashed var(--rule)', verticalAlign: 'top' }}>
                   <td style={td}>
                     <strong style={{ display: 'block' }}>{r.subject || '(no subject)'}</strong>
                     <span className="muted">{KIND_LABEL[r.kind] ?? r.kind} · {fmtDateTime(r.createdAt)}</span>
-                    <span style={{ display: 'block', wordBreak: 'break-all' }}>To: {r.toEmails.join(', ')}</span>
+                    <span className="wrap-anywhere" style={{ display: 'block' }}>To: {r.toEmails.join(', ')}</span>
                     {r.lastError && <span className="field-error" style={{ display: 'block', fontSize: 13 }}>{r.lastError}</span>}
                   </td>
                   <td style={td}>

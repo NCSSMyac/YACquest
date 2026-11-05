@@ -78,7 +78,7 @@ export default function Announce() {
           </label>
 
           <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0 }}>
-            <legend className="pixel" style={{ fontSize: 14, marginBottom: 6 }}>Send to</legend>
+            <legend className="field-legend">Send to</legend>
             {(['all', 'campus', 'user'] as AnnouncementAudience[]).map((a) => (
               <label key={a} className="check">
                 <input type="radio" name="audience" checked={audience === a} onChange={() => setAudience(a)} />
@@ -113,8 +113,9 @@ export default function Announce() {
                     <ul className="list">
                       {people.data.map((p) => (
                         <li key={p.id}>
-                          <button type="button" className="btn small ghost block" onClick={() => setPerson(p)}>
-                            {p.displayName} · @{p.handle} · {campusName(p.campus)}
+                          <button type="button" className="row-btn" onClick={() => setPerson(p)}>
+                            <span><strong>{p.displayName}</strong> <span className="muted">@{p.handle} · {campusName(p.campus)}</span></span>
+                            <span aria-hidden>▶</span>
                           </button>
                         </li>
                       ))}
@@ -173,7 +174,7 @@ export default function Announce() {
             <p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap' }}>{body}</p>
           </div>
           <p className="muted" style={{ margin: 0 }}>Messages can’t be unsent.</p>
-          <div className="grid-2">
+          <div className="btn-row">
             <button className="btn ghost" onClick={() => setConfirm(false)}>Cancel</button>
             <button className="btn" onClick={send} disabled={busy}>{busy ? 'Sending…' : 'Send'}</button>
           </div>

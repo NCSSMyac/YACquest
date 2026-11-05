@@ -54,11 +54,11 @@ export default function Review() {
       </div>
       <div className="grid-2">
         <label className="field">
-            <span>Campus</span>
-            <select value={campus} onChange={(e) => setCampus(e.target.value as CampusId | '')}>
-              <option value="">All campuses</option>
-              {CAMPUSES.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+          <span>Campus</span>
+          <select value={campus} onChange={(e) => setCampus(e.target.value as CampusId | '')}>
+            <option value="">All campuses</option>
+            {CAMPUSES.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
         </label>
         <label className="field">
           <span>Activity</span>
@@ -82,7 +82,7 @@ export default function Review() {
               >
                 <img src={s.imageUrl} alt={`Proof from ${s.user.displayName}`} style={{ width: 90, height: 90, objectFit: 'cover', display: 'block' }} />
               </button>
-              <div className="stack" style={{ gap: 4, minWidth: 0 }}>
+              <div className="stack" style={{ gap: 4, minWidth: 0, flex: 1 }}>
                 <strong>{s.user.displayName}</strong>
                 <span className="muted">@{s.user.handle} · {campusName(s.user.campus)}</span>
                 <div className="row wrap"><span>{s.activity.title}</span><TierChip tier={s.activity.tier} /></div>
@@ -92,7 +92,7 @@ export default function Review() {
             </div>
             {s.note && <p>“{s.note}”</p>}
             {status === 'pending' ? (
-              <div className="grid-2">
+              <div className="btn-row">
                 <button className="btn green" disabled={busy} onClick={() => decide(s.id, 'approved')}>Approve</button>
                 <button className="btn red" disabled={busy} onClick={() => { setRejecting(s.id); setReason(''); setErr(null); }}>Reject</button>
               </div>
@@ -121,7 +121,7 @@ export default function Review() {
             <textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} />
           </label>
           <ErrorText error={err} />
-          <div className="grid-2">
+          <div className="btn-row">
             <button className="btn ghost" onClick={() => setRejecting(null)}>Cancel</button>
             <button className="btn red" disabled={busy || !reason.trim()} onClick={() => rejecting && decide(rejecting, 'rejected', reason)}>Reject</button>
           </div>

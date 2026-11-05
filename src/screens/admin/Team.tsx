@@ -16,7 +16,7 @@ function PersonSearch({ label, onPick, exclude }: { label: string; onPick: (u: A
     <div className="stack">
       <label className="field">
         <span>{label}</span>
-        <input className="input" type="search" placeholder="Name, handle or email" value={text} onChange={(e) => setText(e.target.value)} />
+        <input className="input" type="search" placeholder="Name, username or email" value={text} onChange={(e) => setText(e.target.value)} />
       </label>
       {text.trim().length >= 2 && !list.loading && !rows.length && <Empty>No matches.</Empty>}
       {rows.length > 0 && (
@@ -79,8 +79,8 @@ export default function Team() {
                   <strong>{m.displayName} <span className="muted">@{m.handle}</span></strong>
                   <span className={`chip ${m.role === 'chair' ? 't1' : 't2'}`}>{m.role === 'chair' ? 'YAC Chair' : 'Admin'}</span>
                 </div>
-                <span className="muted">{m.email}{!m.emailVerified && ' · email not confirmed'}</span>
-                {m.role === 'admin' && <button className="btn small red" onClick={() => { setErr(null); setRemoving(m); }}>Remove admin</button>}
+                <span className="muted wrap-anywhere">{m.email}{!m.emailVerified && ' · email not confirmed'}</span>
+                {m.role === 'admin' && <button className="btn small red" style={{ alignSelf: 'flex-start' }} onClick={() => { setErr(null); setRemoving(m); }}>Remove admin</button>}
               </li>
             ))}
           </ul>
@@ -100,7 +100,7 @@ export default function Team() {
         <div className="stack">
           <p style={{ margin: 0 }}>{removing?.displayName} will go back to being a regular adventurer.</p>
           <ErrorText error={err} />
-          <div className="grid-2">
+          <div className="btn-row">
             <button className="btn ghost" onClick={() => setRemoving(null)}>Cancel</button>
             <button className="btn red" disabled={busy} onClick={() => removing && run(() => api.setRole(removing.id, 'participant'), 'Admin removed.', () => { setRemoving(null); void team.reload(); })}>{busy ? 'Saving…' : 'Remove'}</button>
           </div>
@@ -111,7 +111,7 @@ export default function Team() {
         <div className="stack">
           <p style={{ margin: 0 }}>{adding?.displayName} (@{adding?.handle}) will be able to review submissions, award points and run events. They must have confirmed their email.</p>
           <ErrorText error={err} />
-          <div className="grid-2">
+          <div className="btn-row">
             <button className="btn ghost" onClick={() => setAdding(null)}>Cancel</button>
             <button className="btn green" disabled={busy} onClick={() => adding && run(() => api.setRole(adding.id, 'admin'), 'Admin added.', () => { setAdding(null); void team.reload(); })}>{busy ? 'Saving…' : 'Make admin'}</button>
           </div>
@@ -120,10 +120,10 @@ export default function Team() {
 
       <Modal open={!!handing} onClose={() => setHanding(null)} title="Hand over chair seat?">
         <div className="stack">
-          <p style={{ margin: 0 }}>{handing?.displayName} becomes a YAC Chair and you become an admin. To confirm, type their handle: <b>{handing?.handle}</b></p>
-          <input className="input" value={typed} onChange={(e) => setTyped(e.target.value)} aria-label="Type their handle" autoCapitalize="none" />
+          <p style={{ margin: 0 }}>{handing?.displayName} becomes a YAC Chair and you become an admin. To confirm, type their username: <b>{handing?.handle}</b></p>
+          <input className="input" value={typed} onChange={(e) => setTyped(e.target.value)} aria-label="Type their username" autoCapitalize="none" />
           <ErrorText error={err} />
-          <div className="grid-2">
+          <div className="btn-row">
             <button className="btn ghost" onClick={() => setHanding(null)}>Cancel</button>
             <button
               className="btn red"

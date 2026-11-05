@@ -9,6 +9,7 @@ import type { Session, User as AuthUser } from '@supabase/supabase-js';
 import { CAMPUSES, PRIZE, TIER_POINTS, type CampusId } from '../config';
 import { ACTIVITIES, activityById } from '../lib/activities';
 import { BADGES } from '../lib/badges';
+import { NAME_NOT_ALLOWED, nameIsClean } from '../lib/nameFilter';
 import { getSupabase, siteUrl } from '../lib/supabase';
 import { announcementError, claimContactError, isEmail } from '../lib/validate';
 import type {
@@ -435,6 +436,8 @@ export async function signup(input: SignupInput): Promise<SignupResult> {
   if (!input.acceptedRules) fail('rules', 'Please read and accept the rules.');
   if (!/^[a-zA-Z0-9_.]{3,20}$/.test(input.handle)) fail('handle', 'Username: 3–20 letters, numbers, dots or underscores.');
   if (input.displayName.trim().length < 2 || input.displayName.length > 24) fail('displayName', 'Display name: 2–24 characters.');
+  if (!nameIsClean(input.handle)) fail('handle', NAME_NOT_ALLOWED);
+  if (!nameIsClean(input.displayName)) fail('displayName', NAME_NOT_ALLOWED);
   if (!/^\S+@\S+\.\S+$/.test(input.email.trim())) fail('email', 'Enter a valid email.');
   if (input.password.length < 8) fail('password', 'Password must be at least 8 characters.');
   if (!CAMPUSES.some((c) => c.id === input.campus)) fail('campus', 'Pick your campus.');
@@ -492,6 +495,7 @@ export async function requestPasswordReset(email: string): Promise<void> {
 export async function updateProfile(patch: Partial<Pick<User, 'displayName' | 'avatar' | 'emailOptIn'>>): Promise<User> {
   if (patch.displayName !== undefined && (patch.displayName.trim().length < 2 || patch.displayName.length > 24))
     fail('displayName', 'Display name: 2–24 characters.');
+  if (patch.displayName !== undefined && !nameIsClean(patch.displayName)) fail('displayName', NAME_NOT_ALLOWED);
   const s = await session();
   const row = one(
     await rpc<AnyRow | AnyRow[]>('update_profile', {
@@ -910,6 +914,15 @@ export async function listTeam(): Promise<TeamMember[]> {
 
 export async function setRole(userId: string, role: 'participant' | 'admin'): Promise<void> {
   await rpc('set_role', { p_user_id: userId, p_role: role });
+  emitChange();
+}
+
+/** Admin/chair fixes someone's display name (server re-checks the name filter). */
+export async function adminRenameUser(userId: string, displayName: string): Promise<void> {
+  const name = displayName.trim();
+  if (name.length < 2 || name.length > 24) fail('displayName', 'Display name: 2–24 characters.');
+  if (!nameIsClean(name)) fail('displayName', NAME_NOT_ALLOWED);
+  await rpc('admin_rename_user', { p_user_id: userId, p_display_name: displayName.trim() });
   emitChange();
 }
 

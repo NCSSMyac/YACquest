@@ -1,4 +1,7 @@
-export const fmtDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+/** Date-only strings ("2027-05-15") are calendar days, not UTC midnight — read them as local so they don't show a day early. */
+export const toDate = (iso: string) => new Date(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T00:00:00` : iso);
+export const fmtDate = (iso: string) => toDate(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+export const fmtLongDate = (iso: string) => toDate(iso).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
 export const fmtDateTime = (iso: string) =>
   new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 export const fmtPts = (n: number) => `${n > 0 ? '+' : ''}${n}`;

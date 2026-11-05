@@ -4,9 +4,14 @@ import { Sprite } from '../components/Sprite';
 import { Panel, useToast } from '../components/ui';
 import { CAPS, CONTACT_EMAILS, CYCLE, INSTAGRAM_HANDLE, INSTAGRAM_URL, PRIZE, TIER_LABELS, TIER_POINTS } from '../config';
 import { useAuth } from '../lib/auth';
+import { fmtLongDate } from '../lib/format';
 import { serverInfo } from '../lib/supabase';
 
-const longDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+/** Lets a long email address wrap after the @ instead of mid-word. */
+const breakableEmail = (email: string) => {
+  const at = email.indexOf('@');
+  return at < 0 ? email : <>{email.slice(0, at)}<wbr />{email.slice(at)}</>;
+};
 
 /** Help page: quick answers + one-tap email to the YAC chairs. Works logged in or out. */
 export default function Help() {
@@ -32,7 +37,7 @@ export default function Help() {
       q: 'How do I earn points?',
       a: (
         <>
-          Check in at events with the password announced there, and complete quests on the <Link to="/earn">Quests</Link> page.
+          Check in at events with the password announced there, and complete quests on the {user ? <Link to="/earn">Quests</Link> : 'Quests'} page.
           {' '}Points: {TIER_LABELS[1]} +{TIER_POINTS[1]}, {TIER_LABELS[2]} +{TIER_POINTS[2]}, {TIER_LABELS[3]} +{TIER_POINTS[3]}.
         </>
       ),
@@ -55,7 +60,7 @@ export default function Help() {
     },
     {
       q: 'When does the year end?',
-      a: `This school year’s quest ends ${longDate(CYCLE.end)}. Points reset to 0 for the next school year.`,
+      a: `This school year’s quest ends ${fmtLongDate(CYCLE.end)}. Points reset to 0 for the next school year.`,
     },
   ];
 
@@ -79,7 +84,7 @@ export default function Help() {
           <ul className="list">
             {CONTACT_EMAILS.map((email) => (
               <li key={email} className="spread">
-                <a href={`mailto:${email}?subject=${subject}&body=${body}`} style={{ wordBreak: 'break-all', fontWeight: 700 }}>{email}</a>
+                <a href={`mailto:${email}?subject=${subject}&body=${body}`} className="wrap-anywhere" style={{ fontWeight: 700, minWidth: 0 }}>{breakableEmail(email)}</a>
                 <button type="button" className="btn small ghost" onClick={() => copy(email)} aria-label={`Copy ${email}`}>Copy</button>
               </li>
             ))}
@@ -101,7 +106,7 @@ export default function Help() {
               </li>
             ))}
           </ul>
-          <p style={{ margin: '8px 0 0' }}>Full details: <Link to="/rules">Rules</Link></p>
+          {user && <p style={{ margin: '8px 0 0' }}>Full details: <Link to="/rules">Rules</Link></p>}
         </Panel>
 
         <p className="muted center" style={{ fontSize: 12, margin: 0 }}>App server: {serverInfo}</p>

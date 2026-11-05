@@ -272,7 +272,7 @@ function ContactLine() {
       {CONTACT_EMAILS.map((e, i) => (
         <span key={e}>
           {i > 0 && (i === CONTACT_EMAILS.length - 1 ? ' or ' : ', ')}
-          <a href={`mailto:${e}`} style={{ wordBreak: 'break-all' }}>{e}</a>
+          <a href={`mailto:${e}`} className="wrap-anywhere">{e}</a>
         </span>
       ))}
       .
@@ -292,7 +292,7 @@ function Suggest() {
     try {
       await api.suggestPrize(idea.trim());
       setIdea('');
-      toast('Thanks! Idea sent to the council.', 'success');
+      toast('Thanks! The YAC team will see your idea.', 'success');
     } catch (x) {
       setErr(errorMessage(x));
     } finally {

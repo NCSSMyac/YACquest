@@ -49,7 +49,7 @@ export function FeedbackForm() {
         </label>
         <label className="field">
           <span>Your message</span>
-          <textarea rows={3} value={message} maxLength={1000} onChange={(e) => setMessage(e.target.value)} placeholder="What's working, what's not, or what you'd love to see." />
+          <textarea rows={3} value={message} maxLength={1000} onChange={(e) => setMessage(e.target.value)} placeholder="What’s working, what’s not, or what you’d love to see." />
           <small className="muted">{message.length}/1000 · The YAC team reads every message.</small>
         </label>
         <ErrorText error={err} />

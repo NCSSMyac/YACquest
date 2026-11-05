@@ -168,3 +168,7 @@ Actions: `points_added` / `points_removed` (ledger insert with created_by and so
 - `leaderboard(p_limit int default 10, p_campus varchar default null)` and `my_rank(p_campus text default null)` now also return `hat, accessory, background`.
 - `weekly_shoutout() → json {userId, displayName, campus, avatar, hat, accessory, background, look, pointsThisWeek}` or null — top positive-points gainer in the last 7 days.
 - Weekly email gains "⭐ Adventurer of the week"; when the week's report is queued, the winner gets a notification.
+
+## 0010 — Name filter
+- `name_is_clean(text)` (internal) mirrors `src/lib/nameFilter.ts`. Enforced in `handle_new_user` (codes `handle` / `displayName`), `update_profile`, and `handle_available` (false for unclean handles).
+- `admin_rename_user(p_user_id, p_display_name)` — admin/chair; renames, updates active claims, notifies the user, logs `user_renamed` {from, to}.
