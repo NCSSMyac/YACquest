@@ -6,6 +6,7 @@
  *
  * The `_mustMatch` line below fails the build if live.ts is missing anything mock.ts has.
  */
+import { supabaseConfigured } from '../lib/supabase';
 import * as mock from './mock';
 import * as live from './live';
 
@@ -16,7 +17,7 @@ type PublicApi = Omit<typeof mock, 'seed' | '__test'>;
 const _mustMatch: PublicApi = live;
 void _mustMatch;
 
-const useLive = Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
+const useLive = supabaseConfigured;
 const impl: PublicApi = useLive ? live : mock;
 
 export const {
@@ -66,6 +67,9 @@ export const {
   listSuggestions,
   weeklyReportPreview,
   sendAnnouncement,
+  submitFeedback,
+  listFeedback,
+  markFeedbackReviewed,
   listAnnouncements,
   // chair
   listTeam,

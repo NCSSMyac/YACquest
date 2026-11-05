@@ -1163,6 +1163,43 @@ begin
   perform t.throws('select update_profile(null, ''griffin'', null)', 'avatar', 'unknown avatar rejected');
 end $$;
 
+
+-- =============================================================================
+-- 22. 0008 — feedback
+-- =============================================================================
+:as_alice
+do $$ declare r json;
+begin
+  perform t.throws('select submit_feedback(''rant'', ''hello there'')', 'category', 'feedback bad category');
+  perform t.throws('select submit_feedback(''idea'', ''hi'')', 'message', 'feedback too short');
+  r := submit_feedback('idea', 'Can we do a bowling night?');
+  perform t.ok((r->>'id') is not null, 'participant can send feedback');
+  perform submit_feedback('bug', 'The <b>check-in</b> button was slow');
+  perform t.eq((select count(*) from feedback), 0::bigint, 'RLS: participant cannot read feedback table');
+  perform t.throws('select * from list_feedback()', 'forbidden', 'participant cannot list feedback');
+  perform suggest_prize('Movie tickets please');
+end $$;
+:as_bob
+do $$ declare fid uuid; n bigint;
+begin
+  perform t.ok((select count(*) from list_feedback() where display_name = 'Alice A.') >= 3, 'admin sees feedback + prize ideas');
+  perform t.ok(exists (select 1 from list_feedback() where kind = 'prize' and message = 'Movie tickets please'), 'prize suggestions included');
+  select id into fid from list_feedback('new') where message = 'Can we do a bowling night?';
+  perform mark_feedback_reviewed('feedback', fid);
+  perform t.eq((select status from list_feedback() where id = fid), 'reviewed', 'mark reviewed');
+  perform t.eq((select reviewed_by_name from list_feedback() where id = fid), 'Bob', 'reviewer recorded');
+  perform t.ok(not exists (select 1 from list_feedback('new') where id = fid), 'filter new excludes reviewed');
+  perform t.throws(format('select mark_feedback_reviewed(''feedback'', %L)', gen_random_uuid()), 'not_found', 'unknown feedback');
+end $$;
+:as_super
+do $$ declare rep json := public.build_weekly_report();
+begin
+  perform t.ok(rep->>'text' like '%FEEDBACK (last 7 days)%' and rep->>'text' like '%bowling night%', 'weekly report text includes feedback');
+  perform t.ok(rep->>'html' like '%Prize idea%' and rep->>'html' like '%Movie tickets please%', 'weekly report html includes prize ideas');
+  perform t.ok(rep->>'html' like '%&lt;b&gt;check-in&lt;/b&gt;%', 'feedback is HTML-escaped in the email');
+  perform t.ok(exists (select 1 from admin_actions where action = 'feedback_reviewed' and actor_id = t.u('bob')), 'review logged');
+end $$;
+
 -- =============================================================================
 :as_super
 select 'PASSED: ' || current_setting('t.passed') || ' assertions' as result;

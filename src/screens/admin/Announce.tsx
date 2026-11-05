@@ -140,7 +140,7 @@ export default function Announce() {
           {emailBlocked && <p className="field-error">Only a YAC chair can email everyone. Uncheck email or pick a campus.</p>}
 
           <ErrorText error={err} />
-          <button className="btn" disabled={busy || emailBlocked}>Review & send</button>
+          <button className="btn" disabled={busy || emailBlocked}>Review and send</button>
         </form>
       </Panel>
 

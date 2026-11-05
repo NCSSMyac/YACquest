@@ -79,6 +79,8 @@ export function describeAction(a: AdminAction): string {
       const mail = Number(d.emailed) > 0 ? ` (+ email to ${Number(d.emailed)})` : '';
       return `${actor} sent “${s(d.title)}” to ${aud}${mail}`;
     }
+    case 'feedback_reviewed':
+      return `${actor} marked ${target}’s ${d.kind === 'prize' ? 'prize idea' : 'feedback'} as reviewed${s(d.message) ? ` — “${s(d.message)}”` : ''}`;
     case 'cycle_reset':
       return `${actor} ended the cycle${d.name ? ` “${s(d.name)}”` : ''} and reset everyone’s points`;
     case 'report_settings_changed':

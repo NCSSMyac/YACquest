@@ -15,6 +15,7 @@ import Ranks from './screens/Ranks';
 import Me from './screens/Me';
 import Notifications from './screens/Notifications';
 import Rules from './screens/Rules';
+import Help from './screens/Help';
 import AdminLayout from './screens/admin/AdminLayout';
 import AdminHome from './screens/admin/AdminHome';
 import Review from './screens/admin/Review';
@@ -24,6 +25,7 @@ import Prizes from './screens/admin/Prizes';
 import System from './screens/admin/System';
 import Team from './screens/admin/Team';
 import Announce from './screens/admin/Announce';
+import Feedback from './screens/admin/Feedback';
 import ActivityLog from './screens/admin/ActivityLog';
 
 function RequireAuth() {
@@ -96,6 +98,7 @@ export default function App() {
               <Route path="/forgot" element={<ForgotPassword />} />
               <Route path="/check-email" element={<CheckEmail />} />
             </Route>
+            <Route path="/help" element={<Help />} />
             <Route element={<RequireAuth />}>
               {/* Outside Layout: the reset link logs the person in, then they pick a new password here. */}
               <Route path="/reset-password" element={<ResetPassword />} />
@@ -112,6 +115,7 @@ export default function App() {
                     <Route index element={<AdminHome />} />
                     <Route path="review" element={<Review />} />
                     <Route path="announce" element={<Announce />} />
+                    <Route path="feedback" element={<Feedback />} />
                     <Route path="players" element={<Players />} />
                     <Route path="events" element={<Events />} />
                     <Route element={<RequireStaff chairOnly />}>

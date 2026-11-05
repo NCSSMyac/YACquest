@@ -39,6 +39,8 @@ import type {
   YacEvent,
   Announcement,
   AnnouncementInput,
+  FeedbackCategory,
+  FeedbackItem,
 } from '../types';
 
 // ───────────────────────────── errors ─────────────────────────────
@@ -74,6 +76,8 @@ interface Db {
   actions: AdminAction[];
   /** Admin announcements (the real one is the announcements table). */
   announcements: Announcement[];
+  /** General feedback (the real one is the feedback table). */
+  feedback: { id: string; userId: string; category: FeedbackCategory; message: string; status: 'new' | 'reviewed'; reviewedBy?: string; reviewedAt?: string; createdAt: string }[];
   seq: number;
 }
 
@@ -85,7 +89,7 @@ interface OutboxRow extends EmailLogRow {
 
 const DB_KEY = 'yacquest-db-v1';
 const SESSION_KEY = 'yacquest-session';
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 
 let db: Db | null = null;
 
@@ -895,6 +899,7 @@ export function seed(): Db {
     outbox: [],
     actions: [],
     announcements: [],
+    feedback: [],
     seq: 1000,
   };
   db = d;
@@ -1208,6 +1213,13 @@ function buildWeeklyReport(): Omit<WeeklyReport, 'recipients'> {
   const cname = (id: CampusId) => CAMPUSES.find((c) => c.id === id)?.name ?? id;
   const dateLabel = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
   const subject = `YACquest weekly report — ${dateLabel}`;
+  const weekAgo = Date.now() - 7 * 86_400_000;
+  const userName = (id: string) => d.users.find((u) => u.id === id)?.displayName ?? 'Unknown';
+  const fbLabel: Record<string, string> = { idea: 'Idea', bug: 'Bug / problem', event: 'Event idea', other: 'Other', prize: 'Prize idea' };
+  const recentFeedback = [
+    ...d.feedback.map((f) => ({ cat: f.category as string, msg: f.message, who: userName(f.userId), at: f.createdAt })),
+    ...d.suggestions.map((x) => ({ cat: 'prize', msg: x.idea, who: userName(x.userId), at: x.createdAt })),
+  ].filter((f) => new Date(f.at).getTime() >= weekAgo).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 30);
 
   const text = [
     `Prize race: ${prize.remaining} of ${prize.total} spots left (goal ${PRIZE.goal} pts, ${PRIZE.name}).`,
@@ -1220,6 +1232,9 @@ function buildWeeklyReport(): Omit<WeeklyReport, 'recipients'> {
     '',
     'CAMPUS CUP (points per member)',
     ...cup.map((c, i) => `${i + 1}. ${c.name}: ${c.perCapita} (${c.members} members)`),
+    '',
+    'FEEDBACK (last 7 days)',
+    ...(recentFeedback.length ? recentFeedback.map((f) => `- [${fbLabel[f.cat]}] ${f.who}: ${f.msg}`) : ['- No new feedback this week.']),
     '',
     'THIS WEEK',
     `- ${active} active participants, ${pts} points awarded, ${signups} new sign-ups`,
@@ -1240,6 +1255,10 @@ function buildWeeklyReport(): Omit<WeeklyReport, 'recipients'> {
       `<ol style="padding-left:22px;margin:0">${ranked.slice(0, 5).map((r) => li(`${esc(r.displayName)} (${esc(cname(r.campus))}) — ${r.points}`)).join('')}</ol>` +
       h2('Campus Cup (points per member)') +
       `<ol style="padding-left:22px;margin:0">${cup.map((c) => li(`${esc(c.name)}: <b>${c.perCapita}</b> <span style="color:#4a5672">(${c.members} members)</span>`)).join('')}</ol>` +
+      h2('💬 Feedback (last 7 days)') +
+      (recentFeedback.length
+        ? recentFeedback.map((f) => `<div style="border-left:4px solid #f2b33d;padding:6px 10px;margin:0 0 8px;background:#fffaf0"><div style="font-size:12px;color:#4a5672"><b>${esc(fbLabel[f.cat])}</b> · ${esc(f.who)}</div><div style="white-space:pre-wrap">${esc(f.msg)}</div></div>`).join('')
+        : '<p style="margin:0;color:#4a5672">No new feedback this week.</p>') +
       h2('This week') +
       `<ul style="padding-left:18px;margin:0">${li(`${active} active participants · ${pts} points awarded · ${signups} new sign-ups`)}${li(`${pending} submissions waiting for review`)}${li(`${daysLeft} days left in the cycle`)}</ul>`,
   );
@@ -1394,4 +1413,58 @@ export async function listAnnouncements(limit = 20): Promise<Announcement[]> {
   await delay();
   requireRole('admin', 'chair');
   return load().announcements.slice(0, limit);
+}
+
+// ───────────────────────────── feedback ─────────────────────────────
+
+/** SERVER RULE (submit_feedback in 0008): 3–1000 chars, 10 per person per day. */
+export async function submitFeedback(category: FeedbackCategory, message: string): Promise<void> {
+  await delay();
+  const user = me();
+  const d = load();
+  if (!['idea', 'bug', 'event', 'other'].includes(category)) fail('category', 'Pick what kind of feedback this is.');
+  if (message.trim().length < 3 || message.trim().length > 1000) fail('message', 'Feedback: 3–1000 characters.');
+  if (d.feedback.filter((f) => f.userId === user.id && Date.now() - new Date(f.createdAt).getTime() < 86_400_000).length >= 10)
+    fail('limit', 'Thanks for all the feedback! Please try again tomorrow.');
+  d.feedback.unshift({ id: nextId('fb'), userId: user.id, category, message: message.trim(), status: 'new', createdAt: now() });
+  save();
+}
+
+export async function listFeedback(status?: 'new' | 'reviewed', limit = 50): Promise<FeedbackItem[]> {
+  await delay();
+  requireRole('admin', 'chair');
+  const d = load();
+  const who = (id: string) => d.users.find((u) => u.id === id);
+  const name = (id?: string) => (id ? who(id)?.displayName : undefined);
+  const items: FeedbackItem[] = [
+    ...d.feedback.map((f) => ({
+      id: f.id, kind: 'feedback' as const, category: f.category, message: f.message, status: f.status,
+      displayName: who(f.userId)?.displayName ?? 'Unknown', handle: who(f.userId)?.handle ?? '', campus: who(f.userId)?.campus ?? 'duke',
+      reviewedByName: name(f.reviewedBy), reviewedAt: f.reviewedAt, createdAt: f.createdAt,
+    })),
+    ...d.suggestions.map((s) => {
+      const x = s as typeof s & { status?: 'new' | 'reviewed'; reviewedBy?: string; reviewedAt?: string };
+      return {
+        id: s.id, kind: 'prize' as const, category: 'prize' as const, message: s.idea, status: x.status ?? 'new',
+        displayName: who(s.userId)?.displayName ?? 'Unknown', handle: who(s.userId)?.handle ?? '', campus: who(s.userId)?.campus ?? 'duke',
+        reviewedByName: name(x.reviewedBy), reviewedAt: x.reviewedAt, createdAt: s.createdAt,
+      };
+    }),
+  ];
+  return items
+    .filter((i) => !status || i.status === status)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, limit);
+}
+
+export async function markFeedbackReviewed(kind: FeedbackItem['kind'], id: string): Promise<void> {
+  await delay();
+  const admin = requireRole('admin', 'chair');
+  const d = load();
+  const row = kind === 'feedback' ? d.feedback.find((f) => f.id === id) : (d.suggestions.find((s) => s.id === id) as (typeof d.suggestions)[number] & { status?: string; reviewedBy?: string; reviewedAt?: string } | undefined);
+  if (!row) return fail('not_found', 'That feedback no longer exists.');
+  Object.assign(row, { status: 'reviewed', reviewedBy: admin.id, reviewedAt: now() });
+  const target = d.users.find((u) => u.id === row.userId);
+  logAction('feedback_reviewed', target, { kind, message: ('message' in row ? row.message : (row as { idea: string }).idea).slice(0, 120) }, admin);
+  save();
 }

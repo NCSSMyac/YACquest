@@ -49,7 +49,7 @@ export default function Login() {
       <div className="stack">
         <div className="center">
           <Sprite id="yak" size={96} className="bob" />
-          <h1 style={{ fontFamily: 'var(--font-pixel)', color: 'var(--gold-500)', textShadow: '3px 3px 0 var(--navy-900)', margin: '12px 0 4px' }}>YACquest</h1>
+          <h1 style={{ fontFamily: 'var(--font-pixel)', color: 'var(--gold-500)', textShadow: '2px 2px 0 var(--navy-900)', margin: '12px 0 4px' }}>YACquest</h1>
           <p className="muted" style={{ margin: 0 }}>Earn points. Join the quest. Win prizes.</p>
         </div>
         <Panel title="Log in">
@@ -69,9 +69,10 @@ export default function Login() {
               </button>
             )}
             <button className="btn block" disabled={busy}>{busy ? 'Logging in…' : 'Log in'}</button>
-            <div className="spread">
+            <div className="spread" style={{ flexWrap: 'wrap' }}>
               <Link to="/signup">Create account</Link>
               <Link to="/forgot">Forgot password?</Link>
+              <Link to="/help">Need help?</Link>
             </div>
           </form>
         </Panel>

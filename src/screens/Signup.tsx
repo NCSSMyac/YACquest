@@ -67,7 +67,7 @@ export default function Signup() {
     <div className="app-shell" style={{ paddingTop: 16 }}>
       <form className="stack" onSubmit={review} noValidate>
         <div className="center">
-          <h1 style={{ fontFamily: 'var(--font-pixel)', color: 'var(--gold-500)', textShadow: '3px 3px 0 var(--navy-900)' }}>New player</h1>
+          <h1 style={{ fontFamily: 'var(--font-pixel)', color: 'var(--gold-500)', textShadow: '2px 2px 0 var(--navy-900)' }}>New player</h1>
         </div>
         <Panel title="Your account">
           <div className="stack">

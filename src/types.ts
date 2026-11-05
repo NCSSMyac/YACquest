@@ -283,3 +283,21 @@ export interface Announcement {
   senderName: string;
   createdAt: string;
 }
+
+/** General feedback categories a participant can pick (prize ideas use the separate prize-suggestion form). */
+export type FeedbackCategory = 'idea' | 'bug' | 'event' | 'other';
+
+export interface FeedbackItem {
+  id: string;
+  /** 'feedback' = general feedback form, 'prize' = prize suggestion form. */
+  kind: 'feedback' | 'prize';
+  category: FeedbackCategory | 'prize';
+  message: string;
+  status: 'new' | 'reviewed';
+  displayName: string;
+  handle: string;
+  campus: CampusId;
+  reviewedByName?: string;
+  reviewedAt?: string;
+  createdAt: string;
+}

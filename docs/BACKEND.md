@@ -146,3 +146,15 @@ Actions: `points_added` / `points_removed` (ledger insert with created_by and so
 - Table `announcements` (admins read via RLS). `send_announcement(p_title, p_body, p_audience 'all'|'campus'|'user', p_campus, p_user_id, p_send_email) → json {id, recipients, emailed}` — admin/chair; emailing 'all' is chair-only (`forbidden`); 20 per sender per day (`limit`); codes `title`, `body`, `audience`, `campus`, `user`.
 - Creates one `notifications` row (kind 'announcement') per target; Home shows the latest 3. Email copy → `email_outbox` kind 'announcement', ≤ 90 BCC per row, only opted-in confirmed emails (a direct message always emails that person). Logged as `announcement_sent`.
 - `list_announcements(p_limit default 20)` — admin/chair, newest first, snake_case rows.
+
+---
+
+## 0007 — Characters
+`profiles.avatar` ∈ ('yak','unicorn','dragon','knight','mage','ranger').
+
+## 0008 — Feedback
+- Table `feedback` (id, user_id, category 'idea'|'bug'|'event'|'other', message 3–1000, status 'new'|'reviewed', reviewed_by, reviewed_at, created_at); admins read via RLS. `prize_suggestions` gains status/reviewed_by/reviewed_at.
+- `submit_feedback(p_category, p_message) → json {id}` (10/day, codes `category`, `message`, `limit`).
+- `list_feedback(p_status default null, p_limit default 50)` admin → feedback + prize suggestions (kind 'feedback'|'prize'), newest first.
+- `mark_feedback_reviewed(p_kind, p_id)` admin; logged as `feedback_reviewed`.
+- `build_weekly_report()` adds "💬 Feedback (last 7 days)".

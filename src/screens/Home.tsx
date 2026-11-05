@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import * as api from '../api';
-import { CAPS, PRIZE, TIER_POINTS, campusName } from '../config';
+import { CAPS, INSTAGRAM_HANDLE, INSTAGRAM_URL, PRIZE, TIER_POINTS, campusName } from '../config';
 import { Sprite } from '../components/Sprite';
 import { ErrorText, Loading, Panel, ProgressBar, StatusChip, useToast } from '../components/ui';
 import { activityById } from '../lib/activities';
@@ -53,6 +53,11 @@ export default function Home() {
           </ul>
         )}
       </Panel>
+
+      <div className="grid-2">
+        <a className="btn blue block" href={INSTAGRAM_URL} target="_blank" rel="noreferrer" aria-label={`YAC on Instagram, ${INSTAGRAM_HANDLE}`}>📷 YAC Instagram</a>
+        <Link className="btn block" to="/help">❓ Help</Link>
+      </div>
 
       <Panel tone="gold" title="Your points">
         <div className="row" style={{ marginBottom: 10 }}>

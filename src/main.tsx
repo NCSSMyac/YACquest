@@ -5,8 +5,8 @@ import App from './App';
 import '@fontsource/nunito/latin-400.css';
 import '@fontsource/nunito/latin-600.css';
 import '@fontsource/nunito/latin-700.css';
-import '@fontsource/pixelify-sans/latin-400.css';
-import '@fontsource/pixelify-sans/latin-600.css';
+import '@fontsource/silkscreen/latin-400.css';
+import '@fontsource/silkscreen/latin-700.css';
 import './styles/theme.css';
 
 // Apply saved light/dark preference before first paint.

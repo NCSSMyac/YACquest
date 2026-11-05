@@ -370,3 +370,21 @@ describe('announcements', () => {
     await expect(api.sendAnnouncement({ title: 'Hello there', body: 'x', audience: 'user', sendEmail: false })).rejects.toMatchObject({ code: 'user' });
   });
 });
+
+describe('feedback', () => {
+  it('participants send feedback; admins list it with prize ideas and mark it reviewed', async () => {
+    asUser('yak001');
+    await expect(api.submitFeedback('idea', 'hi')).rejects.toMatchObject({ code: 'message' });
+    await api.submitFeedback('event', 'Bowling night please!');
+    await api.suggestPrize('Movie tickets');
+    await expect(api.listFeedback()).rejects.toMatchObject({ code: 'forbidden' });
+    asUser('admin');
+    const fresh = await api.listFeedback('new');
+    const fb = fresh.find((f) => f.message === 'Bowling night please!')!;
+    expect(fb).toMatchObject({ kind: 'feedback', category: 'event', displayName: 'Yak001' });
+    expect(fresh.some((f) => f.kind === 'prize' && f.message === 'Movie tickets')).toBe(true);
+    await api.markFeedbackReviewed('feedback', fb.id);
+    expect((await api.listFeedback('new')).some((f) => f.id === fb.id)).toBe(false);
+    expect((await api.listFeedback('reviewed')).find((f) => f.id === fb.id)?.status).toBe('reviewed');
+  });
+});

@@ -1,3 +1,4 @@
+import { FeedbackForm } from '../components/FeedbackForm';
 import { InstallApp } from '../components/InstallApp';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -171,6 +172,8 @@ export default function Me() {
         </div>
       </Panel>
 
+      <FeedbackForm />
+
       <Panel title="Suggest a prize">
         <form className="stack" onSubmit={sendIdea}>
           <label className="field">
@@ -201,7 +204,7 @@ export default function Me() {
 
       <Panel title="More">
         <div className="stack">
-          <Link to="/rules">Rules</Link>
+          <Link to="/rules">Rules</Link> · <Link to="/help">Help</Link>
           <Link to="/notifications">Notifications</Link>
         </div>
       </Panel>

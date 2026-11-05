@@ -38,6 +38,8 @@ import type {
   Announcement,
   AnnouncementAudience,
   AnnouncementInput,
+  FeedbackCategory,
+  FeedbackItem,
 } from '../types';
 import { ApiError, emitChange } from './shared';
 import type { AdminOverview, AdminUserRow, EventInput, QueueItem, SignupInput, SignupResult, TeamMember } from './shared';
@@ -1080,4 +1082,34 @@ export async function listAnnouncements(limit = 20): Promise<Announcement[]> {
     senderName: str(pick(r, 'sender_name')),
     createdAt: str(pick(r, 'created_at')),
   }));
+}
+
+// ───────────────────────────── feedback ─────────────────────────────
+
+export async function submitFeedback(category: FeedbackCategory, message: string): Promise<void> {
+  if (message.trim().length < 3) fail('message', 'Tell us a bit more (at least 3 characters).');
+  if (message.length > 1000) fail('message', 'Keep it under 1000 characters.');
+  await rpc('submit_feedback', { p_category: category, p_message: message.trim() });
+  emitChange();
+}
+
+export async function listFeedback(status?: 'new' | 'reviewed', limit = 50): Promise<FeedbackItem[]> {
+  return ((await rpc<AnyRow[]>('list_feedback', { p_status: status ?? null, p_limit: limit })) ?? []).map((r) => ({
+    id: str(r.id),
+    kind: str(r.kind) as FeedbackItem['kind'],
+    category: str(r.category) as FeedbackItem['category'],
+    message: str(r.message),
+    status: str(r.status) as FeedbackItem['status'],
+    displayName: str(pick(r, 'display_name')),
+    handle: str(r.handle),
+    campus: str(r.campus) as CampusId,
+    reviewedByName: opt(pick(r, 'reviewed_by_name')),
+    reviewedAt: opt(pick(r, 'reviewed_at')),
+    createdAt: str(pick(r, 'created_at')),
+  }));
+}
+
+export async function markFeedbackReviewed(kind: FeedbackItem['kind'], id: string): Promise<void> {
+  await rpc('mark_feedback_reviewed', { p_kind: kind, p_id: id });
+  emitChange();
 }

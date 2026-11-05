@@ -8,14 +8,33 @@
  */
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-export const supabaseConfigured = Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
+/**
+ * Cleans up common copy-paste mistakes in the settings (stray spaces/newlines, or a dashboard
+ * link like "https://<ref>/settings/api-keys.supabase.co") so the app still finds the project.
+ */
+function normalizeUrl(raw: string | undefined): string {
+  const v = (raw ?? '').trim().replace(/\/+$/, '');
+  if (!v) return '';
+  const ref = /^https?:\/\/([a-z0-9]{20})(?:[./]|$)/i.exec(v)?.[1];
+  return ref ? `https://${ref.toLowerCase()}.supabase.co` : v;
+}
+
+const SUPABASE_URL = normalizeUrl(import.meta.env.VITE_SUPABASE_URL);
+const SUPABASE_KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY ?? '').trim();
+
+export const supabaseConfigured = Boolean(SUPABASE_URL && SUPABASE_KEY);
+
+/** Non-secret summary of which server this build talks to (shown on the Help page for troubleshooting). */
+export const serverInfo = supabaseConfigured
+  ? `${SUPABASE_URL.replace(/^https?:\/\//, '')} · key ${SUPABASE_KEY.slice(0, 18)}…`
+  : 'demo mode (no server)';
 
 let client: SupabaseClient | null = null;
 
 export function getSupabase(): SupabaseClient {
   if (client) return client;
   if (!supabaseConfigured) throw new Error('Supabase is not configured (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are missing).');
-  client = createClient(import.meta.env.VITE_SUPABASE_URL!, import.meta.env.VITE_SUPABASE_ANON_KEY!, {
+  client = createClient(SUPABASE_URL, SUPABASE_KEY, {
     auth: {
       flowType: 'pkce',
       persistSession: true,
