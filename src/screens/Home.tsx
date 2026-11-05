@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import * as api from '../api';
 import { CAPS, INSTAGRAM_HANDLE, INSTAGRAM_URL, PRIZE, TIER_POINTS, campusName } from '../config';
 import { Avatar } from '../components/Avatar';
+import { InstallButton, showInstallButton } from '../components/InstallApp';
 import { Shoutout } from '../components/Shoutout';
 import { Sprite } from '../components/Sprite';
 import { TreasureMap, checkpointsCrossed } from '../components/TreasureMap';
@@ -81,9 +82,10 @@ export default function Home() {
 
       <Shoutout meId={d.user.id} />
 
-      <div className="grid-2">
-        <a className="btn blue block" href={INSTAGRAM_URL} target="_blank" rel="noreferrer" aria-label={`YAC on Instagram, ${INSTAGRAM_HANDLE}`}>📷 Instagram</a>
+      <div className="grid-2" style={showInstallButton() ? { gridTemplateColumns: 'repeat(3, 1fr)' } : undefined}>
+        <a className="btn blue block" href={INSTAGRAM_URL} target="_blank" rel="noreferrer" aria-label={`YAC on Instagram, ${INSTAGRAM_HANDLE}`}>📷 Insta</a>
         <Link className="btn block" to="/help">❓ Help</Link>
+        <InstallButton />
       </div>
 
       <Panel tone="gold" title="Your points">
