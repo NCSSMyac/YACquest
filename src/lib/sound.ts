@@ -1,15 +1,15 @@
 /**
- * Tiny 8-bit chimes made with WebAudio (no audio files). Off by default; the player
- * turns them on in Me → Settings. The AudioContext is created lazily on the first
+ * Tiny 8-bit chimes made with WebAudio (no audio files). ON by default; players choose
+ * on sign-up and can change it any time in Me → Settings. The AudioContext is created lazily on the first
  * play, which always happens after a tap/click, so browsers allow it.
  */
 const KEY = 'yacquest-sound';
 
 export function getSoundOn(): boolean {
   try {
-    return localStorage.getItem(KEY) === 'on';
+    return localStorage.getItem(KEY) !== 'off';
   } catch {
-    return false;
+    return true;
   }
 }
 

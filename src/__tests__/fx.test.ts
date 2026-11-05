@@ -84,8 +84,8 @@ describe('treasure map', () => {
 });
 
 describe('sound setting', () => {
-  it('is off by default and survives missing localStorage', () => {
-    expect(getSoundOn()).toBe(false);
+  it('is on by default and survives missing localStorage', () => {
+    expect(getSoundOn()).toBe(true);
     expect(() => setSoundOn(true)).not.toThrow();
   });
 });

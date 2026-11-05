@@ -1,3 +1,4 @@
+import { playCoin, setSoundOn } from '../lib/sound';
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import * as api from '../api';
@@ -21,6 +22,7 @@ export default function Signup() {
   const [campus, setCampus] = useState<CampusId | ''>('');
   const [avatar, setAvatar] = useState<AvatarId>('yak');
   const [friendCode, setFriendCode] = useState('');
+  const [sound, setSound] = useState(true);
   const [errors, setErrors] = useState<Errors>({});
   const [rulesOpen, setRulesOpen] = useState(false);
   const [agreed, setAgreed] = useState(false);
@@ -47,6 +49,7 @@ export default function Signup() {
     if (!campus) return;
     setBusy(true);
     try {
+      setSoundOn(sound);
       const res = await api.signup({ handle, displayName, email, password, campus, avatar, friendCode: friendCode.trim() || undefined, acceptedRules: true });
       if (res.needsEmailConfirmation || !res.user) {
         nav('/check-email', { state: { email: email.trim() } });
@@ -132,6 +135,20 @@ export default function Signup() {
             <span>Did a friend invite you?</span>
             <input className="input" value={friendCode} onChange={(e) => setFriendCode(e.target.value)} placeholder="YAC-XXXX" autoCapitalize="characters" />
             <ErrorText error={errors.friendCode} />
+          </label>
+        </Panel>
+        <Panel title="🔊 Sound effects">
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={sound}
+              onChange={(e) => {
+                setSound(e.target.checked);
+                setSoundOn(e.target.checked);
+                if (e.target.checked) playCoin();
+              }}
+            />
+            <span>Play fun 8-bit sounds when you earn points and badges. You can change this later in Me → Settings.</span>
           </label>
         </Panel>
         <ErrorText error={errors.form} />

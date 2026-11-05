@@ -1,3 +1,4 @@
+import { CelebrateProvider } from './lib/celebrate';
 import { useEffect, useRef } from 'react';
 import { HashRouter, Navigate, Outlet, Route, Routes, useNavigate } from 'react-router-dom';
 import { Layout } from './components/Layout';
@@ -88,6 +89,7 @@ export default function App() {
   return (
     <AuthProvider>
       <ToastProvider>
+        <CelebrateProvider>
         {/* HashRouter so deep links work on GitHub Pages without server rewrites. */}
         <HashRouter>
           <EmailLinkRedirects />
@@ -131,6 +133,7 @@ export default function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </HashRouter>
+        </CelebrateProvider>
       </ToastProvider>
     </AuthProvider>
   );

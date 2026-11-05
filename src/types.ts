@@ -28,6 +28,8 @@ export interface User {
   emailOptIn: boolean;
   /** False until the person clicks the link in their confirmation email (live backend only). */
   emailVerified?: boolean;
+  /** Equipped unlockable cosmetics (see src/lib/cosmetics.ts). */
+  look?: Look;
 }
 
 /** How an activity is verified. */
@@ -163,6 +165,7 @@ export interface LeaderRow {
   campus: CampusId;
   avatar: AvatarId;
   points: number;
+  look?: Look;
 }
 
 export interface CampusCupRow {
@@ -300,4 +303,33 @@ export interface FeedbackItem {
   reviewedByName?: string;
   reviewedAt?: string;
   createdAt: string;
+}
+
+// ───────────── Quest extras (0009): badges, wardrobe, weekly shout-out ─────────────
+
+/** Equipped cosmetics. Missing/undefined = nothing in that slot (background falls back to the default). */
+export interface Look {
+  hat?: string;
+  accessory?: string;
+  background?: string;
+}
+
+export type CosmeticSlot = 'hat' | 'accessory' | 'background';
+
+/** One badge's state for the current player (computed on the server from this cycle's activity). */
+export interface BadgeProgress {
+  id: string; // matches BADGES in src/lib/badges.ts
+  earned: boolean;
+  progress: number; // e.g. 3 (of 5 check-ins)
+  goal: number; // e.g. 5
+}
+
+/** "Adventurer of the week": most points gained in the last 7 days. */
+export interface Shoutout {
+  userId: string;
+  displayName: string;
+  campus: CampusId;
+  avatar: AvatarId;
+  look?: Look;
+  pointsThisWeek: number;
 }
