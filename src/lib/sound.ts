@@ -81,3 +81,11 @@ export function playFanfare(): void {
     [1047, 0.56, 0.45],
   ]);
 }
+
+/** Gentle "bloop" for calm notices (two soft descending notes: G4 → D4). */
+export function playBloop(): void {
+  play([
+    [392, 0, 0.1],
+    [294, 0.11, 0.22],
+  ]);
+}

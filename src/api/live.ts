@@ -912,7 +912,7 @@ export async function listTeam(): Promise<TeamMember[]> {
   }));
 }
 
-export async function setRole(userId: string, role: 'participant' | 'admin'): Promise<void> {
+export async function setRole(userId: string, role: 'participant' | 'admin' | 'chair'): Promise<void> {
   await rpc('set_role', { p_user_id: userId, p_role: role });
   emitChange();
 }
@@ -927,6 +927,15 @@ export async function adminRenameUser(userId: string, displayName: string): Prom
 }
 
 /** Hands the caller's chair seat to someone else; the caller becomes an admin. */
+/** Caller (a chair) becomes an admin. Refused for the last chair (`last_chair`). */
+export async function stepDownChair(): Promise<void> {
+  await rpc('step_down_chair');
+  // Our own role changed — refresh the profile so the UI drops chair-only screens.
+  const s = await session();
+  if (s) notifyAuth(await loadProfile(s.user));
+  emitChange();
+}
+
 export async function transferChair(userId: string): Promise<void> {
   await rpc('transfer_chair', { p_user_id: userId });
   // Our own role changed — refresh the profile so the UI drops chair-only screens.

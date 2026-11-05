@@ -82,3 +82,6 @@ export const PRIZE_POLL_MS = 15_000;
 export const CONTACT_EMAILS = ['iesha.landis.yac@ncssm.edu', 'jacob.rodriguez.yac@ncssm.edu'] as const;
 export const INSTAGRAM_HANDLE = '@ncssmyoungalumni';
 export const INSTAGRAM_URL = 'https://www.instagram.com/ncssmyoungalumni/';
+
+/** Up to this many YAC chairs at once (the database has its own copy: app_config.max_chairs). */
+export const MAX_CHAIRS = 6;

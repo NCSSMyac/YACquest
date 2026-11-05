@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import * as api from '../api';
 import { isStaff, useAuth } from '../lib/auth';
 import { BellIcon, ChestIcon, HomeIcon, ShieldIcon, SwordIcon, TrophyIcon, UserIcon } from './Icons';
+import { NotificationPopups } from './NotificationPopups';
 import { Sprite } from './Sprite';
 
 /** App chrome for signed-in users: top bar + bottom tab bar. */
@@ -13,6 +14,7 @@ export function Layout() {
 
   return (
     <div className="app-shell">
+      {user && <NotificationPopups />}
       <header className="topbar">
         <Link to="/" className="brand" aria-label="YACquest home">
           <span className="sprite-badge"><Sprite id="yak" size={30} /></span>

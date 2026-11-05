@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import * as api from '../api/mock';
-import { PRIZE, TIER_POINTS } from '../config';
+import { MAX_CHAIRS, PRIZE, TIER_POINTS } from '../config';
 
 // Runs in Node: there's no localStorage, so the mock API keeps data in memory.
 const { load, setSession, pointsOf } = api.__test;
@@ -131,7 +131,7 @@ describe('team roles', () => {
     const team = await api.listTeam();
     expect(team.map((m) => m.handle).sort()).toEqual(['admin', 'iesha', 'jacob']);
   });
-  it('lets a chair grant and remove admin, but not touch a chair or make a third chair', async () => {
+  it('lets a chair grant and remove admin, but not demote a chair', async () => {
     asUser('iesha');
     const yak = load().users.find((u) => u.handle === 'yak001')!;
     const jacob = load().users.find((u) => u.handle === 'jacob')!;
@@ -140,8 +140,43 @@ describe('team roles', () => {
     await api.setRole(yak.id, 'participant');
     expect(load().users.find((u) => u.id === yak.id)!.role).toBe('participant');
     await expect(api.setRole(jacob.id, 'participant')).rejects.toMatchObject({ code: 'forbidden' });
-    await expect(api.setRole(yak.id, 'chair' as never)).rejects.toMatchObject({ code: 'chair_limit' });
+    await expect(api.setRole(jacob.id, 'admin')).rejects.toMatchObject({ code: 'forbidden' });
     await expect(api.transferChair(jacob.id)).rejects.toMatchObject({ code: 'chair_limit' });
+  });
+  it(`makes chairs up to MAX_CHAIRS (${MAX_CHAIRS}) and refuses one more`, async () => {
+    asUser('admin');
+    const yak = load().users.find((u) => u.handle === 'yak001')!;
+    await expect(api.setRole(yak.id, 'chair')).rejects.toMatchObject({ code: 'forbidden' });
+    asUser('iesha');
+    const helper = load().users.find((u) => u.handle === 'admin')!;
+    await api.setRole(helper.id, 'chair');
+    expect(load().users.find((u) => u.id === helper.id)!.role).toBe('chair');
+    expect(load().actions.some((a) => a.action === 'role_changed' && (a.details as { to?: string }).to === 'chair')).toBe(true);
+    const ppl = load().users.filter((u) => u.role === 'participant');
+    let n = load().users.filter((u) => u.role === 'chair').length;
+    let i = 0;
+    while (n < MAX_CHAIRS) { await api.setRole(ppl[i++].id, 'chair'); n++; }
+    expect(load().users.filter((u) => u.role === 'chair').length).toBe(MAX_CHAIRS);
+    await expect(api.setRole(ppl[i].id, 'chair')).rejects.toMatchObject({ code: 'chair_limit', message: `YAC already has ${MAX_CHAIRS} chairs.` });
+    expect(load().users.find((u) => u.id === ppl[i].id)!.role).toBe('participant');
+  });
+  it('refuses to make an unconfirmed account a chair', async () => {
+    asUser('iesha');
+    const yak = load().users.find((u) => u.handle === 'yak001')!;
+    yak.emailVerified = false;
+    await expect(api.setRole(yak.id, 'chair')).rejects.toMatchObject({ code: 'not_verified' });
+  });
+  it('step down turns a chair into an admin, but not the last chair', async () => {
+    asUser('jacob');
+    await api.stepDownChair();
+    expect(load().users.find((u) => u.handle === 'jacob')!.role).toBe('admin');
+    await expect(api.listTeam()).rejects.toMatchObject({ code: 'forbidden' });
+    asUser('iesha');
+    await expect(api.stepDownChair()).rejects.toMatchObject({ code: 'last_chair' });
+    expect(load().users.find((u) => u.handle === 'iesha')!.role).toBe('chair');
+    const jacob = load().users.find((u) => u.handle === 'jacob')!;
+    await api.setRole(jacob.id, 'participant');
+    expect(load().users.find((u) => u.id === jacob.id)!.role).toBe('participant');
   });
   it('transfer swaps roles', async () => {
     asUser('iesha');

@@ -201,7 +201,8 @@ do $$ begin
   perform t.throws(format('select set_role(%L, ''admin'')', t.u('unver')), 'not_verified', 'unconfirmed email cannot become admin');
   perform t.throws(format('select set_role(%L, ''participant'')', t.u('chair2')), 'forbidden', 'chair cannot demote the other chair');
   perform t.throws(format('select set_role(%L, ''participant'')', t.u('chair1')), 'forbidden', 'chair cannot demote self via set_role');
-  perform t.throws(format('select set_role(%L, ''chair'')', t.u('alice')), 'forbidden', 'set_role cannot create a chair');
+  perform t.throws(format('select set_role(%L, ''chair'')', t.u('unver')), 'not_verified', 'unconfirmed email cannot become chair');
+  perform t.throws(format('select set_role(%L, ''owner'')', t.u('alice')), 'forbidden', 'set_role rejects unknown roles');
   perform t.throws(format('select set_role(%L, ''admin'')', gen_random_uuid()), 'not_found', 'set_role unknown user');
   perform set_role(t.u('admin'), 'admin');
   perform t.eq((select role from profiles where id = t.u('admin')), 'admin', 'chair makes a confirmed user admin');
@@ -646,7 +647,8 @@ do $$ begin
   perform t.throws('select list_team()', 'forbidden', 'former chair lost chair powers');
 end $$;
 :as_super
--- a bootstrap email signing up again can't create a 3rd chair
+-- a bootstrap email signing up again can't go past max_chairs (set to 2 here; 0011 default is 5)
+update app_config set max_chairs = 2 where id = 1;
 delete from auth.users where id = t.u('chair2');
 insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data)
 values (t.u('chair2'), 'jacob.rodriguez.yac@ncssm.edu', now(), '{"handle":"jacob","display_name":"Jacob","campus":"duke"}');
@@ -658,9 +660,10 @@ update profiles set role = 'chair' where id = t.u('chair1');   -- seats now: adm
 insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data)
 values (t.u('chair2'), 'jacob.rodriguez.yac@ncssm.edu', now(), '{"handle":"jacob","display_name":"Jacob","campus":"duke"}');
 do $$ begin
-  perform t.eq((select role from profiles where id = t.u('chair2')), 'participant', 'bootstrap email does not create a 3rd chair');
-  perform t.eq((select count(*) from profiles where role = 'chair'), 2::bigint, 'max 2 chairs');
+  perform t.eq((select role from profiles where id = t.u('chair2')), 'participant', 'bootstrap email does not go past max_chairs (2)');
+  perform t.eq((select count(*) from profiles where role = 'chair'), 2::bigint, 'chairs capped at max_chairs');
 end $$;
+update app_config set max_chairs = 5 where id = 1;
 
 -- =============================================================================
 -- 12. RESET CYCLE + ARCHIVES
@@ -1458,6 +1461,102 @@ do $$ begin
   perform t.ok(exists (select 1 from admin_actions where action = 'user_renamed' and actor_id = t.u('bob') and target_user_id = t.u('erin')
                          and details = jsonb_build_object('from', 'Erin the Great', 'to', 'Erin the Kind')), 'admin_rename_user: logged with from/to');
   perform t.eq((select count(*) from admin_actions where action = 'user_renamed'), 1::bigint, 'admin_rename_user: rejected renames not logged');
+end $$;
+
+-- =============================================================================
+-- 0011 — UP TO 5 CHAIRS
+-- =============================================================================
+\set as_seat3 'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000110c3''; set role authenticated;'
+:as_super
+insert into t.users values
+  ('seat3', '00000000-0000-0000-0000-0000000110c3'),
+  ('seat4', '00000000-0000-0000-0000-0000000110c4'),
+  ('seat5', '00000000-0000-0000-0000-0000000110c5'),
+  ('seat6', '00000000-0000-0000-0000-0000000110c6'),
+  ('seat7', '00000000-0000-0000-0000-0000000110c7'),
+  ('seatx', '00000000-0000-0000-0000-0000000110cf');
+insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data)
+select t.u(n), n || '@example.edu', case when n = 'seatx' then null else now() end,
+       jsonb_build_object('handle', n, 'display_name', initcap(n), 'campus', 'unc', 'avatar', 'yak')
+  from unnest(array['seat3','seat4','seat5','seat6','seat7','seatx']) n;
+-- start from exactly one chair: chair1
+update profiles set role = 'admin' where role = 'chair' and id <> t.u('chair1');
+update profiles set role = 'chair' where id = t.u('chair1');
+do $$ begin
+  perform t.eq((select max_chairs from app_config), 5, '0011: max_chairs defaults to 5');
+  perform t.eq((select count(*) from profiles where role = 'chair'), 1::bigint, '0011: setup has one chair');
+end $$;
+:as_chair1
+do $$
+declare v_msg text;
+begin
+  perform t.throws('select step_down_chair()', 'last_chair', 'step_down_chair refused for the only chair');
+  perform t.throws(format('select set_role(%L, ''chair'')', t.u('seatx')), 'not_verified', 'set_role chair: email must be confirmed');
+  perform t.throws(format('select set_role(%L, ''chair'')', gen_random_uuid()), 'not_found', 'set_role chair: unknown user');
+  perform set_role(t.u('seat3'), 'chair');
+  perform set_role(t.u('seat4'), 'admin');
+  perform set_role(t.u('seat4'), 'chair');   -- admin → chair
+  perform set_role(t.u('seat5'), 'chair');
+  perform set_role(t.u('seat6'), 'chair');
+  perform t.eq((select count(*) from profiles where role = 'chair'), 5::bigint, 'chairs can make up to 5 chairs');
+  perform t.throws(format('select set_role(%L, ''chair'')', t.u('seat7')), 'chair_limit', '6th chair → chair_limit');
+  begin
+    perform set_role(t.u('seat7'), 'chair');
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform t.eq(v_msg, 'chair_limit: YAC already has 5 chairs.', 'chair_limit message uses max_chairs');
+  perform t.eq((select role from profiles where id = t.u('seat7')), 'participant', 'refused 6th chair keeps their role');
+  perform set_role(t.u('seat3'), 'chair');   -- already a chair → no-op
+  perform t.pass('set_role chair on an existing chair is a no-op');
+  perform t.throws(format('select set_role(%L, ''participant'')', t.u('seat3')), 'forbidden', 'chair cannot demote another chair to participant');
+  perform t.throws(format('select set_role(%L, ''admin'')', t.u('seat3')), 'forbidden', 'chair cannot demote another chair to admin');
+  perform t.ok((select count(*) from list_team() where role = 'chair') = 5, 'list_team shows 5 chairs');
+end $$;
+:as_seat3
+do $$ begin
+  perform t.ok(is_chair(), 'new chair has chair powers');
+  perform t.throws(format('select set_role(%L, ''participant'')', t.u('chair1')), 'forbidden', 'new chair cannot demote an older chair');
+  perform step_down_chair();
+  perform t.ok(not is_chair() and is_admin(), 'step_down_chair: caller is now an admin');
+  perform t.ok(exists (select 1 from notifications where title = 'You stepped down as chair'), 'step_down_chair notifies the caller');
+  perform t.throws('select step_down_chair()', 'forbidden', 'admin cannot step_down_chair');
+  perform t.throws(format('select set_role(%L, ''chair'')', t.u('seat7')), 'forbidden', 'admin cannot make a chair');
+end $$;
+:as_alice
+do $$ begin
+  perform t.throws('select step_down_chair()', 'forbidden', 'participant cannot step_down_chair');
+  perform t.throws(format('select set_role(%L, ''chair'')', t.u('alice')), 'forbidden', 'participant cannot make a chair');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied('select step_down_chair()', 'anon cannot call step_down_chair');
+end $$;
+:as_chair1
+do $$ begin
+  perform set_role(t.u('seat7'), 'chair');   -- the freed seat can be filled
+  perform t.eq((select count(*) from profiles where role = 'chair'), 5::bigint, 'freed chair seat can be filled again');
+end $$;
+:as_super
+do $$ begin
+  perform t.eq((select count(*) from notifications where user_id = t.u('seat4') and title = 'You’re now a YAC chair'), 1::bigint, 'new chair notified once');
+  perform t.eq((select count(*) from admin_actions where action = 'role_changed' and target_user_id = t.u('seat3')
+                  and actor_id = t.u('chair1') and details = '{"from":"participant","to":"chair"}'), 1::bigint, 'log: making a chair logged once');
+  perform t.eq((select count(*) from admin_actions where action = 'role_changed' and target_user_id = t.u('seat3')
+                  and actor_id = t.u('seat3') and details = '{"from":"chair","to":"admin"}'), 1::bigint, 'log: step_down_chair logged once');
+  perform t.eq((select count(*) from admin_actions where target_user_id = t.u('seat3')), 2::bigint, 'log: seat3 has exactly 2 entries (no double-logging, no-op not logged)');
+  perform t.eq((select count(*) from admin_actions where target_user_id = t.u('seat7')), 1::bigint, 'log: refused chair_limit attempt not logged');
+
+  -- bootstrap honours max_chairs (5 chairs now)
+  insert into chair_bootstrap (email) values ('boot.one@example.edu'), ('boot.two@example.edu') on conflict do nothing;
+  insert into auth.users (email, email_confirmed_at, raw_user_meta_data)
+  values ('boot.one@example.edu', now(), '{"handle":"bootone","display_name":"Boot One","campus":"unc"}');
+  perform t.eq((select role from profiles where email = 'boot.one@example.edu'), 'participant', 'bootstrap: no chair seat when 5 chairs');
+  update app_config set max_chairs = 6 where id = 1;
+  insert into auth.users (email, email_confirmed_at, raw_user_meta_data)
+  values ('boot.two@example.edu', now(), '{"handle":"boottwo","display_name":"Boot Two","campus":"unc"}');
+  perform t.eq((select role from profiles where email = 'boot.two@example.edu'), 'chair', 'bootstrap: chair when under max_chairs (6)');
+  update app_config set max_chairs = 5 where id = 1;
+  delete from chair_bootstrap where email in ('boot.one@example.edu', 'boot.two@example.edu');
 end $$;
 
 -- =============================================================================

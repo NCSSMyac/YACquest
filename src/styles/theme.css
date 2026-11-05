@@ -325,6 +325,24 @@ input[type='radio'] { width: 20px; height: 20px; accent-color: var(--navy-800); 
 .cel-big-pts { font-family: var(--font-pixel); color: var(--gold-300); font-size: 18px; margin: 0; }
 .cel-big .btn { margin-top: 8px; min-width: 140px; }
 
+/* 'notice' tone: calm, no coins — soft red/orange accent */
+.cel-small.cel-notice { border-color: #e8794a; animation: cel-pop 0.24s steps(3), cel-out 0.2s steps(2) 3.3s forwards; }
+.cel-notice .cel-small-title, .cel-big.cel-notice .cel-big-title { color: #ffb38a; }
+.cel-small-sub.cel-notice-sub { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.cel-notice-icon {
+  flex: none; display: grid; place-items: center; width: 30px; height: 30px;
+  font-family: var(--font-pixel); font-size: 16px; color: #fff; background: #d9573b;
+  box-shadow: inset -3px -3px 0 #a63a26, inset 3px 3px 0 #f08a6a; border: 2px solid var(--navy-900);
+}
+.cel-big.cel-notice { border-color: #e8794a; }
+.cel-big.cel-notice .cel-icon { border-color: #e8794a; }
+.cel-big.cel-notice .cel-big-sub { font-weight: 700; font-size: 16px; overflow-wrap: anywhere; }
+.cel-notice-yak { position: relative; display: grid; place-items: center; }
+.cel-notice-mark {
+  position: absolute; right: -10px; top: -10px; width: 22px; height: 22px; display: grid; place-items: center;
+  font-family: var(--font-pixel); font-size: 12px; color: #fff; background: #d9573b; border: 2px solid var(--navy-900);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cel-burst { display: none; }
 }

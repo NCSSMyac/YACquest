@@ -10,7 +10,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { Sprite } from '../components/Sprite';
 import { badgeById } from './badges';
 import { cosmeticById } from './cosmetics';
-import { playCoin, playFanfare } from './sound';
+import { playBloop, playCoin, playFanfare } from './sound';
 
 export interface Celebration {
   title: string;
@@ -22,6 +22,13 @@ export interface Celebration {
   cosmeticId?: string;
   /** 'big' = full-screen moment (badges, milestones); 'small' = quick coin pop (default). */
   size?: 'small' | 'big';
+  /**
+   * 'celebrate' (default) = coins + chime. 'notice' = calm heads-up for bad news (rejections,
+   * points removed): no coin burst, no fanfare, a soft "bloop", slower auto-dismiss / "Got it".
+   */
+  tone?: 'celebrate' | 'notice';
+  /** Small extra line under the subtitle (e.g. "You can fix it and resubmit…"). */
+  hint?: string;
 }
 
 // BadgeIcon is optional: use it when the wardrobe/badges module provides it, else a trophy sprite.
@@ -30,6 +37,7 @@ const badgeMods = import.meta.glob<{ BadgeIcon?: ComponentType<BadgeIconProps> }
 const BadgeIcon = Object.values(badgeMods)[0]?.BadgeIcon;
 
 const SMALL_MS = 1600;
+const NOTICE_MS = 3500;
 
 const Ctx = createContext<(c: Celebration) => void>(() => {});
 
@@ -74,12 +82,39 @@ function Burst({ count, spread }: { count: number; spread: number }) {
   );
 }
 
+/** Pixel warning tile used by 'notice' pop-ups. */
+function NoticeIcon({ big }: { big?: boolean }) {
+  return big ? (
+    <span className="cel-notice-yak" aria-hidden>
+      <Sprite id="yak" size={64} />
+      <span className="cel-notice-mark">!</span>
+    </span>
+  ) : (
+    <span className="cel-notice-icon" aria-hidden>!</span>
+  );
+}
+
 function Small({ c, onDone }: { c: Item; onDone: () => void }) {
+  const notice = c.tone === 'notice';
   useEffect(() => {
-    playCoin();
-    const t = setTimeout(onDone, SMALL_MS);
+    if (notice) playBloop();
+    else playCoin();
+    const t = setTimeout(onDone, notice ? NOTICE_MS : SMALL_MS);
     return () => clearTimeout(t);
-  }, [onDone]);
+  }, [onDone, notice]);
+  if (notice) {
+    return (
+      <div className="cel-small-wrap" role="status" aria-live="polite">
+        <button type="button" className="cel-small cel-notice" onClick={onDone} aria-label={`${c.title}${c.subtitle ? `: ${c.subtitle}` : ''}. Dismiss`}>
+          <NoticeIcon />
+          <span className="cel-small-text">
+            <b className="cel-small-title">{c.title}</b>
+            {c.subtitle && <span className="cel-small-sub cel-notice-sub">{c.subtitle}</span>}
+          </span>
+        </button>
+      </div>
+    );
+  }
   return (
     <div className="cel-small-wrap" role="status" aria-live="polite">
       <button type="button" className="cel-small" onClick={onDone} aria-label={`${c.title}${c.points ? ` +${c.points} points` : ''}. Dismiss`}>
@@ -96,13 +131,30 @@ function Small({ c, onDone }: { c: Item; onDone: () => void }) {
 
 function Big({ c, onDone }: { c: Item; onDone: () => void }) {
   const btn = useRef<HTMLButtonElement>(null);
+  const notice = c.tone === 'notice';
   useEffect(() => {
-    playFanfare();
+    if (notice) playBloop();
+    else playFanfare();
     btn.current?.focus();
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onDone();
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onDone]);
+  }, [onDone, notice]);
+  if (notice) {
+    return (
+      <div className="cel-backdrop" onClick={onDone}>
+        <div className="cel-big cel-notice" role="alertdialog" aria-modal="true" aria-label={c.title} onClick={(e) => e.stopPropagation()}>
+          <div className="cel-icon">
+            <NoticeIcon big />
+          </div>
+          <h2 className="cel-big-title">{c.title}</h2>
+          {c.subtitle && <p className="cel-big-sub">{c.subtitle}</p>}
+          {c.hint && <p className="cel-big-flavor">{c.hint}</p>}
+          <button ref={btn} type="button" className="btn" onClick={onDone}>Got it</button>
+        </div>
+      </div>
+    );
+  }
   const badge = c.badgeId ? badgeById(c.badgeId) : undefined;
   const cosmetic = cosmeticById(c.cosmeticId);
 

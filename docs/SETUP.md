@@ -88,8 +88,8 @@ Chairs can also see every admin change (points added/removed, reviews, role chan
 
 ## Roles, and handing over the chair
 - **Admin**: review screenshots, award/adjust points, run events. Given and removed by a chair (only to accounts with a confirmed email).
-- **Chair**: everything. There can be at most **2**. A chair can't remove the other chair.
-- **Stepping down**: Admin → **Team → Hand over my chair seat** → pick the successor (they must have a confirmed account). They become chair and you become an admin in one step. The new chairs can then remove you from the team.
+- **Chair**: everything. There can be up to **5** (`MAX_CHAIRS` in `src/config.ts`, `app_config.max_chairs` in the database). Any chair can make an admin (or a participant with a confirmed email) a chair from Admin → **Team**. A chair can't remove another chair.
+- **Stepping down**: Admin → **Team → Step down as chair** makes you an admin (not allowed if you're the only chair — make someone else a chair first). Or use **Hand over my chair seat** to swap places with a successor in one step (handy when all 5 seats are full). Another chair can then remove you from the team.
 - Also transfer **Supabase project ownership** (Organization → Team) and the GitHub repo access to the new chair.
 
 ### Emergency: a chair lost access
@@ -97,7 +97,7 @@ In Supabase **SQL Editor**, run (replace the email):
 ```sql
 update public.profiles set role = 'chair' where email = 'new.chair@ncssm.edu';
 ```
-Make sure no more than 2 people are chairs afterwards.
+Make sure no more than 5 people are chairs afterwards.
 
 ## Good to know
 - **Free plan limits**: 500 MB database, 1 GB file storage, 50k monthly users — far more than YACquest needs. Free projects pause after 7 days with **no activity**; any login wakes it.

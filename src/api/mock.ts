@@ -10,7 +10,7 @@
  * else has to change. Rules marked "SERVER RULE" must also be enforced by the backend —
  * the front end checks are only for friendly error messages.
  */
-import { CAPS, CAMPUSES, CYCLE, PRIZE, TIER_POINTS, type CampusId } from '../config';
+import { CAPS, CAMPUSES, CYCLE, MAX_CHAIRS, PRIZE, TIER_POINTS, type CampusId } from '../config';
 import { ACTIVITIES, ONCE_PER_CYCLE, activityById } from '../lib/activities';
 import { EVENT_KINDS, kindInfo } from '../lib/eventKinds';
 import { BADGES } from '../lib/badges';
@@ -1038,17 +1038,38 @@ export async function listTeam(): Promise<TeamMember[]> {
     .map((u) => ({ id: u.id, displayName: u.displayName, handle: u.handle, email: u.email, role: u.role, emailVerified: true }));
 }
 
-export async function setRole(userId: string, role: 'participant' | 'admin'): Promise<void> {
+/** SERVER RULE (set_role, 0011): chair-only; chairs can't be demoted here; up to MAX_CHAIRS chairs (confirmed email). */
+export async function setRole(userId: string, role: 'participant' | 'admin' | 'chair'): Promise<void> {
   await delay();
-  requireRole('chair');
-  if (role !== 'participant' && role !== 'admin') return fail('chair_limit', 'Chairs can only be changed with “hand over chair seat”.');
-  const u = load().users.find((x) => x.id === userId);
+  const caller = requireRole('chair');
+  if (role !== 'participant' && role !== 'admin' && role !== 'chair') return fail('bad_role', 'Unknown role.');
+  const d = load();
+  const u = d.users.find((x) => x.id === userId);
   if (!u) return fail('not_found', 'Person not found.');
-  if (u.role === 'chair') return fail('forbidden', 'A chair can’t be changed here.');
+  if (u.role === 'chair') return fail('forbidden', role === 'chair' ? 'That person is already a chair.' : 'A chair can’t be changed here.');
+  if (role === 'chair') {
+    if (u.emailVerified === false) return fail('not_verified', 'They need to confirm their email first.');
+    if (d.users.filter((x) => x.role === 'chair').length >= MAX_CHAIRS) return fail('chair_limit', `YAC already has ${MAX_CHAIRS} chairs.`);
+  }
   const from = u.role;
   u.role = role;
-  if (from !== role) logAction('role_changed', u, { from, to: role });
-  notify(u.id, 'announcement', role === 'admin' ? 'You are now a YACquest admin' : 'Your admin access was removed', role === 'admin' ? 'You can now review submissions and award points.' : 'You are back to being a regular adventurer.');
+  if (from !== role) logAction('role_changed', u, { from, to: role }, caller);
+  if (role === 'chair') notify(u.id, 'announcement', 'You are now a YAC Chair', `${caller.displayName} made you a YAC Chair. You can now manage the team, prizes and settings.`);
+  else notify(u.id, 'announcement', role === 'admin' ? 'You are now a YACquest admin' : 'Your admin access was removed', role === 'admin' ? 'You can now review submissions and award points.' : 'You are back to being a regular adventurer.');
+  refreshPrizeRace();
+  save();
+  emitChange();
+}
+
+/** SERVER RULE (step_down_chair, 0011): the caller (a chair) becomes an admin; refused for the last chair. */
+export async function stepDownChair(): Promise<void> {
+  await delay();
+  const caller = requireRole('chair');
+  const d = load();
+  if (d.users.filter((x) => x.role === 'chair').length <= 1) return fail('last_chair', "You're the only chair — make someone else a chair first.");
+  caller.role = 'admin';
+  logAction('role_changed', caller, { from: 'chair', to: 'admin' }, caller);
+  notify(caller.id, 'announcement', 'You stepped down as chair', 'You are now an admin. Another chair can remove you from the team.');
   refreshPrizeRace();
   save();
   emitChange();
@@ -1081,7 +1102,7 @@ export async function transferChair(userId: string): Promise<void> {
   const target = d.users.find((x) => x.id === userId);
   if (!target) return fail('not_found', 'Person not found.');
   if (target.role === 'chair') return fail('chair_limit', 'That person is already a chair.');
-  if (d.users.filter((u) => u.role === 'chair').length > 2) return fail('chair_limit', 'There can only be 2 chairs.');
+  if (d.users.filter((u) => u.role === 'chair').length > MAX_CHAIRS) return fail('chair_limit', `YAC already has ${MAX_CHAIRS} chairs.`);
   const from = target.role;
   target.role = 'chair';
   caller.role = 'admin';

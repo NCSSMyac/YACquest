@@ -17,7 +17,7 @@ npm run dev        # http://localhost:5173
 |---|---|---|
 | `yak001` | Participant (Duke) | Check in, submit quests, race for the prize |
 | `admin` | Admin ("YAC Helper") | Review screenshots, award points, run events, **for all campuses** |
-| `iesha`, `jacob` | YAC Chair (max 2) | Everything an admin does, plus prizes and fulfillment, Team (grant/remove admin, hand over chair seat), admin activity log, weekly email settings and delivery log, CSV export, cycle reset |
+| `iesha`, `jacob` | YAC Chair (up to 5 — `MAX_CHAIRS` in src/config.ts) | Everything an admin does, plus prizes and fulfillment, Team (grant/remove admin, make chair, step down, hand over chair seat), admin activity log, weekly email settings and delivery log, CSV export, cycle reset |
 
 Any password works in the demo. Live demo events have passwords `BLUEDEVIL` (Duke), `PANEL` (UNC), `WOLFPACK` (NC State), `TRIANGLE` (all campuses). Admins can see passwords under **Admin → Events**. **Me → Reset demo data** starts over (demo mode only).
 

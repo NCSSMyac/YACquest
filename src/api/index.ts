@@ -80,6 +80,7 @@ export const {
   setRole,
   adminRenameUser,
   transferChair,
+  stepDownChair,
   listClaims,
   markFulfilled,
   exportLedgerCsv,

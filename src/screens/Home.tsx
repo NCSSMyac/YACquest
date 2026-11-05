@@ -19,15 +19,14 @@ export default function Home() {
   const userId = data?.user.id;
   const points = data?.points;
 
-  // Celebrate points / checkpoints gained since the last time this player saw Home.
+  // Celebrate treasure-map checkpoints crossed since the last time this player saw Home.
+  // (Point pop-ups for approvals / adjustments come from NotificationPopups; check-ins pop on Quests.)
   useEffect(() => {
     if (!userId || points === undefined) return;
     const prev = getLastSeenPoints(userId);
     setLastSeenPoints(userId, points);
-    const already = takeCelebratedPoints(userId);
+    takeCelebratedPoints(userId); // clear the legacy "already celebrated" counter
     if (prev === null || points <= prev) return;
-    const diff = points - prev - already;
-    if (diff > 0) celebrate({ title: 'Points earned!', subtitle: 'Since your last visit', points: diff, size: 'small' });
     for (const c of checkpointsCrossed(prev, points)) {
       celebrate(
         c.label === 'Treasure'

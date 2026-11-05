@@ -172,3 +172,11 @@ Actions: `points_added` / `points_removed` (ledger insert with created_by and so
 ## 0010 — Name filter
 - `name_is_clean(text)` (internal) mirrors `src/lib/nameFilter.ts`. Enforced in `handle_new_user` (codes `handle` / `displayName`), `update_profile`, and `handle_available` (false for unclean handles).
 - `admin_rename_user(p_user_id, p_display_name)` — admin/chair; renames, updates active claims, notifies the user, logs `user_renamed` {from, to}.
+
+---
+
+## 0011 — Up to 5 chairs
+- `app_config.max_chairs int default 5 (set to 6 for 2026–27)` (`MAX_CHAIRS` in src/config.ts).
+- `set_role(p_user_id, p_role)` now accepts 'participant' | 'admin' | **'chair'** (caller must be a chair). Making a chair: target email must be confirmed (`not_verified`) and current chairs < max_chairs (`chair_limit`: "YAC already has 6 chairs."). A chair still can't demote another chair (`forbidden`).
+- `step_down_chair() → void`: caller (a chair) becomes 'admin'; refused if they're the only chair (`last_chair`: "You're the only chair — make someone else a chair first."). Notifies the caller; logged as role_changed.
+- `transfer_chair` unchanged. Bootstrap emails (chair_bootstrap) become chairs on sign-up while chairs < max_chairs.
