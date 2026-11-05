@@ -19,9 +19,9 @@ This takes about 30–45 minutes, done once. Dashboard menu names can differ sli
 - Minimum password length: **8**
 
 **Authentication → URL Configuration**
-- Site URL: `https://ieshalandis1.github.io/YACquest/`
+- Site URL: `https://ncssmyac.github.io/YACquest/`
 - Redirect URLs (add all):
-  - `https://ieshalandis1.github.io/YACquest/**`
+  - `https://ncssmyac.github.io/YACquest/**`
   - `http://localhost:5173/**`
   - `http://localhost:5174/**`
 
@@ -108,4 +108,4 @@ Make sure no more than 5 people are chairs afterwards.
 - Database tests: `bash supabase/tests/run_tests.sh` (needs local Postgres 16).
 - App tests: `npm test`. Contract between DB and app: `docs/BACKEND.md`.
 - Email sender: `supabase/functions/send-emails/index.ts` (Deno; not part of the app's TypeScript build). Deploy from the CLI with `supabase functions deploy send-emails` if you prefer.
-- Future database changes go in a new numbered file in `supabase/migrations/` (next after `0004_…`). Supabase grants new functions to everyone by default, so repeat the `revoke execute … from public, anon` lines for any new function.
+- Future database changes go in a new numbered file in `supabase/migrations/` (next after `0012_admin_email_monthly_shoutout.sql`, i.e. `0013_…`). Supabase grants new functions to everyone by default, so repeat the `revoke execute … from public, anon` lines for any new function.

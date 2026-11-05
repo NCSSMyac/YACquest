@@ -143,7 +143,7 @@ Actions: `points_added` / `points_removed` (ledger insert with created_by and so
 ---
 
 ## 0006 — Announcements
-- Table `announcements` (admins read via RLS). `send_announcement(p_title, p_body, p_audience 'all'|'campus'|'user', p_campus, p_user_id, p_send_email) → json {id, recipients, emailed}` — admin/chair; emailing 'all' is chair-only (`forbidden`); 20 per sender per day (`limit`); codes `title`, `body`, `audience`, `campus`, `user`.
+- Table `announcements` (admins read via RLS). `send_announcement(p_title, p_body, p_audience 'all'|'campus'|'user', p_campus, p_user_id, p_send_email) → json {id, recipients, emailed}` — admin/chair; any admin or chair may email 'all' (chair-only until 0012); 20 per sender per day (`limit`); codes `title`, `body`, `audience`, `campus`, `user`.
 - Creates one `notifications` row (kind 'announcement') per target; Home shows the latest 3. Email copy → `email_outbox` kind 'announcement', ≤ 90 BCC per row, only opted-in confirmed emails (a direct message always emails that person). Logged as `announcement_sent`.
 - `list_announcements(p_limit default 20)` — admin/chair, newest first, snake_case rows.
 
@@ -166,8 +166,8 @@ Actions: `points_added` / `points_removed` (ledger insert with created_by and so
 - `my_badges() → table(id, earned, progress, goal)` (current cycle, order of `src/lib/badges.ts`). Badges never award points.
 - `my_unlocks() → text[]`; `equip_look(p_hat, p_accessory, p_background) → json {hat, accessory, background}` ('' clears; errors `locked`, `look`).
 - `leaderboard(p_limit int default 10, p_campus varchar default null)` and `my_rank(p_campus text default null)` now also return `hat, accessory, background`.
-- `weekly_shoutout() → json {userId, displayName, campus, avatar, hat, accessory, background, look, pointsThisWeek}` or null — top positive-points gainer in the last 7 days.
-- Weekly email gains "⭐ Adventurer of the week"; when the week's report is queued, the winner gets a notification.
+- ~~`weekly_shoutout()`~~ — replaced by `monthly_shoutout()` in 0012.
+- Weekly email gains the shout-out (monthly since 0012) after the headline.
 
 ## 0010 — Name filter
 - `name_is_clean(text)` (internal) mirrors `src/lib/nameFilter.ts`. Enforced in `handle_new_user` (codes `handle` / `displayName`), `update_profile`, and `handle_available` (false for unclean handles).
@@ -180,3 +180,15 @@ Actions: `points_added` / `points_removed` (ledger insert with created_by and so
 - `set_role(p_user_id, p_role)` now accepts 'participant' | 'admin' | **'chair'** (caller must be a chair). Making a chair: target email must be confirmed (`not_verified`) and current chairs < max_chairs (`chair_limit`: "YAC already has 6 chairs."). A chair still can't demote another chair (`forbidden`).
 - `step_down_chair() → void`: caller (a chair) becomes 'admin'; refused if they're the only chair (`last_chair`: "You're the only chair — make someone else a chair first."). Notifies the caller; logged as role_changed.
 - `transfer_chair` unchanged. Bootstrap emails (chair_bootstrap) become chairs on sign-up while chairs < max_chairs.
+
+---
+
+## 0012 — Admins email everyone; Adventurer of the Month
+- `send_announcement(...)`: same signature; **admins and chairs** may send audience 'all' with `p_send_email = true`. Participants still get `forbidden` for any announcement.
+- `monthly_shoutout() → json {userId, displayName, campus, avatar, hat, accessory, background, look, pointsThisMonth, month 'YYYY-MM', final boolean}` or null — any logged-in user. Replaces `weekly_shoutout()` (dropped, with `weekly_shoutout_data()`).
+  - Counts **positive** ledger rows of the **active cycle**, **participants only** (current role), grouped by **America/New_York calendar month**.
+  - Shows the winner of the most recent completed month (last month) → `final: true`. If nobody earned points last month in this cycle (e.g. the cycle started this month), falls back to the current month's leader so far → `final: false`. Older months are never shown. null if nobody earned points last month or this month.
+  - Ties: whoever reached that month's total first (earliest time of their last positive row that month), then display name, then user id.
+  - Internal helpers (not callable through the API): `monthly_standings()`, `monthly_shoutout_data()`, `month_label('YYYY-MM') → 'November'`.
+- Badges: `my_badges()` now returns **15** badges; new last one `monthly_star` ("Adventurer of the Month", goal 1) = number of completed months in this cycle the user won (same rule as above). The other 14 are unchanged. Rainbow still needs 6 badges.
+- Weekly committee email stays weekly; its "⭐ Adventurer of the month" section shows `monthly_shoutout` ("<name> (<campus>) — N points in <Month>", or "Leading <Month> so far: …", or "No points earned this month yet."). When a weekly report is queued and the shout-out is `final`, the winner gets a notification "⭐ You’re Adventurer of the Month!" — at most once per calendar month.

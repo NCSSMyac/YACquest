@@ -1118,7 +1118,6 @@ begin
   perform t.throws('select send_announcement(''Hello there'', '''', ''all'')', 'body', 'announcement body required');
   perform t.throws('select send_announcement(''Hello there'', ''x'', ''campus'', ''mars'')', 'campus', 'announcement bad campus');
   perform t.throws('select send_announcement(''Hello there'', ''x'', ''user'', null, gen_random_uuid())', 'user', 'announcement unknown user');
-  perform t.throws('select send_announcement(''Hello there'', ''x'', ''all'', null, null, true)', 'forbidden', 'admin cannot EMAIL everyone');
   r := send_announcement('Pickleball Sunday', 'Courts at 2pm!', 'campus', 'duke', null, false);
   perform t.eq((r->>'recipients')::bigint, n_duke, 'campus announcement reaches every duke profile');
   perform t.eq((r->>'emailed')::int, 0, 'in-app only: no emails');
@@ -1131,6 +1130,28 @@ do $$ begin
                (select count(*) from profiles where campus = 'duke'), 'one notification per duke profile');
   perform t.eq((select count(*) from notifications n join profiles p on p.id = n.user_id where n.title = 'Pickleball Sunday' and p.campus <> 'duke'), 0::bigint, 'no notifications outside the campus');
   perform t.ok(exists (select 1 from admin_actions where action = 'announcement_sent' and actor_id = t.u('bob') and details->>'title' = 'Pickleball Sunday'), 'announcement logged');
+end $$;
+-- 0012: a plain admin can EMAIL everyone too (rolled back so the chair checks below are unchanged)
+select set_config('t.optin', (select count(*) from profiles p join auth.users u on u.id = p.id
+                              where p.email_opt_in and u.email_confirmed_at is not null)::text, false) \g /dev/null
+begin;
+:as_bob
+do $$
+declare r json; opted_in bigint := current_setting('t.optin')::bigint;
+begin
+  perform t.eq((select role from profiles where id = auth.uid()), 'admin', 'bob is a plain admin');
+  r := send_announcement('Admin news', 'Hello everyone!', 'all', null, null, true);
+  perform t.eq((r->>'recipients')::bigint, (select count(*) from profiles), 'admin: everyone gets the in-app message');
+  perform t.eq((r->>'emailed')::bigint, opted_in, 'admin can EMAIL everyone (0012): opted-in confirmed people');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok(exists (select 1 from email_outbox where kind = 'announcement' and subject = '📣 YACquest: Admin news'), 'admin email to everyone queued');
+end $$;
+rollback;
+:as_alice
+do $$ begin
+  perform t.throws('select send_announcement(''Hello all'', ''Hi'', ''all'', null, null, true)', 'forbidden', 'participant still cannot send (or email) announcements (0012)');
 end $$;
 :as_super
 select set_config('t.optin', (select count(*) from profiles p join auth.users u on u.id = p.id
@@ -1204,7 +1225,7 @@ begin
 end $$;
 
 -- =============================================================================
--- 23. 0009 — badges, looks, leaderboard looks, Adventurer of the Week
+-- 23. 0009 — badges, looks, leaderboard looks (+ 0012 Adventurer of the Month)
 -- =============================================================================
 \set as_gina   'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000006a0''; set role authenticated;'
 :as_super
@@ -1223,7 +1244,7 @@ values ((select id from cycles where not is_active order by starts_at limit 1), 
 :as_anon
 do $$ begin
   perform t.denied('select * from my_badges()', 'anon cannot call my_badges');
-  perform t.denied('select weekly_shoutout()', 'anon cannot call weekly_shoutout');
+  perform t.denied('select monthly_shoutout()', 'anon cannot call monthly_shoutout');
   perform t.eq((select count(*) from cosmetics), 17::bigint, 'anon can read the cosmetics catalogue');
 end $$;
 :as_gina
@@ -1232,14 +1253,16 @@ declare ids text[];
 begin
   select array_agg(id order by ord) into ids from (select id, row_number() over () ord from my_badges()) x;
   perform t.eq(ids, array['first_checkin','regular','veteran','explorer','big_moment','seasons','digital','shutterbug',
-                          'recruiter','giver','champion','voice','halfway','legend'], 'my_badges: 14 badges in badges.ts order');
+                          'recruiter','giver','champion','voice','halfway','legend','monthly_star'], 'my_badges: 15 badges in badges.ts order');
   perform t.ok((select bool_and(not earned and progress = 0) from my_badges()), 'my_badges: fresh player has nothing (old-cycle check-in ignored)');
   perform t.eq((select goal from my_badges() where id = 'legend'), 650, 'legend goal = prize_goal');
   perform t.eq((select goal from my_badges() where id = 'halfway'), 325, 'halfway goal 325');
   perform t.eq(my_unlocks(), array['meadow','campus'], 'my_unlocks: only the free backgrounds at first');
   perform t.denied('select * from badges_for(auth.uid())', 'badges_for is internal');
   perform t.denied('select unlocks_for(auth.uid())', 'unlocks_for is internal');
-  perform t.denied('select weekly_shoutout_data()', 'weekly_shoutout_data is internal');
+  perform t.denied('select monthly_shoutout_data()', 'monthly_shoutout_data is internal');
+  perform t.denied('select * from monthly_standings()', 'monthly_standings is internal');
+  perform t.eq((select count(*) from pg_proc where proname in ('weekly_shoutout', 'weekly_shoutout_data') and pronamespace = 'public'::regnamespace), 0::bigint, 'weekly shout-out functions dropped (0012)');
   perform t.denied('insert into cosmetics (id, slot, name, rule_type) values (''x'', ''hat'', ''X'', ''free'')', 'nobody writes cosmetics');
   perform t.throws('select equip_look(''party_hat'', null, null)', 'locked', 'equip: locked hat refused');
 end $$;
@@ -1255,6 +1278,14 @@ insert into ledger (cycle_id, user_id, amount, source, activity_id, ref_id, reas
 select active_cycle_id(), '00000000-0000-0000-0000-0000000006a0', 20, 'checkin', e.activity_id, e.id::text, 'Check-in', e.starts_at
   from events e where e.id in ('00000000-0000-0000-0000-00000000e001', '00000000-0000-0000-0000-00000000e002',
                                '00000000-0000-0000-0000-00000000e003', '00000000-0000-0000-0000-00000000e004');
+-- 0012: Hank out-earns Gina in both earlier months (same timestamps), so Hank is last month's
+-- Adventurer of the Month and Gina does NOT get the monthly_star badge from those months.
+insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data) values
+  ('00000000-0000-0000-0000-0000000006a1', 'hank@example.edu', now(),
+   '{"handle":"hank","display_name":"Hank","campus":"duke","avatar":"knight"}');
+insert into ledger (cycle_id, user_id, amount, source, reason, created_at)
+select active_cycle_id(), '00000000-0000-0000-0000-0000000006a1', 50, 'manual', 'Monthly test', e.starts_at
+  from events e where e.id in ('00000000-0000-0000-0000-00000000e001', '00000000-0000-0000-0000-00000000e002');
 insert into submissions (cycle_id, user_id, activity_id, image_path, note)
 select active_cycle_id(), '00000000-0000-0000-0000-0000000006a0', a, '00000000-0000-0000-0000-0000000006a0/' || a || '.jpg', 'digital'
   from unnest(array['poll','repost','story_game']) a;
@@ -1282,6 +1313,7 @@ do $$ begin
   perform t.eq((select count(*) from my_badges() where earned), 5::bigint, '5 badges earned');
   perform t.ok(not ('rainbow' = any (my_unlocks())) and 'wizard_hat' = any (my_unlocks()), 'rainbow needs 6 badges; wizard hat unlocked by digital');
   perform t.ok(not ('flower_crown' = any (my_unlocks())), 'flower crown needs 100 points (has 95)');
+  perform t.ok((select not earned and progress = 0 and goal = 1 from my_badges() where id = 'monthly_star'), 'monthly_star: Gina never won a finished month');
 end $$;
 :as_bob
 select award_activity('00000000-0000-0000-0000-0000000006a0', 'game_win', 'Trivia champ') \g /dev/null
@@ -1343,12 +1375,19 @@ begin
   perform t.eq((select rank from my_rank('ncsu')), 1, 'my_rank(campus)');
   perform t.eq((select count(*) from my_rank('duke')), 0::bigint, 'my_rank for another campus is empty');
   perform t.eq((select count(*) from pg_proc where proname in ('leaderboard', 'my_rank') and pronamespace = 'public'::regnamespace), 2::bigint, 'old leaderboard/my_rank versions dropped');
-  -- Adventurer of the week
-  sh := weekly_shoutout();
-  perform t.eq(sh->>'userId', auth.uid()::text, 'shout-out: top 7-day gainer');
-  perform t.eq((sh->>'pointsThisWeek')::int, 745, 'shout-out: positive points in last 7 days only (old check-ins + correction excluded)');
-  perform t.ok(sh->>'displayName' = 'Gina <i>G' and sh->>'campus' = 'ncsu' and sh->>'avatar' = 'yak' and sh->>'hat' = 'flower_crown'
-               and sh->>'accessory' = 'medal' and sh->>'background' = 'rainbow' and sh->'look'->>'hat' = 'flower_crown', 'shout-out keys');
+  -- Adventurer of the Month (0012): Gina leads THIS month (745), but last month is finished → Hank
+  sh := monthly_shoutout();
+  perform t.eq(sh->>'userId', '00000000-0000-0000-0000-0000000006a1', 'shout-out: last completed month''s winner beats this month''s leader');
+  perform t.eq((sh->>'pointsThisMonth')::int, 50, 'shout-out: points in that month');
+  perform t.eq((sh->>'final')::boolean, true, 'shout-out: final (completed month)');
+  perform t.eq(sh->>'month', (select to_char(starts_at at time zone 'America/New_York', 'YYYY-MM') from events where id = '00000000-0000-0000-0000-00000000e002'), 'shout-out: month key YYYY-MM');
+  perform t.ok(sh->>'displayName' = 'Hank' and sh->>'campus' = 'duke' and sh->>'avatar' = 'knight' and (sh::jsonb) ? 'look'
+               and (sh::jsonb) ? 'hat' and not ((sh::jsonb) ? 'pointsThisWeek'), 'shout-out keys');
+  perform t.ok((select not earned from my_badges() where id = 'monthly_star'), 'monthly_star: leading the current month is not enough');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok((select earned and progress = 1 and goal = 1 from badges_for('00000000-0000-0000-0000-0000000006a1') where id = 'monthly_star'), 'monthly_star: Hank won a finished month');
 end $$;
 :as_bob
 do $$ begin
@@ -1357,10 +1396,11 @@ end $$;
 :as_super
 do $$ declare rep json := public.build_weekly_report();
 begin
-  perform t.ok(rep->>'text' like '%DAYS LEFT IN CYCLE%⭐ ADVENTURER OF THE WEEK%Gina <i>G (NC State) — 745 points in the last 7 days%TOP 5 OVERALL%FEEDBACK (last 7 days)%',
-               'weekly report text: Adventurer of the week near the top (feedback kept)');
-  perform t.ok(rep->>'html' like '%prize spots left%⭐ Adventurer of the week%Gina &lt;i&gt;G%745 points%' and rep->>'html' not like '%Gina <i>%',
-               'weekly report html: Adventurer section, name escaped');
+  perform t.ok(rep->>'text' like '%DAYS LEFT IN CYCLE%⭐ ADVENTURER OF THE MONTH%Hank (Duke) — 50 points in ' || month_label(monthly_shoutout_data()->>'month') || '. Give them a shout-out!%TOP 5 OVERALL%FEEDBACK (last 7 days)%THIS WEEK (since Monday)%',
+               'weekly report text: Adventurer of the month near the top (weekly sections kept)');
+  perform t.ok(rep->>'html' like '%prize spots left%⭐ Adventurer of the month%Hank%50 points</b> in ' || month_label(monthly_shoutout_data()->>'month') || '. Give%',
+               'weekly report html: Adventurer of the month section');
+  perform t.ok(rep->>'text' not like '%ADVENTURER OF THE WEEK%', 'weekly report: no weekly shout-out any more');
   delete from email_outbox where dedupe_key = 'weekly:' || to_char(now() at time zone 'America/New_York', 'IYYY-IW');
 end $$;
 :as_service
@@ -1374,23 +1414,115 @@ do $$ begin
 end $$;
 :as_super
 do $$ begin
-  perform t.eq((select count(*) from notifications where user_id = '00000000-0000-0000-0000-0000000006a0'
-                 and kind = 'announcement' and title = '⭐ You’re Adventurer of the Week!' and body like '%745 points%'), 1::bigint,
-               'Adventurer of the Week notified exactly once');
-  perform t.eq((select count(*) from notifications where title = '⭐ You’re Adventurer of the Week!'), 2::bigint, 'one winner notification per queued weekly report (section 16 + this one)');
+  perform t.eq((select count(*) from notifications where user_id = '00000000-0000-0000-0000-0000000006a1'
+                 and kind = 'announcement' and title = '⭐ You’re Adventurer of the Month!' and body like '%50 points in %'), 1::bigint,
+               'Adventurer of the Month notified exactly once');
+  perform t.eq((select count(*) from notifications where title = '⭐ You’re Adventurer of the Month!'), 1::bigint,
+               'nobody notified while only the current month counts (section 16: leader so far, not final)');
+  delete from email_outbox where dedupe_key = 'weekly:' || to_char(now() at time zone 'America/New_York', 'IYYY-IW');
+end $$;
+:as_service
+do $$ begin
+  perform t.eq(enqueue_weekly_report_if_due(), true, 'enqueue (0012): queued again');
+end $$;
+:as_super
+do $$ begin
+  perform t.eq((select count(*) from notifications where title = '⭐ You’re Adventurer of the Month!'), 1::bigint,
+               'Adventurer of the Month: one notification per month even across several weekly reports');
 end $$;
 -- nobody gained points (fresh cycle, rolled back afterwards)
 begin;
 update cycles set is_active = false where is_active;
 insert into cycles (name, starts_at, ends_at, is_active) values ('Empty test cycle', now(), now() + interval '30 days', true);
 :as_gina
-select (weekly_shoutout() is null) as sh_null \gset
+select (monthly_shoutout() is null) as sh_null \gset
 :as_super
-select (build_weekly_report()->>'text' like '%ADVENTURER OF THE WEEK%No points earned this week yet.%') as rep_none,
-       (build_weekly_report()->>'html' like '%Adventurer of the week%No points earned this week yet.%') as rep_none_html \gset
+select (build_weekly_report()->>'text' like '%ADVENTURER OF THE MONTH%No points earned this month yet.%') as rep_none,
+       (build_weekly_report()->>'html' like '%Adventurer of the month%No points earned this month yet.%') as rep_none_html \gset
 rollback;
 select t.ok(:'sh_null'::boolean, 'shout-out: null when nobody gained points') \g /dev/null
-select t.ok(:'rep_none'::boolean and :'rep_none_html'::boolean, 'weekly report: "No points earned this week yet."') \g /dev/null
+select t.ok(:'rep_none'::boolean and :'rep_none_html'::boolean, 'weekly report: "No points earned this month yet."') \g /dev/null
+
+-- =============================================================================
+-- 24. 0012 — Adventurer of the Month: fallback, ties, roles, cycles, badge
+--     (fresh cycle that started 3 months ago; everything rolled back afterwards)
+-- =============================================================================
+:as_super
+-- t.at(k, h): h hours into the NY calendar month k months from now (k = 0 → this month).
+create function t.at(k int, h int) returns timestamptz language sql stable as $$
+  select (date_trunc('month', now() at time zone 'America/New_York') + make_interval(months => k, hours => h))
+         at time zone 'America/New_York';
+$$;
+create function t.mkey(k int) returns text language sql stable as $$
+  select to_char(date_trunc('month', now() at time zone 'America/New_York') + make_interval(months => k), 'YYYY-MM');
+$$;
+create function t.give(p_user text, p_amount int, p_at timestamptz, p_cycle uuid default null) returns void language sql as $$
+  insert into public.ledger (cycle_id, user_id, amount, source, reason, created_at)
+  values (coalesce(p_cycle, public.active_cycle_id()), t.u(p_user), p_amount, 'manual', 'monthly test', p_at);
+$$;
+begin;
+update cycles set is_active = false where is_active;
+insert into cycles (name, starts_at, ends_at, is_active) values ('Monthly test cycle', now() - interval '100 days', now() + interval '30 days', true);
+do $$
+declare sh json;
+begin
+  perform t.ok((select bool_and(role = 'participant') from profiles where id in (t.u('alice'), t.u('carol'), t.u('erin'))), 'section 24: alice, carol, erin are participants');
+  perform t.eq((select role from profiles where id = t.u('bob')), 'admin', 'section 24: bob is an admin');
+  perform t.ok(monthly_shoutout_data() is null, 'monthly: null when nobody earned points this cycle');
+
+  -- Only the current month has points → leader so far (not final). Admins never count.
+  perform t.give('alice', 30, t.at(0, 1));
+  perform t.give('carol', 10, t.at(0, 1));
+  perform t.give('bob', 999, t.at(0, 1));
+  sh := monthly_shoutout_data();
+  perform t.eq(sh->>'userId', t.u('alice')::text, 'monthly fallback: current month leader (admin excluded)');
+  perform t.eq((sh->>'final')::boolean, false, 'monthly fallback: not final');
+  perform t.eq(sh->>'month', t.mkey(0), 'monthly fallback: current month key');
+  perform t.eq((sh->>'pointsThisMonth')::int, 30, 'monthly fallback: points so far');
+
+  -- Two months ago doesn't help: last month is still empty → still the current-month fallback.
+  perform t.give('carol', 20, t.at(-2, 5));
+  sh := monthly_shoutout_data();
+  perform t.eq(sh->>'userId', t.u('alice')::text, 'monthly: empty last month → current month (older months ignored)');
+  perform t.ok((select earned and progress = 1 from badges_for(t.u('carol')) where id = 'monthly_star'), 'monthly_star: won a finished month (two months ago)');
+  perform t.ok((select not earned and progress = 0 from badges_for(t.u('alice')) where id = 'monthly_star'), 'monthly_star: current-month leader has not earned it');
+  perform t.eq((select count(*) from badges_for(t.u('carol'))), 15::bigint, '15 badges');
+
+  -- Last month: carol and erin tie on 40 positive points; carol reached 40 first (8h vs 10h).
+  perform t.give('carol', 25, t.at(-1, 3));
+  perform t.give('carol', 15, t.at(-1, 8));
+  perform t.give('erin', -5, t.at(-1, 1));                 -- corrections don't count
+  perform t.give('erin', 40, t.at(-1, 10));
+  perform t.give('bob', 500, t.at(-1, 2));                 -- admin: never counts
+  perform t.give('dave', 1000, t.at(-1, 2), (select id from cycles where not is_active order by starts_at desc limit 1));  -- other cycle
+  sh := monthly_shoutout_data();
+  perform t.eq(sh->>'userId', t.u('carol')::text, 'monthly: last completed month''s winner; tie → reached the total first');
+  perform t.eq((sh->>'final')::boolean, true, 'monthly: completed month is final');
+  perform t.eq(sh->>'month', t.mkey(-1), 'monthly: last month key');
+  perform t.eq((sh->>'pointsThisMonth')::int, 40, 'monthly: positive points that month, this cycle only');
+  perform t.ok((select not earned from badges_for(t.u('erin')) where id = 'monthly_star'), 'monthly_star: tie loser has not earned it');
+
+  -- Erin earns 1 more point last month (after carol) → erin wins outright.
+  perform t.give('erin', 1, t.at(-1, 11));
+  perform t.eq(monthly_shoutout_data()->>'userId', t.u('erin')::text, 'monthly: more points beats earlier time');
+  perform t.ok((select earned from badges_for(t.u('erin')) where id = 'monthly_star'), 'monthly_star: earned by last month''s winner');
+  perform t.ok((select earned from badges_for(t.u('carol')) where id = 'monthly_star'), 'monthly_star: carol keeps hers (two months ago)');
+  perform t.ok((select not earned from badges_for(t.u('bob')) where id = 'monthly_star'), 'monthly_star: admins never earn it');
+end $$;
+:as_alice
+do $$ begin
+  perform t.eq(monthly_shoutout()->>'userId', t.u('erin')::text, 'participant can call monthly_shoutout()');
+  perform t.ok((select not earned from my_badges() where id = 'monthly_star'), 'my_badges: alice has no monthly_star');
+end $$;
+:as_erin
+do $$ begin
+  perform t.ok((select earned and progress = 1 and goal = 1 from my_badges() where id = 'monthly_star'), 'my_badges: erin has monthly_star');
+end $$;
+:as_super
+rollback;
+drop function t.at(int, int);
+drop function t.mkey(int);
+drop function t.give(text, int, timestamptz, uuid);
 
 -- =============================================================================
 -- 0010. NAME FILTER: name_is_clean, sign-up, update_profile, handle_available, admin_rename_user

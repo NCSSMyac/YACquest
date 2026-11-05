@@ -389,11 +389,16 @@ describe('announcements', () => {
     const log = await api.adminActionLog();
     expect(log[0].action).toBe('announcement_sent');
   });
-  it('only chairs can email everyone; participants cannot send', async () => {
+  it('admins and chairs can email everyone; participants cannot send', async () => {
     asUser('admin');
-    await expect(api.sendAnnouncement({ title: 'Big news', body: 'Hi', audience: 'all', sendEmail: true })).rejects.toMatchObject({ code: 'forbidden' });
+    expect(load().users.find((u) => u.handle === 'admin')?.role).toBe('admin');
+    const a = await api.sendAnnouncement({ title: 'Admin news', body: 'Hi all', audience: 'all', sendEmail: true });
+    expect(a.recipients).toBe(load().users.length);
+    expect(a.emailed).toBeGreaterThan(0);
+    expect(load().outbox.some((o) => o.kind === 'announcement' && o.subject === '📣 YACquest: Admin news')).toBe(true);
     asUser('yak001');
     await expect(api.sendAnnouncement({ title: 'Big news', body: 'Hi', audience: 'all', sendEmail: false })).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(api.sendAnnouncement({ title: 'Big news', body: 'Hi', audience: 'all', sendEmail: true })).rejects.toMatchObject({ code: 'forbidden' });
     asUser('iesha');
     const r = await api.sendAnnouncement({ title: 'Big news', body: 'Hi', audience: 'all', sendEmail: true });
     expect(r.emailed).toBeGreaterThan(0);

@@ -4,6 +4,12 @@ export const fmtDate = (iso: string) => toDate(iso).toLocaleDateString(undefined
 export const fmtLongDate = (iso: string) => toDate(iso).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
 export const fmtDateTime = (iso: string) =>
   new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+/** 'YYYY-MM' → 'November' (calendar month name; no time-zone shifts). */
+export const monthName = (key: string) => {
+  const [y, m] = key.split('-').map(Number);
+  if (!y || !m) return key;
+  return new Date(Date.UTC(y, m - 1, 15)).toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
+};
 export const fmtPts = (n: number) => `${n > 0 ? '+' : ''}${n}`;
 export function timeAgo(iso: string) {
   const s = (Date.now() - new Date(iso).getTime()) / 1000;

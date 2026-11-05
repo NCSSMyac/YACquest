@@ -269,7 +269,7 @@ export interface AnnouncementInput {
   audience: AnnouncementAudience;
   campus?: CampusId; // when audience = 'campus'
   userId?: string; // when audience = 'user'
-  /** Also email it (only people with email updates on; a direct message always emails that person). Chairs only for 'all'. */
+  /** Also email it (only people with email updates on; a direct message always emails that person). Any admin or chair, any audience. */
   sendEmail: boolean;
 }
 
@@ -305,7 +305,7 @@ export interface FeedbackItem {
   createdAt: string;
 }
 
-// ───────────── Quest extras (0009): badges, wardrobe, weekly shout-out ─────────────
+// ───────────── Quest extras (0009/0012): badges, wardrobe, Adventurer of the Month ─────────────
 
 /** Equipped cosmetics. Missing/undefined = nothing in that slot (background falls back to the default). */
 export interface Look {
@@ -324,12 +324,21 @@ export interface BadgeProgress {
   goal: number; // e.g. 5
 }
 
-/** "Adventurer of the week": most points gained in the last 7 days. */
+/**
+ * "Adventurer of the Month" (0012): the participant with the most points (positive rows, this cycle)
+ * in the last completed America/New_York calendar month (final). If nobody earned points last month,
+ * the current month's leader so far (not final). Ties: whoever reached that total first.
+ */
 export interface Shoutout {
   userId: string;
   displayName: string;
   campus: CampusId;
   avatar: AvatarId;
   look?: Look;
-  pointsThisWeek: number;
+  /** Points earned in `month`. */
+  pointsThisMonth: number;
+  /** Calendar month (America/New_York), 'YYYY-MM', e.g. '2026-11'. */
+  month: string;
+  /** true = that month is over and this is its winner; false = leading the current month so far. */
+  final: boolean;
 }

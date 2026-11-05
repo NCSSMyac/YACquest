@@ -1,6 +1,7 @@
 /**
  * Collectible achievement badges. Purely for fun — they never award points, so they can't
- * change the prize race. The server (my_badges() in supabase/migrations/0009_quest_extras.sql)
+ * change the prize race. The server (my_badges() in supabase/migrations/0009_quest_extras.sql, badge list
+ * updated in 0012_admin_email_monthly_shoutout.sql)
  * decides who has earned what; this file holds names, descriptions and display order.
  * Everything counts for the current school-year cycle only.
  */
@@ -28,6 +29,7 @@ export const BADGES: BadgeDef[] = [
   { id: 'voice', name: 'Voice of the Herd', how: 'Send feedback or a prize idea.', flavor: 'Thanks for helping YAC grow.' },
   { id: 'halfway', name: 'Halfway There', how: 'Reach 325 points.', flavor: 'The treasure is in sight.' },
   { id: 'legend', name: 'Quest Legend', how: 'Reach the prize goal (650 points).', flavor: 'Legendary.' },
+  { id: 'monthly_star', name: 'Adventurer of the Month', how: 'Be the top point earner of a month.', flavor: 'The whole herd saw you shine.' },
 ];
 
 export const badgeById = (id: string) => BADGES.find((b) => b.id === id);

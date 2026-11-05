@@ -15,6 +15,7 @@ import { ACTIVITIES, ONCE_PER_CYCLE, activityById } from '../lib/activities';
 import { EVENT_KINDS, kindInfo } from '../lib/eventKinds';
 import { BADGES } from '../lib/badges';
 import { COSMETICS, cosmeticById, type UnlockRule } from '../lib/cosmetics';
+import { monthName } from '../lib/format';
 import { announcementError, claimContactError, isEmail } from '../lib/validate';
 import type {
   Activity,
@@ -1293,9 +1294,19 @@ function buildWeeklyReport(): Omit<WeeklyReport, 'recipients'> {
     ...d.feedback.map((f) => ({ cat: f.category as string, msg: f.message, who: userName(f.userId), at: f.createdAt })),
     ...d.suggestions.map((x) => ({ cat: 'prize', msg: x.idea, who: userName(x.userId), at: x.createdAt })),
   ].filter((f) => new Date(f.at).getTime() >= weekAgo).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 30);
+  // Adventurer of the Month (0012): same pick as the Home shout-out.
+  const star = shoutoutSync();
+  const starLine = !star
+    ? 'No points earned this month yet.'
+    : star.final
+      ? `${star.displayName} (${cname(star.campus)}) — ${star.pointsThisMonth} points in ${monthName(star.month)}. Give them a shout-out!`
+      : `Leading ${monthName(star.month)} so far: ${star.displayName} (${cname(star.campus)}) — ${star.pointsThisMonth} points. Give them a shout-out!`;
 
   const text = [
     `Prize race: ${prize.remaining} of ${prize.total} spots left (goal ${PRIZE.goal} pts, ${PRIZE.name}).`,
+    '',
+    '⭐ ADVENTURER OF THE MONTH',
+    `- ${starLine}`,
     '',
     `CLOSE TO THE PRIZE (within ${s.nearGoalPoints} pts)`,
     ...(close.length ? close.map((r) => `- ${r.displayName} (${cname(r.campus)}): ${r.points} pts, ${PRIZE.goal - r.points} to go`) : ['- Nobody yet.']),
@@ -1320,6 +1331,8 @@ function buildWeeklyReport(): Omit<WeeklyReport, 'recipients'> {
   const html = emailHtml(
     subject,
     `<p style="font-size:17px;margin:0"><b style="color:#0b2a5b">${prize.remaining} of ${prize.total}</b> prize spots left <span style="color:#4a5672">(goal ${PRIZE.goal} pts · ${esc(PRIZE.name)})</span></p>` +
+      h2('⭐ Adventurer of the month') +
+      `<p style="margin:0">${esc(starLine)}</p>` +
       h2(`Close to the prize (within ${s.nearGoalPoints} pts)`) +
       (close.length
         ? `<ul style="padding-left:18px;margin:0">${close.map((r) => li(`<b>${esc(r.displayName)}</b> (${esc(cname(r.campus))}) — ${r.points} pts, <b>${PRIZE.goal - r.points} to go</b>`)).join('')}</ul>`
@@ -1450,8 +1463,6 @@ export async function sendAnnouncement(input: AnnouncementInput): Promise<{ reci
   const admin = requireRole('admin', 'chair');
   const problem = announcementError(input);
   if (problem) fail(problem.code, problem.message);
-  if (input.audience === 'all' && input.sendEmail && admin.role !== 'chair')
-    fail('forbidden', 'Only a YAC chair can email everyone. Uncheck email or pick a campus.');
   const d = load();
   const today = d.announcements.filter((a) => a.senderName === admin.displayName && Date.now() - new Date(a.createdAt).getTime() < 86_400_000).length;
   if (today >= 20) fail('limit', 'You’ve sent 20 messages today. Try again tomorrow.');
@@ -1542,8 +1553,8 @@ export async function markFeedbackReviewed(kind: FeedbackItem['kind'], id: strin
   save();
 }
 
-// ───────────────────────────── quest extras (0009): badges, wardrobe, weekly shout-out ─────────────────────────────
-// SERVER RULE: my_badges(), my_unlocks(), equip_look() and weekly_shoutout() in 0009_quest_extras.sql
+// ───────────────────────────── quest extras (0009/0012): badges, wardrobe, Adventurer of the Month ─────────────────────────────
+// SERVER RULE: my_badges(), my_unlocks(), equip_look() (0009) and monthly_shoutout() + the monthly_star badge (0012)
 // mirror these rules. Everything counts for the current cycle only (the mock ledger IS the cycle).
 
 const monthKey = (iso: string) => {
@@ -1553,6 +1564,57 @@ const monthKey = (iso: string) => {
     return iso.slice(0, 7);
   }
 };
+
+/** 'YYYY-MM' shifted by n months. */
+const shiftMonth = (key: string, n: number) => {
+  const [y, m] = key.split('-').map(Number);
+  const t = y * 12 + (m - 1) + n;
+  return `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, '0')}`;
+};
+
+interface MonthLeader {
+  month: string;
+  user: User;
+  pts: number;
+  /** When they reached that total (their last positive row that month). */
+  reachedAt: number;
+  /** The month is over (before the current America/New_York month). */
+  final: boolean;
+}
+
+/**
+ * SERVER RULE (monthly_standings, 0012): each America/New_York calendar month's leader among participants,
+ * counting positive ledger rows only. Ties → reached the total first, then display name, then id.
+ */
+function monthLeaders(): Map<string, MonthLeader> {
+  const d = load();
+  const people = new Map(d.users.filter((u) => u.role === 'participant').map((u) => [u.id, u]));
+  const cur = monthKey(now());
+  const tally = new Map<string, MonthLeader>();
+  for (const l of d.ledger) {
+    const user = people.get(l.userId);
+    if (!user || l.amount <= 0) continue;
+    const month = monthKey(l.createdAt);
+    const at = new Date(l.createdAt).getTime();
+    const k = `${month}|${l.userId}`;
+    const row = tally.get(k);
+    if (row) {
+      row.pts += l.amount;
+      row.reachedAt = Math.max(row.reachedAt, at);
+    } else tally.set(k, { month, user, pts: l.amount, reachedAt: at, final: month < cur });
+  }
+  const beats = (a: MonthLeader, b: MonthLeader) =>
+    a.pts !== b.pts ? a.pts > b.pts
+    : a.reachedAt !== b.reachedAt ? a.reachedAt < b.reachedAt
+    : a.user.displayName !== b.user.displayName ? a.user.displayName < b.user.displayName
+    : a.user.id < b.user.id;
+  const leaders = new Map<string, MonthLeader>();
+  for (const row of tally.values()) {
+    const best = leaders.get(row.month);
+    if (!best || beats(row, best)) leaders.set(row.month, row);
+  }
+  return leaders;
+}
 
 /** Badge progress for any user (exported for tests via __test). */
 function badgesFor(userId: string): BadgeProgress[] {
@@ -1573,6 +1635,7 @@ function badgesFor(userId: string): BadgeProgress[] {
   const voices = d.feedback.filter((f) => f.userId === userId).length + d.suggestions.filter((x) => x.userId === userId).length;
   const highImpact = events.filter((e) => e.kind === 'high_impact').length;
   const points = Math.max(0, pointsOf(userId));
+  const monthWins = [...monthLeaders().values()].filter((m) => m.final && m.user.id === userId).length;
   const raw: Record<string, [number, number]> = {
     first_checkin: [checkins.size, 1],
     regular: [checkins.size, 5],
@@ -1588,6 +1651,7 @@ function badgesFor(userId: string): BadgeProgress[] {
     voice: [voices, 1],
     halfway: [points, Math.ceil(PRIZE.goal / 2)],
     legend: [points, PRIZE.goal],
+    monthly_star: [monthWins, 1],
   };
   return BADGES.map((b) => {
     const [progress, goal] = raw[b.id] ?? [0, 1];
@@ -1604,21 +1668,17 @@ function unlocksFor(userId: string): string[] {
   return COSMETICS.filter((c) => ok(c.rule)).map((c) => c.id);
 }
 
-/** The most points gained (positive rows only) in the last 7 days; ties → alphabetical. */
+/**
+ * SERVER RULE (monthly_shoutout, 0012): last month's winner (final), or — if nobody earned points last
+ * month — the current month's leader so far (not final). null if nobody earned points in either.
+ */
 function shoutoutSync(): Shoutout | null {
-  const d = load();
-  const since = Date.now() - 7 * 86_400_000;
-  const gains = new Map<string, number>();
-  for (const l of d.ledger) if (l.amount > 0 && new Date(l.createdAt).getTime() >= since) gains.set(l.userId, (gains.get(l.userId) ?? 0) + l.amount);
-  let best: { u: User; pts: number } | null = null;
-  for (const u of d.users) {
-    const pts = gains.get(u.id) ?? 0;
-    if (u.role !== 'participant' || pts <= 0) continue;
-    if (!best || pts > best.pts || (pts === best.pts && u.displayName.localeCompare(best.u.displayName) < 0)) best = { u, pts };
-  }
-  if (!best) return null;
-  const { u, pts } = best;
-  return { userId: u.id, displayName: u.displayName, campus: u.campus, avatar: u.avatar, look: u.look, pointsThisWeek: pts };
+  const leaders = monthLeaders();
+  const cur = monthKey(now());
+  const top = leaders.get(shiftMonth(cur, -1)) ?? leaders.get(cur);
+  if (!top) return null;
+  const u = top.user;
+  return { userId: u.id, displayName: u.displayName, campus: u.campus, avatar: u.avatar, look: u.look, pointsThisMonth: top.pts, month: top.month, final: top.final };
 }
 
 export async function myBadges(): Promise<BadgeProgress[]> {
@@ -1653,7 +1713,7 @@ export async function equipLook(look: Look): Promise<User> {
   return updated;
 }
 
-export async function weeklyShoutout(): Promise<Shoutout | null> {
+export async function monthlyShoutout(): Promise<Shoutout | null> {
   await delay(100);
   return shoutoutSync();
 }

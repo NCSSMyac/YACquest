@@ -386,7 +386,7 @@ input[type='radio'] { width: 20px; height: 20px; accent-color: var(--navy-800); 
   color: #fff; background: var(--navy-800); padding: 3px 6px; font-variant-numeric: tabular-nums;
 }
 
-/* ───────────── Adventurer of the Week (src/components/Shoutout.tsx) ───────────── */
+/* ───────────── Adventurer of the Month (src/components/Shoutout.tsx) ───────────── */
 .shoutout .panel-title { margin-bottom: 8px; }
 .shoutout-avatar { display: grid; place-items: center; flex: none; width: 68px; height: 68px; background: var(--paper); border: var(--px) solid var(--navy-900); }
 .shoutout-name { font-size: 19px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

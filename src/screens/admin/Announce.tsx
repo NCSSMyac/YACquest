@@ -12,7 +12,6 @@ import type { AnnouncementAudience, AnnouncementInput } from '../../types';
 export default function Announce() {
   const { user } = useAuth();
   const toast = useToast();
-  const isChair = user?.role === 'chair';
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [audience, setAudience] = useState<AnnouncementAudience>('all');
@@ -30,7 +29,6 @@ export default function Announce() {
   );
   const sent = useAsync(() => api.listAnnouncements(15), [], { live: true });
 
-  const emailBlocked = audience === 'all' && sendEmail && !isChair;
   const input: AnnouncementInput = { title, body, audience, campus: audience === 'campus' ? campus : undefined, userId: person?.id, sendEmail };
   const audienceText =
     audience === 'all' ? 'everyone' : audience === 'campus' ? `everyone at ${campusName(campus)}` : person ? person.displayName : 'one person';
@@ -40,7 +38,6 @@ export default function Announce() {
     setErr(null);
     const problem = announcementError(input);
     if (problem) return setErr(problem.message);
-    if (emailBlocked) return setErr('Only a YAC chair can email everyone. Uncheck email or pick a campus.');
     setConfirm(true);
   }
 
@@ -138,10 +135,9 @@ export default function Announce() {
               </small>
             </span>
           </label>
-          {emailBlocked && <p className="field-error">Only a YAC chair can email everyone. Uncheck email or pick a campus.</p>}
 
           <ErrorText error={err} />
-          <button className="btn" disabled={busy || emailBlocked}>Review and send</button>
+          <button className="btn" disabled={busy}>Review and send</button>
         </form>
       </Panel>
 

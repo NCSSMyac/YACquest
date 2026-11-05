@@ -1157,7 +1157,7 @@ export async function markFeedbackReviewed(kind: FeedbackItem['kind'], id: strin
   emitChange();
 }
 
-// ───────────────────────────── quest extras (0009): badges, wardrobe, weekly shout-out ─────────────────────────────
+// ───────────────────────────── quest extras (0009/0012): badges, wardrobe, Adventurer of the Month ─────────────────────────────
 
 /** my_badges() → rows {id, earned, progress, goal}, returned in the display order of BADGES. */
 export async function myBadges(): Promise<BadgeProgress[]> {
@@ -1193,9 +1193,9 @@ export async function equipLook(look: Look): Promise<User> {
   return me;
 }
 
-/** weekly_shoutout() → json {userId, displayName, campus, avatar, hat, accessory, background, pointsThisWeek} or null. */
-export async function weeklyShoutout(): Promise<Shoutout | null> {
-  const r = one(await rpc<AnyRow | AnyRow[] | null>('weekly_shoutout'));
+/** monthly_shoutout() (0012) → json {userId, displayName, campus, avatar, hat, accessory, background, look, pointsThisMonth, month, final} or null. */
+export async function monthlyShoutout(): Promise<Shoutout | null> {
+  const r = one(await rpc<AnyRow | AnyRow[] | null>('monthly_shoutout'));
   if (!r || !pick(r, 'user_id')) return null;
   return {
     userId: str(pick(r, 'user_id')),
@@ -1203,6 +1203,8 @@ export async function weeklyShoutout(): Promise<Shoutout | null> {
     campus: pick<CampusId>(r, 'campus'),
     avatar: pick<AvatarId>(r, 'avatar'),
     look: toLook(r),
-    pointsThisWeek: num(pick(r, 'points_this_week')),
+    pointsThisMonth: num(pick(r, 'points_this_month')),
+    month: str(pick(r, 'month')),
+    final: pick(r, 'final') === true || pick(r, 'final') === 'true',
   };
 }

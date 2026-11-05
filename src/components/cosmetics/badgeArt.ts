@@ -233,6 +233,22 @@ export const BADGE_ART: Record<string, BadgeArt> = {
       '.kk....kk.',
     ],
   },
+  monthly_star: {
+    ring: 'G',
+    fill: 'n',
+    symbol: [
+      '....kk....',
+      '...kyyk...',
+      '.kkkyggkk.',
+      'kyyyyggGGk',
+      '.kggggGGk.',
+      '..kgkkGk..',
+      'kkkkkkkkkk',
+      'krrrrrrrrk',
+      '.krrkkrrk.',
+      '..kk..kk..',
+    ],
+  },
 };
 
 /** The medallion shape: 'k' outline, 'R' ring, 'F' fill, 'S' shine, '.' outside. */

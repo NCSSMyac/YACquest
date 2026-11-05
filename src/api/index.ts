@@ -70,7 +70,7 @@ export const {
   myBadges,
   myUnlocks,
   equipLook,
-  weeklyShoutout,
+  monthlyShoutout,
   submitFeedback,
   listFeedback,
   markFeedbackReviewed,

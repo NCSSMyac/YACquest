@@ -22,7 +22,7 @@ beforeEach(async () => {
 });
 
 describe('badges', () => {
-  it('returns all 14 badges in display order with progress', async () => {
+  it('returns all 15 badges in display order with progress', async () => {
     asUser('yak001');
     const list = await api.myBadges();
     expect(list.map((b) => b.id)).toEqual(BADGES.map((b) => b.id));
@@ -142,34 +142,65 @@ describe('leaderboard looks', () => {
   });
 });
 
-describe('weekly shout-out', () => {
-  it('picks the participant who gained the most points in the last 7 days', async () => {
-    asUser('yak001');
-    const target = userBy('alum042');
-    addLedger({ userId: target.id, amount: 500, source: 'manual', reason: 'big week' });
-    const s = (await api.weeklyShoutout())!;
-    expect(s.userId).toBe(target.id);
-    expect(s.pointsThisWeek).toBeGreaterThanOrEqual(500);
-    expect(s.look).toEqual(target.look);
-  });
-
-  it('ignores negative corrections and old points', async () => {
-    asUser('yak001');
-    const d = load();
-    const a = userBy('alum001');
-    const b = userBy('alum002');
-    d.ledger = d.ledger.filter(() => false);
-    addLedger({ userId: a.id, amount: 30, source: 'manual', reason: 'x' });
-    addLedger({ userId: a.id, amount: -25, source: 'manual', reason: 'fix' });
-    addLedger({ userId: b.id, amount: 20, source: 'manual', reason: 'x' });
-    addLedger({ userId: b.id, amount: 400, source: 'manual', reason: 'old' }, new Date(Date.now() - 10 * 86_400_000).toISOString());
-    expect((await api.weeklyShoutout())?.userId).toBe(a.id); // 30 positive beats 20
-  });
-
-  it('returns null when nobody earned points this week', async () => {
+describe('Adventurer of the Month', () => {
+  /** An ISO time `hours` into the America/New_York calendar month `k` months from now (EST/EDT-safe: day 10+). */
+  const keyOf = (iso: string) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit' }).format(new Date(iso));
+  const inMonth = (k: number, hours = 0) => {
+    const [y, m] = keyOf(new Date().toISOString()).split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1 + k, 10, 12 + hours)).toISOString();
+  };
+  const fresh = () => {
     asUser('yak001');
     load().ledger = [];
-    expect(await api.weeklyShoutout()).toBeNull();
+    return { a: userBy('alum001'), b: userBy('alum002'), c: userBy('alum003') };
+  };
+
+  it('shows last month’s winner (final) over this month’s leader', async () => {
+    const { a, b } = fresh();
+    addLedger({ userId: a.id, amount: 30, source: 'manual', reason: 'last month' }, inMonth(-1));
+    addLedger({ userId: b.id, amount: 500, source: 'manual', reason: 'this month' }, inMonth(0, -1));
+    const s = (await api.monthlyShoutout())!;
+    expect(s).toMatchObject({ userId: a.id, pointsThisMonth: 30, final: true, month: keyOf(inMonth(-1)) });
+    expect(s.look).toEqual(a.look);
+    expect(s).not.toHaveProperty('pointsThisWeek');
+  });
+
+  it('falls back to the current month’s leader when last month had no points', async () => {
+    const { a, b } = fresh();
+    addLedger({ userId: a.id, amount: 400, source: 'manual', reason: 'two months ago' }, inMonth(-2));
+    addLedger({ userId: b.id, amount: 20, source: 'manual', reason: 'now' });
+    const s = (await api.monthlyShoutout())!;
+    expect(s).toMatchObject({ userId: b.id, pointsThisMonth: 20, final: false, month: keyOf(new Date().toISOString()) });
+  });
+
+  it('counts positive points of participants only; ties go to whoever got there first', async () => {
+    const { a, b, c } = fresh();
+    const admin = userBy('admin');
+    addLedger({ userId: admin.id, amount: 999, source: 'manual', reason: 'admin' }, inMonth(-1));
+    addLedger({ userId: a.id, amount: 40, source: 'manual', reason: 'x' }, inMonth(-1, 5)); // reaches 40 later
+    addLedger({ userId: b.id, amount: 25, source: 'manual', reason: 'x' }, inMonth(-1, 1));
+    addLedger({ userId: b.id, amount: 15, source: 'manual', reason: 'x' }, inMonth(-1, 3)); // reaches 40 first
+    addLedger({ userId: c.id, amount: 45, source: 'manual', reason: 'x' }, inMonth(-1, 2));
+    addLedger({ userId: c.id, amount: -20, source: 'manual', reason: 'fix' }, inMonth(-1, 4)); // corrections don't count…
+    expect((await api.monthlyShoutout())?.userId).toBe(c.id); // …so c's 45 positive wins
+    load().ledger = load().ledger.filter((l) => l.userId !== c.id);
+    expect((await api.monthlyShoutout())?.userId).toBe(b.id);
+  });
+
+  it('returns null when nobody earned points this month or last', async () => {
+    fresh();
+    expect(await api.monthlyShoutout()).toBeNull();
+  });
+
+  it('awards the Adventurer of the Month badge only to a completed month’s winner', async () => {
+    const { a, b } = fresh();
+    addLedger({ userId: a.id, amount: 50, source: 'manual', reason: 'two months ago' }, inMonth(-2));
+    addLedger({ userId: b.id, amount: 80, source: 'manual', reason: 'this month' });
+    const star = (id: string) => api.__test.badgesFor(id).find((x) => x.id === 'monthly_star')!;
+    expect(star(a.id)).toMatchObject({ earned: true, progress: 1, goal: 1 });
+    expect(star(b.id)).toMatchObject({ earned: false, progress: 0, goal: 1 }); // leading now isn't enough
+    asUser(b.handle);
+    expect((await earned()).has('monthly_star')).toBe(false);
   });
 });
 
