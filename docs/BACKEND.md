@@ -22,7 +22,7 @@ The database SQL (`supabase/migrations/*.sql`) and the front end's live API (`sr
 - Helper SQL functions: `is_admin()` (admin or chair), `is_chair()`, both `stable security definer` reading `profiles.role` for `auth.uid()`.
 
 ## Tables (public schema)
-- `app_config` (id int pk check id=1, prize_goal int 650, prize_count int 5, prize_value_usd int 50, fulfill_by date '2027-05-15', tier1_points 40, tier2_points 20, tier3_points 5, digital_per_week 1, social_tag_per_month 2, referrals_per_cycle 3, photos_per_event 1, photos_per_cycle 4)
+- `app_config` (id int pk check id=1, prize_goal int 650 **(350 since 0014)**, prize_count int 5, prize_value_usd int 50, fulfill_by date '2027-05-15', tier1_points 40, tier2_points 20, tier3_points 5, digital_per_week 1, social_tag_per_month 2, referrals_per_cycle 3, photos_per_event 1, photos_per_cycle 4)
 - `cycles` (id uuid, name text, starts_at, ends_at, is_active bool, archived_at) — exactly one active. Seed: '2026–27 Pilot', 2026-10-15 → 2027-05-01 23:59:59 America/New_York. Helper `active_cycle_id()`.
 - `chair_bootstrap` (email citext pk)
 - `activities` (id text pk, tier int 1–3, title text, method text check in ('event_password','screenshot','photo','lead_award','referral')) — seeded with the 13 ids in `src/lib/activities.ts`.
@@ -80,7 +80,7 @@ Admin (`is_admin()` else `forbidden`):
 - `create_event(p_event jsonb) → json event incl. password` — keys: title, campus, crossCampus, kind, location, startsAt, endsAt, checkInGraceMinutes, password. Validates title ≥3, password ≥4, ends > starts. Derives activity_id like check_in.
 - `update_event(p_id uuid, p_event jsonb) → json event`
 - `delete_event(p_id uuid)` — refuse if attendee_count > 0 (`has_attendees`)
-- `admin_overview() → json {participants, activeThisWeek, pointsThisWeek, pendingReviews, newSignupsThisWeek, prize (same as prize_status), nearGoal:[leaderboard rows within 100 of goal, unclaimed, top 10]}`
+- `admin_overview() → json {participants, activeThisWeek, pointsThisWeek, pendingReviews, newSignupsThisWeek, prize (same as prize_status), nearGoal:[leaderboard rows within 75 of goal (100 before 0014), unclaimed, top 10]}`
 
 Chair (`is_chair()` else `forbidden`):
 - `list_team() → table(id, display_name, handle, email, role, email_verified boolean)` — admins + chairs
@@ -104,7 +104,7 @@ Email + password; **Confirm email ON**; min password length 8; PKCE flow. Redire
 **Config:** `app_config.prize_count = 4`, `prize_value_usd = 75`. Drop table `sync_status` (Google Sheets sync is cancelled).
 
 ### New tables (RLS on; **chairs read**, nobody writes directly; writes via RPCs/triggers)
-- `report_settings` (id int pk check id=1, weekly_enabled bool default true, weekly_day int 0–6 default 1 (0=Sunday, America/New_York), weekly_hour int 0–23 default 9, near_goal_points int default 150, recipients text[] default '{}' (extra emails), include_chairs bool default true, include_admins bool default true, prize_alerts_enabled bool default true, updated_at, updated_by uuid). Seed one row.
+- `report_settings` (id int pk check id=1, weekly_enabled bool default true, weekly_day int 0–6 default 1 (0=Sunday, America/New_York), weekly_hour int 0–23 default 9, near_goal_points int default 150 **(75 since 0014)**, recipients text[] default '{}' (extra emails), include_chairs bool default true, include_admins bool default true, prize_alerts_enabled bool default true, updated_at, updated_by uuid). Seed one row.
 - `email_outbox` (id uuid, kind text check in ('weekly_report','prize_qualified','prize_info','test'), to_emails text[] not null, subject text, body_text text, body_html text, dedupe_key text unique not null, status text check in ('pending','sending','sent','failed') default 'pending', attempts int default 0, last_error text, created_at, sent_at). **dedupe_key prevents duplicate reports/alerts.**
 - `admin_actions` (id bigint identity, actor_id uuid null, actor_name text, action text, target_user_id uuid null, target_name text, details jsonb default '{}', created_at default now()). Append-only.
 
@@ -192,3 +192,22 @@ Actions: `points_added` / `points_removed` (ledger insert with created_by and so
   - Internal helpers (not callable through the API): `monthly_standings()`, `monthly_shoutout_data()`, `month_label('YYYY-MM') → 'November'`.
 - Badges: `my_badges()` now returns **15** badges; new last one `monthly_star` ("Adventurer of the Month", goal 1) = number of completed months in this cycle the user won (same rule as above). The other 14 are unchanged. Rainbow still needs 6 badges.
 - Weekly committee email stays weekly; its "⭐ Adventurer of the month" section shows `monthly_shoutout` ("<name> (<campus>) — N points in <Month>", or "Leading <Month> so far: …", or "No points earned this month yet."). When a weekly report is queued and the shout-out is `final`, the winner gets a notification "⭐ You’re Adventurer of the Month!" — at most once per calendar month.
+
+---
+
+## 0013 — Launch extras (anonymous feedback, sign-up email opt-in, attendance list)
+- `feedback.anonymous boolean not null default false`.
+- `submit_feedback(p_category, p_message, p_anonymous boolean default false) → json {id}` — same rules/codes as 0008. The old 2-argument version is dropped; 2-argument calls still work through the default. The sender (`user_id`) is always stored (10/day limit, "Voice of the Herd" badge).
+- `list_feedback(p_status varchar default null, p_limit int default 50)` now also returns `anonymous boolean`. Anonymous rows: `display_name = 'Anonymous'`, `handle` and `campus` null. (`p_status` is varchar so re-running 0008 can't clash — the old `(text, int)` version is dropped.)
+- `build_weekly_report()`: copy of 0012; in "💬 Feedback (last 7 days)" anonymous rows show **Anonymous** (no name, handle or campus).
+- `handle_new_user()`: copy of 0011; reads `raw_user_meta_data.email_opt_in` (sign-up checkbox "Email me announcements from YAC") into `profiles.email_opt_in`. Missing → true. `email_opt_in` only controls whether **admin announcements** are also emailed (`send_announcement`); there is no participant weekly email.
+- `admin_event_attendees(p_event_id uuid) → table(user_id, display_name, handle, campus, checked_in_at, points)` — admin or chair (else `forbidden`); unknown event → `not_found`. One row per check-in ledger row (`source = 'checkin'`, `ref_id = event id`) as recorded, oldest first.
+- Check-in QR links (front end only, no DB change): `<site>#/checkin?event=<eventId>&code=<password>[&title=<title>]` calls the existing `check_in()`.
+
+## 0014 — Prize goal 350 (fewer events this year)
+- YAC runs only ~6 more events and posts every other week, so `app_config.prize_goal` = **350** (column default too). Tier points (35/20/5), 4 spots and $75 are unchanged. After setting the goal it runs `refresh_prize_race(active_cycle_id())`, so anyone already at 350+ claims a spot in the order they crossed.
+- `badges_for()`: copy of 0012; the `halfway` goal is now half the prize goal, rounded up (**175**), instead of a hard-coded 325. `legend` already used `prize_goal`.
+- `cosmetics`: Sparkle Aura (`sparkles`) unlocks at **300** points (was 500). Same in `src/lib/cosmetics.ts`.
+- `admin_overview()`: copy of 0001; `nearGoal` = within **75** of the goal (was 100).
+- `report_settings.near_goal_points` default **75** (was 150); the existing row is moved from 150 to 75 (a different value chosen by a chair is kept).
+- Manual removals in `adjust_points` are capped at the goal, so now at −350.

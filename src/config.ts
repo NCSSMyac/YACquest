@@ -3,14 +3,17 @@
  *
  * How these numbers were chosen (see docs/POINTS.md for the full model):
  * - ~300 participants across Duke, UNC and NC State.
- * - Points start with the first event (Nov 8, 2026) and the cycle ends May 1, 2027 (~20 active weeks).
- * - Goal: the prize is HARD. In simulation (scripts/simulate-points.py) about 3 of 300 reach 650,
- *   the first one around mid-April; ~40 people get past halfway (325); the median ends near 120.
- *   A "perfect" participant who does everything tops out near 1,160.
+ * - Points start with the first event (Nov 8, 2026) and the cycle ends May 1, 2027.
+ * - This year YAC runs only ~6 more events (4 home-campus, 2 cross-campus) and posts on social
+ *   media every other week (~12 digital chances), so the goal was lowered from 650 to 350.
+ * - Goal: the prize is still HARD. In simulation (scripts/simulate-points.py) about 3 of 300 reach 350,
+ *   the first one around early April; the 5th best ends near 325, so usually a spot or two stays open;
+ *   ~40 people get past halfway (175); the median ends near 65.
+ *   A "perfect" participant who does everything tops out near 800.
  * - Every automatic award is a tier value below. Manual admin additions are capped at TIER_POINTS[1].
- *   The database has its own copy in app_config (supabase/migrations/0003…) — change both together.
+ *   The database has its own copy in app_config (supabase/migrations/0003…, goal set in 0014) — change both together.
  *
- * Mid-year check (around Feb 1): if almost nobody is past 250, lower PRIZE.goal.
+ * Mid-year check (around Feb 1): if almost nobody is past 150, lower PRIZE.goal.
  */
 
 export type Tier = 1 | 2 | 3;
@@ -35,7 +38,7 @@ export const TIER_LABELS: Record<Tier, string> = {
 
 /** The one prize: the first N people to reach `goal` win a gift card. */
 export const PRIZE = {
-  goal: 650,
+  goal: 350,
   count: 4,
   valueUsd: 75,
   name: '$75 gift card',

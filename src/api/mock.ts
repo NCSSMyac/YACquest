@@ -47,6 +47,7 @@ import type {
   BadgeProgress,
   Look,
   Shoutout,
+  EventAttendee,
 } from '../types';
 
 // ───────────────────────────── errors ─────────────────────────────
@@ -84,7 +85,7 @@ interface Db {
   /** Admin announcements (the real one is the announcements table). */
   announcements: Announcement[];
   /** General feedback (the real one is the feedback table). */
-  feedback: { id: string; userId: string; category: FeedbackCategory; message: string; status: 'new' | 'reviewed'; reviewedBy?: string; reviewedAt?: string; createdAt: string }[];
+  feedback: { id: string; userId: string; category: FeedbackCategory; message: string; anonymous?: boolean; status: 'new' | 'reviewed'; reviewedBy?: string; reviewedAt?: string; createdAt: string }[];
   seq: number;
 }
 
@@ -320,7 +321,7 @@ export async function signup(input: SignupInput): Promise<SignupResult> {
     friendCode: makeFriendCode(),
     referredBy,
     createdAt: now(),
-    emailOptIn: true,
+    emailOptIn: input.emailOptIn ?? true,
   };
   d.users.push(user);
   notify(user.id, 'announcement', 'Welcome to YACquest!', `Earn points all year. The first ${PRIZE.count} people to reach ${PRIZE.goal} win a ${PRIZE.name}.`);
@@ -719,6 +720,22 @@ export async function adminListEvents(): Promise<YacEvent[]> {
     .sort((a, b) => b.startsAt.localeCompare(a.startsAt));
 }
 
+/** SERVER RULE (admin_event_attendees in 0013): admins + chairs; every check-in ledger row for the event, oldest first. */
+export async function adminEventAttendees(eventId: string): Promise<EventAttendee[]> {
+  await delay();
+  const user = me();
+  if (user.role === 'participant') fail('forbidden', 'Only YAC admins and chairs can see who came.');
+  const d = load();
+  if (!d.events.some((e) => e.id === eventId)) fail('not_found', 'That event no longer exists.');
+  return d.ledger
+    .filter((l) => l.source === 'checkin' && l.refId === eventId)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .flatMap((l) => {
+      const u = d.users.find((x) => x.id === l.userId);
+      return u ? [{ userId: u.id, displayName: u.displayName, handle: u.handle, campus: u.campus, checkedInAt: l.createdAt, points: l.amount }] : [];
+    });
+}
+
 /** The kind decides the campus rules (mirrors 0002_event_kinds.sql). */
 function normalizeEvent(input: EventInput): EventInput {
   return { ...input, crossCampus: input.campus === 'all' };
@@ -811,7 +828,7 @@ export async function adminOverview(): Promise<AdminOverview> {
     pendingReviews: d.submissions.filter((s) => s.status === 'pending' && inScope.has(s.userId)).length,
     newSignupsThisWeek: d.users.filter((u) => inScope.has(u.id) && new Date(u.createdAt).getTime() >= wk).length,
     prize: prizeStatusSync(),
-    nearGoal: rankedParticipants().filter((r) => !claimed.has(r.userId) && r.points >= PRIZE.goal - 100).slice(0, 10),
+    nearGoal: rankedParticipants().filter((r) => !claimed.has(r.userId) && r.points >= PRIZE.goal - 75).slice(0, 10),
   };
 }
 
@@ -1125,7 +1142,7 @@ function defaultReportSettings(): ReportSettings {
     weeklyEnabled: true,
     weeklyDay: 1,
     weeklyHour: 9,
-    nearGoalPoints: 150,
+    nearGoalPoints: 75,
     recipients: [],
     includeChairs: true,
     includeAdmins: true,
@@ -1291,7 +1308,7 @@ function buildWeeklyReport(): Omit<WeeklyReport, 'recipients'> {
   const userName = (id: string) => d.users.find((u) => u.id === id)?.displayName ?? 'Unknown';
   const fbLabel: Record<string, string> = { idea: 'Idea', bug: 'Bug / problem', event: 'Event idea', other: 'Other', prize: 'Prize idea' };
   const recentFeedback = [
-    ...d.feedback.map((f) => ({ cat: f.category as string, msg: f.message, who: userName(f.userId), at: f.createdAt })),
+    ...d.feedback.map((f) => ({ cat: f.category as string, msg: f.message, who: f.anonymous ? 'Anonymous' : userName(f.userId), at: f.createdAt })),
     ...d.suggestions.map((x) => ({ cat: 'prize', msg: x.idea, who: userName(x.userId), at: x.createdAt })),
   ].filter((f) => new Date(f.at).getTime() >= weekAgo).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 30);
   // Adventurer of the Month (0012): same pick as the Home shout-out.
@@ -1501,8 +1518,11 @@ export async function listAnnouncements(limit = 20): Promise<Announcement[]> {
 
 // ───────────────────────────── feedback ─────────────────────────────
 
-/** SERVER RULE (submit_feedback in 0008): 3–1000 chars, 10 per person per day. */
-export async function submitFeedback(category: FeedbackCategory, message: string): Promise<void> {
+/**
+ * SERVER RULE (submit_feedback in 0008/0013): 3–1000 chars, 10 per person per day.
+ * anonymous: the sender is still stored (limits, badge) but admins and the weekly email see "Anonymous".
+ */
+export async function submitFeedback(category: FeedbackCategory, message: string, anonymous = false): Promise<void> {
   await delay();
   const user = me();
   const d = load();
@@ -1510,7 +1530,7 @@ export async function submitFeedback(category: FeedbackCategory, message: string
   if (message.trim().length < 3 || message.trim().length > 1000) fail('message', 'Feedback: 3–1000 characters.');
   if (d.feedback.filter((f) => f.userId === user.id && Date.now() - new Date(f.createdAt).getTime() < 86_400_000).length >= 10)
     fail('limit', 'Thanks for all the feedback! Please try again tomorrow.');
-  d.feedback.unshift({ id: nextId('fb'), userId: user.id, category, message: message.trim(), status: 'new', createdAt: now() });
+  d.feedback.unshift({ id: nextId('fb'), userId: user.id, category, message: message.trim(), anonymous: !!anonymous, status: 'new', createdAt: now() });
   save();
 }
 
@@ -1522,14 +1542,16 @@ export async function listFeedback(status?: 'new' | 'reviewed', limit = 50): Pro
   const name = (id?: string) => (id ? who(id)?.displayName : undefined);
   const items: FeedbackItem[] = [
     ...d.feedback.map((f) => ({
-      id: f.id, kind: 'feedback' as const, category: f.category, message: f.message, status: f.status,
-      displayName: who(f.userId)?.displayName ?? 'Unknown', handle: who(f.userId)?.handle ?? '', campus: who(f.userId)?.campus ?? 'duke',
+      id: f.id, kind: 'feedback' as const, category: f.category, message: f.message, status: f.status, anonymous: !!f.anonymous,
+      ...(f.anonymous
+        ? { displayName: 'Anonymous', handle: '', campus: undefined }
+        : { displayName: who(f.userId)?.displayName ?? 'Unknown', handle: who(f.userId)?.handle ?? '', campus: who(f.userId)?.campus ?? 'duke' }),
       reviewedByName: name(f.reviewedBy), reviewedAt: f.reviewedAt, createdAt: f.createdAt,
     })),
     ...d.suggestions.map((s) => {
       const x = s as typeof s & { status?: 'new' | 'reviewed'; reviewedBy?: string; reviewedAt?: string };
       return {
-        id: s.id, kind: 'prize' as const, category: 'prize' as const, message: s.idea, status: x.status ?? 'new',
+        id: s.id, kind: 'prize' as const, category: 'prize' as const, message: s.idea, status: x.status ?? 'new', anonymous: false,
         displayName: who(s.userId)?.displayName ?? 'Unknown', handle: who(s.userId)?.handle ?? '', campus: who(s.userId)?.campus ?? 'duke',
         reviewedByName: name(x.reviewedBy), reviewedAt: x.reviewedAt, createdAt: s.createdAt,
       };

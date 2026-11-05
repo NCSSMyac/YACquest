@@ -5,6 +5,8 @@
  * decides who has earned what; this file holds names, descriptions and display order.
  * Everything counts for the current school-year cycle only.
  */
+import { PRIZE } from '../config';
+
 export interface BadgeDef {
   id: string;
   name: string;
@@ -27,8 +29,8 @@ export const BADGES: BadgeDef[] = [
   { id: 'giver', name: 'Giver', how: 'Give to the NCSSM annual fund.', flavor: 'Paying it forward.' },
   { id: 'champion', name: 'Champion', how: 'Win a game or competition at an event.', flavor: 'Undefeated (this time).' },
   { id: 'voice', name: 'Voice of the Herd', how: 'Send feedback or a prize idea.', flavor: 'Thanks for helping YAC grow.' },
-  { id: 'halfway', name: 'Halfway There', how: 'Reach 325 points.', flavor: 'The treasure is in sight.' },
-  { id: 'legend', name: 'Quest Legend', how: 'Reach the prize goal (650 points).', flavor: 'Legendary.' },
+  { id: 'halfway', name: 'Halfway There', how: `Reach ${Math.ceil(PRIZE.goal / 2)} points (half the prize goal).`, flavor: 'The treasure is in sight.' },
+  { id: 'legend', name: 'Quest Legend', how: `Reach the prize goal (${PRIZE.goal} points).`, flavor: 'Legendary.' },
   { id: 'monthly_star', name: 'Adventurer of the Month', how: 'Be the top point earner of a month.', flavor: 'The whole herd saw you shine.' },
 ];
 

@@ -13,9 +13,10 @@ export interface Checkpoint {
 }
 
 export const CHECKPOINTS: Checkpoint[] = [
-  { points: 150, label: 'Camp' },
-  { points: 325, label: 'Halfway' },
-  { points: 500, label: 'Summit' },
+  { points: 50, label: 'Trailhead' },
+  { points: 100, label: 'Camp' },
+  { points: Math.ceil(PRIZE.goal / 2), label: 'Halfway' },
+  { points: 250, label: 'Summit' },
 ];
 
 /** Checkpoints (plus the treasure itself) passed when going from `prev` to `now` points. */

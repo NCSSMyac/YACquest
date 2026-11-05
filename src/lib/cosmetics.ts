@@ -1,6 +1,6 @@
 /**
  * Unlockable looks: hats, accessories (jewelry) and backgrounds. Cosmetic only.
- * The server (cosmetics table + my_unlocks() + equip_look() in 0009_quest_extras.sql) mirrors
+ * The server (cosmetics table + my_unlocks() + equip_look() in 0009_quest_extras.sql; Sparkle Aura moved to 300 in 0014) mirrors
  * these ids and rules and is the real gatekeeper; keep both in sync.
  */
 import type { CosmeticSlot } from '../types';
@@ -30,7 +30,7 @@ export const COSMETICS: CosmeticDef[] = [
   { id: 'pearls', slot: 'accessory', name: 'Pearl Necklace', rule: { type: 'badge', id: 'giver' } },
   { id: 'medal', slot: 'accessory', name: 'Champion Medal', rule: { type: 'badge', id: 'champion' } },
   { id: 'gold_chain', slot: 'accessory', name: 'Gold Chain', rule: { type: 'points', min: 250 } },
-  { id: 'sparkles', slot: 'accessory', name: 'Sparkle Aura', rule: { type: 'points', min: 500 } },
+  { id: 'sparkles', slot: 'accessory', name: 'Sparkle Aura', rule: { type: 'points', min: 300 } },
   // Backgrounds
   { id: 'meadow', slot: 'background', name: 'Meadow', rule: { type: 'free' } },
   { id: 'campus', slot: 'background', name: 'Campus Colors', rule: { type: 'free' } },

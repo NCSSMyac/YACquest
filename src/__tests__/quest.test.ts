@@ -65,6 +65,12 @@ describe('badges', () => {
     expect(got.has('legend')).toBe(true);
   });
 
+  it('describes the point badges with the 350 goal', () => {
+    expect(PRIZE.goal).toBe(350);
+    expect(BADGES.find((b) => b.id === 'halfway')!.how).toContain('175');
+    expect(BADGES.find((b) => b.id === 'legend')!.how).toContain('350');
+  });
+
   it('awards Voice of the Herd for a prize idea', async () => {
     asUser('alum010');
     expect((await earned()).has('voice')).toBe(false);
@@ -89,6 +95,16 @@ describe('unlocks', () => {
     unlocks = new Set(await api.myUnlocks());
     expect(unlocks.has('flower_crown')).toBe(true);
     expect(unlocks.has('gold_chain')).toBe(false);
+  });
+
+  it('unlocks Sparkle Aura at 300 points', async () => {
+    const u = asUser('yak001');
+    expect(COSMETICS.find((c) => c.id === 'sparkles')!.rule).toEqual({ type: 'points', min: 300 });
+    const have = load().ledger.filter((l) => l.userId === u.id).reduce((n, l) => n + l.amount, 0);
+    addLedger({ userId: u.id, amount: 299 - have, source: 'manual', reason: 'test' });
+    expect((await api.myUnlocks()).includes('sparkles')).toBe(false);
+    addLedger({ userId: u.id, amount: 1, source: 'manual', reason: 'test' });
+    expect((await api.myUnlocks()).includes('sparkles')).toBe(true);
   });
 
   it('unlocks Rainbow at 6 badges', async () => {

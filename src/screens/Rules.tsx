@@ -2,13 +2,16 @@ import { CAMPUSES, CAPS, CONTACT_EMAILS, CYCLE, INSTAGRAM_HANDLE, INSTAGRAM_URL,
 import { ACTIVITIES } from '../lib/activities';
 import { PageHeader } from '../components/Layout';
 import { TierChip } from '../components/ui';
-import { fmtLongDate as longDate } from '../lib/format';
+import { fmtCycleDate, fmtCycleRange, fmtLongDate as longDate } from '../lib/format';
 const TIERS: Tier[] = [1, 2, 3];
 
 /** Rules text, generated from config so it can never disagree with the game. Also shown in the signup modal. */
 export function RulesContent() {
   return (
     <div className="stack" style={{ fontSize: 16 }}>
+      <p style={{ margin: 0 }}>
+        🗓️ <b>This year’s quest runs {fmtCycleRange(CYCLE.start, CYCLE.end)}.</b>
+      </p>
       <section>
         <h3>How points work</h3>
         <p>
@@ -63,7 +66,7 @@ export function RulesContent() {
       <section>
         <h3>The cycle</h3>
         <p>
-          The {CYCLE.name} cycle ends on {longDate(CYCLE.end)}. At the end, everyone’s points reset to 0 and the history is archived.
+          The {CYCLE.name} cycle runs from {fmtCycleDate(CYCLE.start)} to {fmtCycleDate(CYCLE.end)}. At the end, everyone’s points reset to 0 and the history is archived.
         </p>
       </section>
       <section>

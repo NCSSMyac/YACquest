@@ -116,7 +116,9 @@ end $$;
 do $$ begin
   perform t.eq((select prize_count from app_config), 4, '0004: 4 prize spots');
   perform t.eq((select prize_value_usd from app_config), 75, '0004: $75 prizes');
-  perform t.eq((select prize_goal from app_config), 650, 'goal still 650');
+  perform t.eq((select prize_goal from app_config), 350, '0014: goal 350 after all migrations');
+  perform t.eq((select rule_value from cosmetics where id = 'sparkles'), '300', '0014: Sparkle Aura at 300 points');
+  perform t.eq((select near_goal_points from report_settings), 75, '0014: close-to-the-prize range 75');
   perform t.ok(to_regclass('public.sync_status') is null, '0004: sync_status table dropped');
   perform t.eq((select count(*) from report_settings), 1::bigint, 'report_settings seeded with one row');
   perform t.ok(not exists (select 1 from pg_proc where proname = 'submit_claim_info' and pronargs = 4), 'old 4-arg submit_claim_info dropped');
@@ -414,7 +416,7 @@ begin
 
   perform t.throws(format('select adjust_points(%L, 0, ''because'')', t.u('alice')), 'amount', 'adjust 0');
   perform t.throws(format('select adjust_points(%L, 36, ''because'')', t.u('alice')), 'amount', 'manual add capped at tier 1 (35)');
-  perform t.throws(format('select adjust_points(%L, -651, ''because'')', t.u('alice')), 'amount', 'manual removal capped at the goal (650)');
+  perform t.throws(format('select adjust_points(%L, -351, ''because'')', t.u('alice')), 'amount', 'manual removal capped at the goal (350)');
   perform t.throws(format('select adjust_points(%L, 10, ''ab'')', t.u('alice')), 'reason', 'adjust reason too short');
   perform t.throws(format('select adjust_points(%L, 10, ''because'')', gen_random_uuid()), 'not_found', 'adjust unknown user');
   perform adjust_points(t.u('alice'), -5, 'Duplicate survey');
@@ -813,7 +815,7 @@ begin
   perform t.ok((select count(*) from admin_actions) > 0, 'chair reads admin_actions');
   s := get_report_settings();
   perform t.ok((s->>'weeklyEnabled')::boolean and (s->>'weeklyDay')::int = 1 and (s->>'weeklyHour')::int = 9
-               and (s->>'nearGoalPoints')::int = 150 and json_array_length(s->'recipients') = 0
+               and (s->>'nearGoalPoints')::int = 75 and json_array_length(s->'recipients') = 0
                and (s->>'includeChairs')::boolean and (s->>'includeAdmins')::boolean and (s->>'prizeAlertsEnabled')::boolean
                and s->>'updatedAt' is not null, 'get_report_settings defaults (camelCase)');
   perform t.throws('select update_report_settings(''{"weeklyDay":7}'')', 'weeklyDay', 'settings: day 0–6');
@@ -1229,6 +1231,7 @@ end $$;
 -- =============================================================================
 \set as_gina   'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000006a0''; set role authenticated;'
 :as_super
+-- (this section keeps the old 650 goal on purpose: halfway = half of it = 325; section 25 covers 350)
 update app_config set prize_goal = 650, tier1_points = 40, tier2_points = 20, tier3_points = 5;
 insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data) values
   ('00000000-0000-0000-0000-0000000006a0', 'gina@example.edu', now(),
@@ -1256,7 +1259,7 @@ begin
                           'recruiter','giver','champion','voice','halfway','legend','monthly_star'], 'my_badges: 15 badges in badges.ts order');
   perform t.ok((select bool_and(not earned and progress = 0) from my_badges()), 'my_badges: fresh player has nothing (old-cycle check-in ignored)');
   perform t.eq((select goal from my_badges() where id = 'legend'), 650, 'legend goal = prize_goal');
-  perform t.eq((select goal from my_badges() where id = 'halfway'), 325, 'halfway goal 325');
+  perform t.eq((select goal from my_badges() where id = 'halfway'), 325, 'halfway goal = half of prize_goal 650 (325)');
   perform t.eq(my_unlocks(), array['meadow','campus'], 'my_unlocks: only the free backgrounds at first');
   perform t.denied('select * from badges_for(auth.uid())', 'badges_for is internal');
   perform t.denied('select unlocks_for(auth.uid())', 'unlocks_for is internal');
@@ -1352,7 +1355,7 @@ select adjust_points('00000000-0000-0000-0000-0000000006a0', 230, 'halfway test'
 do $$ begin
   perform t.ok((select earned and progress = 325 from my_badges() where id = 'halfway'), 'halfway: 385 pts, progress capped at 325');
   perform t.ok((select not earned and progress = 385 and goal = 650 from my_badges() where id = 'legend'), 'legend: 385 of 650');
-  perform t.ok('gold_chain' = any (my_unlocks()) and 'night_sky' = any (my_unlocks()) and not ('sparkles' = any (my_unlocks())), 'points unlocks at 385');
+  perform t.ok('gold_chain' = any (my_unlocks()) and 'night_sky' = any (my_unlocks()) and 'sparkles' = any (my_unlocks()), 'points unlocks at 385 (sparkles at 300)');
 end $$;
 :as_bob
 select adjust_points('00000000-0000-0000-0000-0000000006a0', 400, 'legend test') \g /dev/null
@@ -1363,7 +1366,7 @@ update app_config set tier1_points = 40;
 do $$ declare sh json; me record;
 begin
   perform t.ok((select earned and progress = 650 and goal = 650 from my_badges() where id = 'legend'), 'legend: 780 pts, progress capped at goal');
-  perform t.ok(array['crown','sparkles','treasure'] <@ my_unlocks(), 'legend unlocks crown + treasure; 500 pts unlocks sparkles');
+  perform t.ok(array['crown','sparkles','treasure'] <@ my_unlocks(), 'legend unlocks crown + treasure; sparkles still unlocked');
   perform t.ok((select not ('castle' = any (my_unlocks()))), 'castle still needs veteran');
   -- leaderboard / my_rank with looks
   perform t.ok((select rank = 1 and points = 780 and hat = 'flower_crown' and accessory = 'medal' and background = 'rainbow'
@@ -1690,6 +1693,134 @@ do $$ begin
   update app_config set max_chairs = 5 where id = 1;
   delete from chair_bootstrap where email in ('boot.one@example.edu', 'boot.two@example.edu');
 end $$;
+
+-- =============================================================================
+-- 0013 — LAUNCH EXTRAS: sign-up email opt-in, anonymous feedback, event attendees
+-- =============================================================================
+\set as_optin  'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-000000013001''; set role authenticated;'
+\set as_optout 'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-000000013002''; set role authenticated;'
+:as_super
+insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data) values
+  ('00000000-0000-0000-0000-000000013001', 'optin@example.edu', now(), '{"handle":"optin13","display_name":"Optin Otto","campus":"duke"}'),
+  ('00000000-0000-0000-0000-000000013002', 'optout@example.edu', now(), '{"handle":"optout13","display_name":"Optout Olive","campus":"unc","email_opt_in":false}'),
+  ('00000000-0000-0000-0000-000000013003', 'optyes@example.edu', now(), '{"handle":"optyes13","display_name":"Optyes Yan","campus":"ncsu","email_opt_in":true}');
+do $$ begin
+  perform t.eq((select email_opt_in from profiles where handle = 'optin13'), true, '0013: sign-up without email_opt_in → opted in');
+  perform t.eq((select email_opt_in from profiles where handle = 'optout13'), false, '0013: sign-up with email_opt_in false → opted out');
+  perform t.eq((select email_opt_in from profiles where handle = 'optyes13'), true, '0013: sign-up with email_opt_in true → opted in');
+  perform t.ok(not exists (select 1 from pg_proc where proname = 'submit_feedback' and pronargs = 2), '0013: old 2-arg submit_feedback dropped');
+  perform t.eq((select count(*) from pg_proc where proname = 'list_feedback'), 1::bigint, '0013: one list_feedback');
+end $$;
+
+-- anonymous feedback
+:as_optout
+do $$ declare r json;
+begin
+  r := submit_feedback('idea', 'secret anon note about pizza', true);
+  perform t.ok((r->>'id') is not null, '0013: anonymous feedback accepted');
+  perform submit_feedback('bug', 'named note from olive');            -- 2-arg call still works (not anonymous)
+  perform submit_feedback(p_category => 'other', p_message => 'named args note', p_anonymous => false);
+  perform t.pass('0013: submit_feedback keeps 2-arg and named-arg calls');
+  perform t.ok((select earned from my_badges() where id = 'voice'), '0013: anonymous sender still earns the voice badge');
+  perform t.throws('select * from admin_event_attendees(gen_random_uuid())', 'forbidden', '0013: participant cannot list attendees');
+end $$;
+:as_super
+do $$ begin
+  perform t.eq((select user_id from feedback where message = 'secret anon note about pizza'), '00000000-0000-0000-0000-000000013002'::uuid, '0013: anonymous feedback still records the sender');
+  perform t.eq((select anonymous from feedback where message = 'secret anon note about pizza'), true, '0013: anonymous flag stored');
+  perform t.eq((select anonymous from feedback where message = 'named note from olive'), false, '0013: default not anonymous');
+end $$;
+:as_admin
+do $$ declare r record;
+begin
+  select * into r from list_feedback() where message = 'secret anon note about pizza';
+  perform t.ok(r.anonymous and r.display_name = 'Anonymous' and r.handle is null and r.campus is null, '0013: list_feedback hides name/handle/campus for anonymous');
+  select * into r from list_feedback('new', 200) where message = 'named note from olive';
+  perform t.ok(not r.anonymous and r.display_name = 'Optout Olive' and r.handle = 'optout13' and r.campus = 'unc', '0013: list_feedback shows sender when not anonymous');
+end $$;
+:as_super
+do $$ declare rep json := public.build_weekly_report();
+begin
+  perform t.ok(rep->>'text' like '%[Idea] Anonymous: secret anon note about pizza%', '0013: weekly text shows Anonymous');
+  perform t.ok(rep->>'text' not like '%Optout Olive (UNC): secret anon%', '0013: weekly text hides anonymous sender');
+  perform t.ok(rep->>'text' like '%Optout Olive (UNC): named note from olive%', '0013: weekly text still names normal feedback');
+  perform t.ok(rep->>'html' like '%Anonymous</div><div style="font-size:14px;white-space:pre-wrap;">secret anon note about pizza%', '0013: weekly html shows Anonymous');
+  perform t.ok(rep->>'html' not like '%optout13%', '0013: weekly html never shows the handle');
+end $$;
+
+-- event attendees
+:as_admin
+do $$ begin
+  perform create_event(jsonb_build_object('title','Attendance Test','campus','all','kind','active','location','Quad',
+          'startsAt', now() - interval '30 minutes', 'endsAt', now() + interval '1 hour', 'password', 'herd13'));
+  perform t.eq((select count(*) from admin_event_attendees((select id from events where title = 'Attendance Test'))), 0::bigint, '0013: no attendees yet');
+  perform t.throws(format('select * from admin_event_attendees(%L)', gen_random_uuid()), 'not_found', '0013: attendees of unknown event');
+end $$;
+:as_optin
+select check_in((select id from events where title = 'Attendance Test'), 'herd13') \g /dev/null
+:as_optout
+select check_in((select id from events where title = 'Attendance Test'), 'HERD13') \g /dev/null
+:as_admin
+do $$ declare r record; v_ev uuid := (select id from events where title = 'Attendance Test');
+begin
+  perform t.eq((select count(*) from admin_event_attendees(v_ev)), 2::bigint, '0013: admin sees 2 attendees');
+  select * into r from admin_event_attendees(v_ev) limit 1;
+  perform t.ok(r.user_id = '00000000-0000-0000-0000-000000013001'::uuid and r.display_name = 'Optin Otto' and r.handle = 'optin13'
+               and r.campus = 'duke' and r.points = 20 and r.checked_in_at is not null, '0013: attendee row content, oldest first');
+  perform t.eq((select array_agg(handle order by checked_in_at) from admin_event_attendees(v_ev)), array['optin13', 'optout13'], '0013: ordered by check-in time');
+end $$;
+:as_chair1
+do $$ begin
+  perform t.eq((select count(*) from admin_event_attendees((select id from events where title = 'Attendance Test'))), 2::bigint, '0013: chair sees attendees');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied(format('select * from admin_event_attendees(%L)', gen_random_uuid()), '0013: anon cannot call admin_event_attendees');
+  perform t.denied('select submit_feedback(''idea'', ''hello there'', true)', '0013: anon cannot call submit_feedback');
+end $$;
+
+-- =============================================================================
+-- 25. 0014 — prize goal 350: halfway 175, reaching 350 claims a spot
+--     (fresh cycle, real config values; everything rolled back afterwards)
+-- =============================================================================
+:as_super
+begin;
+update app_config set prize_goal = 350, prize_count = 4, prize_value_usd = 75, tier1_points = 35, tier2_points = 20, tier3_points = 5;
+update cycles set is_active = false where is_active;
+insert into cycles (name, starts_at, ends_at, is_active) values ('Goal 350 test cycle', now() - interval '10 days', now() + interval '100 days', true);
+update profiles set points = 0 where points <> 0;   -- as reset_cycle() does
+do $$
+declare ps json;
+begin
+  perform t.eq((select count(*) from prize_claims where cycle_id = active_cycle_id()), 0::bigint, 'goal 350: fresh cycle has no claims');
+  insert into ledger (cycle_id, user_id, amount, source, reason) values (active_cycle_id(), t.u('alice'), 175, 'manual', 'goal 350 test');
+  perform t.ok((select earned and progress = 175 and goal = 175 from badges_for(t.u('alice')) where id = 'halfway'), 'goal 350: halfway earned at 175');
+  perform t.ok((select not earned and progress = 175 and goal = 350 from badges_for(t.u('alice')) where id = 'legend'), 'goal 350: legend 175 of 350');
+  insert into ledger (cycle_id, user_id, amount, source, reason) values (active_cycle_id(), t.u('alice'), 170, 'manual', 'goal 350 test');
+  perform t.eq((select points from profiles where id = t.u('alice')), 345, 'goal 350: alice at 345');
+  perform t.eq((select count(*) from prize_claims where cycle_id = active_cycle_id()), 0::bigint, 'goal 350: 345 does not qualify');
+  perform t.ok('sparkles' = any (unlocks_for(t.u('alice'))), 'goal 350: Sparkle Aura unlocked at 300+');
+  insert into ledger (cycle_id, user_id, amount, source, reason) values (active_cycle_id(), t.u('alice'), 5, 'manual', 'goal 350 test');
+  ps := prize_status();
+  perform t.eq((ps->>'goal')::int, 350, 'goal 350: prize_status goal');
+  perform t.eq((ps->>'remaining')::int, 3, 'goal 350: 3 of 4 spots left');
+  perform t.ok((select spot = 1 and status = 'qualified' from prize_claims
+                 where cycle_id = active_cycle_id() and user_id = t.u('alice')), 'goal 350: reaching exactly 350 claims spot #1');
+  perform t.ok((select earned and progress = 350 from badges_for(t.u('alice')) where id = 'legend'), 'goal 350: legend earned at 350');
+  perform t.ok(exists (select 1 from notifications where user_id = t.u('alice') and kind = 'prize_qualified'
+                        and body like 'You reached 350 points%'), 'goal 350: winner notified with the new goal');
+  -- admin "Close to the goal": within 75 → 275+ and unclaimed
+  insert into ledger (cycle_id, user_id, amount, source, reason) values (active_cycle_id(), t.u('carol'), 275, 'manual', 'goal 350 test');
+  insert into ledger (cycle_id, user_id, amount, source, reason) values (active_cycle_id(), t.u('erin'), 270, 'manual', 'goal 350 test');
+end $$;
+:as_bob
+do $$ begin
+  perform t.ok((select count(*) from json_array_elements(admin_overview()->'nearGoal') x where (x->>'userId')::uuid = t.u('carol')) = 1
+               and (select count(*) from json_array_elements(admin_overview()->'nearGoal') x where (x->>'userId')::uuid in (t.u('erin'), t.u('alice'))) = 0,
+               'goal 350: admin nearGoal = within 75, unclaimed (carol 275 yes; erin 270 and winner alice no)');
+end $$;
+:as_super
+rollback;
 
 -- =============================================================================
 :as_super

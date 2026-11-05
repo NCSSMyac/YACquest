@@ -17,6 +17,7 @@ export function FeedbackForm() {
   const toast = useToast();
   const [category, setCategory] = useState<FeedbackCategory>('idea');
   const [message, setMessage] = useState('');
+  const [anonymous, setAnonymous] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -26,8 +27,9 @@ export function FeedbackForm() {
     if (message.trim().length < 3) return setErr('Tell us a bit more (at least 3 characters).');
     setBusy(true);
     try {
-      await api.submitFeedback(category, message);
+      await api.submitFeedback(category, message, anonymous);
       setMessage('');
+      setAnonymous(false);
       toast('Thanks! The YAC team will see it.', 'success');
     } catch (e2) {
       setErr(errorMessage(e2));
@@ -51,6 +53,10 @@ export function FeedbackForm() {
           <span>Your message</span>
           <textarea rows={3} value={message} maxLength={1000} onChange={(e) => setMessage(e.target.value)} placeholder="What’s working, what’s not, or what you’d love to see." />
           <small className="muted">{message.length}/1000 · The YAC team reads every message.</small>
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={anonymous} onChange={(e) => setAnonymous(e.target.checked)} />
+          <span>Send anonymously<small className="muted" style={{ display: 'block' }}>Your name won’t be shown to the YAC team.</small></span>
         </label>
         <ErrorText error={err} />
         <button className="btn blue" disabled={busy}>{busy ? 'Sending…' : 'Send feedback'}</button>

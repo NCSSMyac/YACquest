@@ -45,6 +45,7 @@ import type {
   BadgeProgress,
   Look,
   Shoutout,
+  EventAttendee,
 } from '../types';
 import { ApiError, emitChange } from './shared';
 import type { AdminOverview, AdminUserRow, EventInput, QueueItem, SignupInput, SignupResult, TeamMember } from './shared';
@@ -455,7 +456,7 @@ export async function signup(input: SignupInput): Promise<SignupResult> {
     password: input.password,
     options: {
       emailRedirectTo: siteUrl() + '?confirmed=1',
-      data: { handle: input.handle, display_name: input.displayName.trim(), campus: input.campus, avatar: input.avatar, friend_code: friendCode ?? null },
+      data: { handle: input.handle, display_name: input.displayName.trim(), campus: input.campus, avatar: input.avatar, friend_code: friendCode ?? null, email_opt_in: input.emailOptIn ?? true },
     },
   });
   if (error) throw authError(error, 'form');
@@ -832,6 +833,18 @@ export async function adminListEvents(): Promise<YacEvent[]> {
   return ((await rpc<AnyRow[]>('admin_list_events')) ?? []).map(toEvent);
 }
 
+/** admin_event_attendees (0013) → who checked in, oldest first. Admins + chairs. */
+export async function adminEventAttendees(eventId: string): Promise<EventAttendee[]> {
+  return ((await rpc<AnyRow[]>('admin_event_attendees', { p_event_id: eventId })) ?? []).map((r) => ({
+    userId: str(pick(r, 'user_id')),
+    displayName: str(pick(r, 'display_name')),
+    handle: str(r.handle),
+    campus: str(r.campus) as CampusId,
+    checkedInAt: str(pick(r, 'checked_in_at')),
+    points: num(r.points),
+  }));
+}
+
 function validateEvent(input: EventInput) {
   if (input.title.trim().length < 3) fail('title', 'Give the event a title.');
   if (input.password.trim().length < 4) fail('password', 'Event password: at least 4 characters.');
@@ -1129,10 +1142,11 @@ export async function listAnnouncements(limit = 20): Promise<Announcement[]> {
 
 // ───────────────────────────── feedback ─────────────────────────────
 
-export async function submitFeedback(category: FeedbackCategory, message: string): Promise<void> {
+export async function submitFeedback(category: FeedbackCategory, message: string, anonymous = false): Promise<void> {
   if (message.trim().length < 3) fail('message', 'Tell us a bit more (at least 3 characters).');
   if (message.length > 1000) fail('message', 'Keep it under 1000 characters.');
-  await rpc('submit_feedback', { p_category: category, p_message: message.trim() });
+  // p_anonymous only when set, so plain feedback keeps working on a database without 0013.
+  await rpc('submit_feedback', { p_category: category, p_message: message.trim(), ...(anonymous ? { p_anonymous: true } : {}) });
   emitChange();
 }
 
@@ -1143,9 +1157,10 @@ export async function listFeedback(status?: 'new' | 'reviewed', limit = 50): Pro
     category: str(r.category) as FeedbackItem['category'],
     message: str(r.message),
     status: str(r.status) as FeedbackItem['status'],
-    displayName: str(pick(r, 'display_name')),
-    handle: str(r.handle),
-    campus: str(r.campus) as CampusId,
+    anonymous: r.anonymous === true,
+    displayName: r.anonymous === true ? 'Anonymous' : str(pick(r, 'display_name')),
+    handle: r.anonymous === true ? '' : str(r.handle),
+    campus: r.anonymous === true ? undefined : (opt(r.campus) as CampusId | undefined),
     reviewedByName: opt(pick(r, 'reviewed_by_name')),
     reviewedAt: opt(pick(r, 'reviewed_at')),
     createdAt: str(pick(r, 'created_at')),

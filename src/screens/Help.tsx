@@ -4,7 +4,7 @@ import { Sprite } from '../components/Sprite';
 import { Panel, useToast } from '../components/ui';
 import { CAPS, CONTACT_EMAILS, CYCLE, INSTAGRAM_HANDLE, INSTAGRAM_URL, PRIZE, TIER_LABELS, TIER_POINTS } from '../config';
 import { useAuth } from '../lib/auth';
-import { fmtLongDate } from '../lib/format';
+import { fmtCycleRange } from '../lib/format';
 import { serverInfo } from '../lib/supabase';
 
 /** Lets a long email address wrap after the @ instead of mid-word. */
@@ -60,7 +60,7 @@ export default function Help() {
     },
     {
       q: 'When does the year end?',
-      a: `This school year’s quest ends ${fmtLongDate(CYCLE.end)}. Points reset to 0 for the next school year.`,
+      a: `This school year’s quest runs ${fmtCycleRange(CYCLE.start, CYCLE.end)}. Points reset to 0 for the next school year.`,
     },
   ];
 

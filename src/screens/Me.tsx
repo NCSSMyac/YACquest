@@ -150,7 +150,10 @@ export default function Me() {
         <div className="stack">
           <label className="check">
             <input type="checkbox" checked={user.emailOptIn} onChange={(e) => toggleEmail(e.target.checked)} />
-            <span>Email me weekly updates</span>
+            <span>
+              Email me announcements from YAC
+              <small className="muted" style={{ display: 'block' }}>Event news and reminders. You’ll still see every message in the app.</small>
+            </span>
           </label>
           <SoundToggle />
           <div>

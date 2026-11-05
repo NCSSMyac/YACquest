@@ -297,12 +297,24 @@ export interface FeedbackItem {
   category: FeedbackCategory | 'prize';
   message: string;
   status: 'new' | 'reviewed';
+  /** 0013: sent with "Send anonymously" — displayName is 'Anonymous', handle '' and campus undefined. */
+  anonymous: boolean;
   displayName: string;
   handle: string;
-  campus: CampusId;
+  campus?: CampusId;
   reviewedByName?: string;
   reviewedAt?: string;
   createdAt: string;
+}
+
+/** One check-in at an event (0013: admin_event_attendees). Admins + chairs only. */
+export interface EventAttendee {
+  userId: string;
+  displayName: string;
+  handle: string;
+  campus: CampusId;
+  checkedInAt: string;
+  points: number;
 }
 
 // ───────────── Quest extras (0009/0012): badges, wardrobe, Adventurer of the Month ─────────────

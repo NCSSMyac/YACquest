@@ -1,12 +1,13 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import * as api from '../../api';
 import { CAMPUSES, campusName, type CampusId } from '../../config';
 import { EVENT_KINDS, kindInfo, kindPoints, kindTier } from '../../lib/eventKinds';
 import { Empty, ErrorText, Loading, Modal, Panel, useToast } from '../../components/ui';
 import { useAuth } from '../../lib/auth';
 import { fmtDateTime } from '../../lib/format';
+import { checkInUrl } from '../../lib/pendingCheckin';
 import { errorMessage, useAsync } from '../../lib/useAsync';
-import type { YacEvent } from '../../types';
+import type { EventAttendee, YacEvent } from '../../types';
 
 const WORDS = ['YAK', 'MOO', 'HORN', 'QUEST', 'GOLD', 'SHAGGY', 'FJORD', 'RIDGE'];
 const genPassword = () => `${WORDS[Math.floor(Math.random() * WORDS.length)]}-${1000 + Math.floor(Math.random() * 9000)}`;
@@ -33,6 +34,14 @@ export default function Events() {
   const [form, setForm] = useState<Form | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [tab, setTab] = useState<'current' | 'past'>('current');
+  const [whoCame, setWhoCame] = useState<YacEvent | null>(null);
+  const [qrFor, setQrFor] = useState<YacEvent | null>(null);
+
+  // Upcoming + live: soonest first. Past (kept forever): newest first.
+  const current = (list.data ?? []).filter((e) => phase(e) !== 'Past').sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+  const past = (list.data ?? []).filter((e) => phase(e) === 'Past').sort((a, b) => b.startsAt.localeCompare(a.startsAt));
+  const shown = tab === 'current' ? current : past;
 
   function open(e: YacEvent | 'new') {
     setErr(null);
@@ -85,8 +94,12 @@ export default function Events() {
   return (
     <div className="stack">
       <button className="btn" onClick={() => open('new')}>+ New event</button>
-      {list.loading && !list.data ? <Loading lines={3} /> : list.error ? <ErrorText error={list.error} /> : !list.data?.length ? <Empty>No events yet.</Empty> : (
-        list.data.map((e) => {
+      <div className="tabs" role="tablist" aria-label="Which events">
+        <button role="tab" aria-selected={tab === 'current'} onClick={() => setTab('current')}>Upcoming ({current.length})</button>
+        <button role="tab" aria-selected={tab === 'past'} onClick={() => setTab('past')}>Past ({past.length})</button>
+      </div>
+      {list.loading && !list.data ? <Loading lines={3} /> : list.error ? <ErrorText error={list.error} /> : !shown.length ? <Empty>{tab === 'past' ? 'No past events yet.' : 'No upcoming events. Make one!'}</Empty> : (
+        shown.map((e) => {
           const p = phase(e);
           return (
             <Panel key={e.id}>
@@ -101,6 +114,8 @@ export default function Events() {
               </p>
               <p>Password: <strong style={{ fontFamily: 'monospace', fontSize: 18 }}>{e.password}</strong> · {e.attendeeCount} checked in</p>
               <div className="btn-row">
+                <button className="btn small" onClick={() => setWhoCame(e)}>Who came ({e.attendeeCount})</button>
+                <button className="btn small navy" onClick={() => setQrFor(e)}>QR code</button>
                 <button className="btn small blue" onClick={() => open(e)}>Edit</button>
                 <button className="btn small red" onClick={() => del(e)}>Delete</button>
               </div>
@@ -108,6 +123,13 @@ export default function Events() {
           );
         })
       )}
+
+      <Modal open={!!whoCame} onClose={() => setWhoCame(null)} title={whoCame ? `Who came: ${whoCame.title}` : undefined}>
+        {whoCame && <Attendees e={whoCame} onClose={() => setWhoCame(null)} />}
+      </Modal>
+      <Modal open={!!qrFor} onClose={() => setQrFor(null)} title="Check-in QR code">
+        {qrFor && <CheckInQr e={qrFor} onClose={() => setQrFor(null)} />}
+      </Modal>
 
       <Modal open={!!editing && !!form} onClose={() => setEditing(null)} title={editing === 'new' ? 'New event' : 'Edit event'}>
         {form && (
@@ -152,6 +174,86 @@ export default function Events() {
           </form>
         )}
       </Modal>
+    </div>
+  );
+}
+
+async function copyText(text: string, toast: ReturnType<typeof useToast>, what: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(`${what} copied!`, 'success');
+  } catch {
+    toast('Couldn’t copy here. Select the text and copy it yourself.', 'error');
+  }
+}
+
+const csvCell = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+
+/** Admin → Events → Who came: everyone who checked in, oldest first. */
+function Attendees({ e, onClose }: { e: YacEvent; onClose: () => void }) {
+  const toast = useToast();
+  const list = useAsync<EventAttendee[]>(() => api.adminEventAttendees(e.id), [e.id]);
+  const rows = list.data ?? [];
+  const csv = ['name,username,campus,checked_in', ...rows.map((a) => [a.displayName, '@' + a.handle, campusName(a.campus), fmtDateTime(a.checkedInAt)].map(csvCell).join(','))].join('\n');
+  return (
+    <div className="stack">
+      {list.loading && !list.data ? <Loading lines={3} /> : list.error ? <ErrorText error={list.error} /> : !rows.length ? <Empty>Nobody has checked in yet.</Empty> : (
+        <ol className="list" style={{ maxHeight: '50vh', overflow: 'auto' }}>
+          {rows.map((a) => (
+            <li key={a.userId + a.checkedInAt} className="spread" style={{ gap: 8 }}>
+              <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}><b>{a.displayName}</b> <span className="muted">· {campusName(a.campus)}</span></span>
+              <small className="muted" style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(a.checkedInAt)}</small>
+            </li>
+          ))}
+        </ol>
+      )}
+      <div className="btn-row">
+        <button className="btn ghost" onClick={onClose}>Close</button>
+        <button className="btn" disabled={!rows.length} onClick={() => copyText(csv, toast, 'List')}>Copy list</button>
+      </div>
+    </div>
+  );
+}
+
+/** Admin → Events → QR code: big enough to project or screenshot. Scanning it opens #/checkin. */
+function CheckInQr({ e, onClose }: { e: YacEvent; onClose: () => void }) {
+  const toast = useToast();
+  const url = checkInUrl(e.id, e.password ?? '', e.title);
+  const [img, setImg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setImg(null);
+    // Lazy-loaded so the QR library stays out of the main bundle.
+    import('qrcode')
+      .then((QR) => QR.toDataURL(url, { width: 640, margin: 2, errorCorrectionLevel: 'M', color: { dark: '#0b2a5bff', light: '#ffffffff' } }))
+      .then((d) => alive && setImg(d))
+      .catch(() => alive && setErr('Couldn’t make the QR code. Share the link below instead.'));
+    return () => {
+      alive = false;
+    };
+  }, [url]);
+  return (
+    <div className="stack" style={{ alignItems: 'stretch' }}>
+      <strong className="center" style={{ fontSize: 20 }}>{e.title}</strong>
+      <div style={{ background: '#fff', border: 'var(--px) solid var(--navy-900)', padding: 8, display: 'grid', placeItems: 'center', aspectRatio: '1 / 1' }}>
+        {img ? <img src={img} alt={`QR code to check in to ${e.title}`} style={{ width: '100%', height: 'auto', imageRendering: 'pixelated' }} /> : err ? <ErrorText error={err} /> : <Loading lines={1} />}
+      </div>
+      <div className="center">
+        <div className="muted">Password</div>
+        <div style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: 32, letterSpacing: 2, overflowWrap: 'anywhere' }}>{e.password}</div>
+      </div>
+      <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+        Scan to check in (works when check-in is open: 30 min before the start until {e.checkInGraceMinutes} min after the end). People without an account are asked to log in or sign up first.
+      </p>
+      <div className="field">
+        <span>Check-in link</span>
+        <input className="input" readOnly value={url} onFocus={(x) => x.currentTarget.select()} style={{ fontSize: 13 }} />
+      </div>
+      <div className="btn-row">
+        <button className="btn ghost" onClick={onClose}>Close</button>
+        <button className="btn" onClick={() => copyText(url, toast, 'Link')}>Copy link</button>
+      </div>
     </div>
   );
 }

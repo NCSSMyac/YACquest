@@ -49,7 +49,7 @@ export default function Feedback() {
                 <small className="muted">{fmtDateTime(f.createdAt)}</small>
               </div>
               <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{f.message}</p>
-              <small className="muted">{f.displayName} · @{f.handle} · {campusName(f.campus)}</small>
+              <small className="muted">{f.anonymous || !f.campus ? 'Anonymous' : `${f.displayName} · @${f.handle} · ${campusName(f.campus)}`}</small>
               {f.status === 'reviewed' ? (
                 <small className="muted">✓ Reviewed{f.reviewedByName ? ` by ${f.reviewedByName}` : ''}{f.reviewedAt ? ` · ${fmtDateTime(f.reviewedAt)}` : ''}</small>
               ) : (

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildIcs, googleCalendarUrl, icsEscape, icsFileName, toCalDate } from '../lib/calendar';
 import { CHECKPOINTS, checkpointsCrossed, nextCheckpoint, pointAt } from '../components/TreasureMap';
+import { PRIZE } from '../config';
 import { getSoundOn, setSoundOn } from '../lib/sound';
 
 const ev = {
@@ -61,19 +62,20 @@ describe('calendar', () => {
 
 describe('treasure map', () => {
   it('finds crossed checkpoints', () => {
-    expect(checkpointsCrossed(0, 100)).toEqual([]);
-    expect(checkpointsCrossed(140, 150).map((c) => c.label)).toEqual(['Camp']);
-    expect(checkpointsCrossed(100, 520).map((c) => c.label)).toEqual(['Camp', 'Halfway', 'Summit']);
-    expect(checkpointsCrossed(600, 700).map((c) => c.label)).toEqual(['Treasure']);
-    expect(checkpointsCrossed(150, 150)).toEqual([]);
+    expect(checkpointsCrossed(0, 40)).toEqual([]);
+    expect(checkpointsCrossed(90, 100).map((c) => c.label)).toEqual(['Camp']);
+    expect(checkpointsCrossed(40, 260).map((c) => c.label)).toEqual(['Trailhead', 'Camp', 'Halfway', 'Summit']);
+    expect(checkpointsCrossed(300, 400).map((c) => c.label)).toEqual(['Treasure']);
+    expect(checkpointsCrossed(100, 100)).toEqual([]);
   });
 
   it('knows the next checkpoint', () => {
-    expect(nextCheckpoint(120)?.label).toBe('Camp');
-    expect(nextCheckpoint(150)?.label).toBe('Halfway');
-    expect(nextCheckpoint(600)?.points).toBe(650);
-    expect(nextCheckpoint(700)).toBeUndefined();
-    expect(CHECKPOINTS.map((c) => c.points)).toEqual([150, 325, 500]);
+    expect(nextCheckpoint(20)?.label).toBe('Trailhead');
+    expect(nextCheckpoint(100)?.label).toBe('Halfway');
+    expect(nextCheckpoint(300)?.points).toBe(350);
+    expect(nextCheckpoint(400)).toBeUndefined();
+    expect(CHECKPOINTS.map((c) => c.points)).toEqual([50, 100, 175, 250]);
+    expect(CHECKPOINTS.every((c) => c.points < PRIZE.goal)).toBe(true);
   });
 
   it('clamps positions to the path', () => {

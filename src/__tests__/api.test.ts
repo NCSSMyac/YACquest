@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import * as api from '../api/mock';
 import { MAX_CHAIRS, PRIZE, TIER_POINTS } from '../config';
+import { PENDING_CHECKIN_TTL_MS, checkInUrl, clearPendingCheckIn, peekPendingCheckIn, savePendingCheckIn, takePendingCheckIn } from '../lib/pendingCheckin';
 
 // Runs in Node: there's no localStorage, so the mock API keeps data in memory.
 const { load, setSession, pointsOf } = api.__test;
@@ -273,7 +274,7 @@ describe('report settings + weekly email', () => {
     await expect(api.getReportSettings()).rejects.toMatchObject({ code: 'forbidden' });
     asUser('iesha');
     const s = await api.getReportSettings();
-    expect(s).toMatchObject({ weeklyEnabled: true, weeklyDay: 1, weeklyHour: 9, nearGoalPoints: 150, includeChairs: true, includeAdmins: true, prizeAlertsEnabled: true });
+    expect(s).toMatchObject({ weeklyEnabled: true, weeklyDay: 1, weeklyHour: 9, nearGoalPoints: 75, includeChairs: true, includeAdmins: true, prizeAlertsEnabled: true });
     await expect(api.updateReportSettings({ weeklyDay: 7 })).rejects.toMatchObject({ code: 'weeklyDay' });
     await expect(api.updateReportSettings({ weeklyHour: 24 })).rejects.toMatchObject({ code: 'weeklyHour' });
     await expect(api.updateReportSettings({ recipients: ['not-an-email'] })).rejects.toMatchObject({ code: 'recipients' });
@@ -426,5 +427,78 @@ describe('feedback', () => {
     await api.markFeedbackReviewed('feedback', fb.id);
     expect((await api.listFeedback('new')).some((f) => f.id === fb.id)).toBe(false);
     expect((await api.listFeedback('reviewed')).find((f) => f.id === fb.id)?.status).toBe('reviewed');
+  });
+});
+
+describe('launch extras (0013)', () => {
+  it('anonymous feedback hides the sender from admins and the weekly email, but still counts for them', async () => {
+    asUser('yak001');
+    const me = load().users.find((u) => u.handle === 'yak001')!;
+    await api.submitFeedback('idea', 'Secret pizza wish', true);
+    await api.submitFeedback('bug', 'Named bug report');
+    expect(load().feedback.find((f) => f.message === 'Secret pizza wish')).toMatchObject({ userId: me.id, anonymous: true });
+    expect((await api.myBadges()).find((b) => b.id === 'voice')?.earned).toBe(true);
+    asUser('iesha');
+    const list = await api.listFeedback();
+    const anon = list.find((f) => f.message === 'Secret pizza wish')!;
+    expect(anon).toMatchObject({ anonymous: true, displayName: 'Anonymous', handle: '' });
+    expect(anon.campus).toBeUndefined();
+    expect(JSON.stringify(anon)).not.toContain(me.displayName);
+    expect(list.find((f) => f.message === 'Named bug report')).toMatchObject({ anonymous: false, displayName: me.displayName, handle: 'yak001' });
+    const rep = await api.weeklyReportPreview();
+    expect(rep.text).toContain('Anonymous: Secret pizza wish');
+    expect(rep.text).not.toContain(`${me.displayName}: Secret pizza wish`);
+    expect(rep.text).toContain(`${me.displayName}: Named bug report`);
+  });
+
+  it('lists who checked in to an event (staff only)', async () => {
+    const ev = load().events.find((e) => e.title === 'Study Break Social')!;
+    asUser('yak001');
+    await api.checkIn(ev.id, 'bluedevil');
+    await expect(api.adminEventAttendees(ev.id)).rejects.toMatchObject({ code: 'forbidden' });
+    for (const who of ['admin', 'iesha']) {
+      asUser(who);
+      const rows = await api.adminEventAttendees(ev.id);
+      const mine = rows.find((r) => r.handle === 'yak001')!;
+      expect(mine).toMatchObject({ campus: 'duke', points: TIER_POINTS[2] });
+      expect(rows.length).toBe(ev.attendeeCount);
+      expect(rows.map((r) => r.checkedInAt)).toEqual([...rows.map((r) => r.checkedInAt)].sort());
+    }
+    await expect(api.adminEventAttendees('evt_nope')).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('sign-up respects the "Email me announcements" checkbox (default on)', async () => {
+    const base = { displayName: 'New Yak', password: 'password1', campus: 'unc' as const, avatar: 'yak' as const, acceptedRules: true };
+    const off = await api.signup({ ...base, handle: 'optout_yak', email: 'optout@example.com', emailOptIn: false });
+    expect(off.user?.emailOptIn).toBe(false);
+    const on = await api.signup({ ...base, handle: 'default_yak', email: 'default@example.com' });
+    expect(on.user?.emailOptIn).toBe(true);
+  });
+});
+
+describe('check-in QR links', () => {
+  it('builds the deep link', () => {
+    expect(checkInUrl('evt_1', 'YAK-1234', undefined, 'https://ncssmyac.github.io/YACquest/')).toBe('https://ncssmyac.github.io/YACquest/#/checkin?event=evt_1&code=YAK-1234');
+    expect(checkInUrl('e', 'a b', 'Trivia & Tacos', 'https://x/')).toBe('https://x/#/checkin?event=e&code=a+b&title=Trivia+%26+Tacos');
+  });
+  it('remembers a logged-out scan for 12 hours and completes it once after login', async () => {
+    const ev = load().events.find((e) => e.title === 'Study Break Social')!;
+    await api.logout();
+    savePendingCheckIn({ eventId: ev.id, code: 'bluedevil', title: ev.title });
+    expect(peekPendingCheckIn()?.title).toBe(ev.title);
+    // later: the person logs in, App takes the pending check-in (once) and checks them in
+    await api.login('yak001', 'x');
+    const p = takePendingCheckIn()!;
+    expect(p).toMatchObject({ eventId: ev.id, code: 'bluedevil' });
+    expect(takePendingCheckIn()).toBeNull();
+    expect((await api.checkIn(p.eventId, p.code)).points).toBe(TIER_POINTS[2]);
+  });
+  it('forgets a pending check-in after 12 hours', () => {
+    const t0 = Date.now();
+    savePendingCheckIn({ eventId: 'e', code: 'c' }, t0);
+    expect(peekPendingCheckIn(t0 + PENDING_CHECKIN_TTL_MS - 1000)).not.toBeNull();
+    expect(takePendingCheckIn(t0 + PENDING_CHECKIN_TTL_MS + 1000)).toBeNull();
+    expect(peekPendingCheckIn(t0)).toBeNull(); // cleared
+    clearPendingCheckIn();
   });
 });

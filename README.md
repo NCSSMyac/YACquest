@@ -2,7 +2,7 @@
 
 The year-round engagement app for the **NCSSM Young Alumni Council (YAC)**: part fast-food rewards app, part ClassDojo, styled like an old-school pixel treasure quest.
 
-Alumni at **Duke, UNC-Chapel Hill and NC State** earn points for showing up and staying connected. The **first 4 people to reach 650 points** each win a **$75 gift card** ($300 of the $350 budget). The cycle ends **May 1, 2027**.
+Alumni at **Duke, UNC-Chapel Hill and NC State** earn points for showing up and staying connected. The **first 4 people to reach 350 points** each win a **$75 gift card** ($300 of the $350 budget). The cycle ends **May 1, 2027**.
 
 > **Status:** front end in progress. Data comes from a **mock API in the browser** (`src/api.ts`) seeded with ~300 fake participants. The backend team replaces that one file with real requests.
 

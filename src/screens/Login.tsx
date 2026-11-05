@@ -5,6 +5,7 @@ import { Sprite } from '../components/Sprite';
 import { ErrorText, Panel, useToast } from '../components/ui';
 import { useAuth } from '../lib/auth';
 import { errorMessage } from '../lib/useAsync';
+import { PendingCheckInBanner } from './CheckInLink';
 
 export default function Login() {
   const { setUser } = useAuth();
@@ -52,6 +53,7 @@ export default function Login() {
           <h1 style={{ fontFamily: 'var(--font-pixel)', color: 'var(--gold-500)', textShadow: '2px 2px 0 var(--navy-900)', margin: '12px 0 4px' }}>YACquest</h1>
           <p className="muted" style={{ margin: 0 }}>Earn points. Join the quest. Win prizes.</p>
         </div>
+        <PendingCheckInBanner />
         <Panel title="Log in">
           <form className="stack" onSubmit={submit}>
             <label className="field">

@@ -30,6 +30,8 @@ export interface SignupInput {
   avatar: AvatarId;
   friendCode?: string;
   acceptedRules: boolean;
+  /** "Email me announcements from YAC" (default true). */
+  emailOptIn?: boolean;
 }
 
 /** Live backend: the account exists but can't log in until the email link is clicked. */

@@ -2,7 +2,8 @@ import { playCoin, setSoundOn } from '../lib/sound';
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import * as api from '../api';
-import { CAMPUSES, type CampusId } from '../config';
+import { CAMPUSES, CYCLE, type CampusId } from '../config';
+import { fmtCycleRange } from '../lib/format';
 import { AVATAR_IDS, AVATAR_NAMES } from '../components/Sprite';
 import { Avatar } from '../components/Avatar';
 import { ErrorText, Modal, Panel } from '../components/ui';
@@ -10,6 +11,7 @@ import { useAuth } from '../lib/auth';
 import type { AvatarId } from '../types';
 import { NAME_NOT_ALLOWED, nameIsClean } from '../lib/nameFilter';
 import { RulesContent } from './Rules';
+import { PendingCheckInBanner } from './CheckInLink';
 
 type Errors = Partial<Record<'handle' | 'displayName' | 'email' | 'password' | 'campus' | 'friendCode' | 'form', string>>;
 
@@ -24,6 +26,7 @@ export default function Signup() {
   const [avatar, setAvatar] = useState<AvatarId>('yak');
   const [friendCode, setFriendCode] = useState('');
   const [sound, setSound] = useState(true);
+  const [emailOptIn, setEmailOptIn] = useState(true);
   const [errors, setErrors] = useState<Errors>({});
   const [rulesOpen, setRulesOpen] = useState(false);
   const [agreed, setAgreed] = useState(false);
@@ -53,7 +56,7 @@ export default function Signup() {
     setBusy(true);
     try {
       setSoundOn(sound);
-      const res = await api.signup({ handle, displayName, email, password, campus, avatar, friendCode: friendCode.trim() || undefined, acceptedRules: true });
+      const res = await api.signup({ handle, displayName, email, password, campus, avatar, friendCode: friendCode.trim() || undefined, acceptedRules: true, emailOptIn });
       if (res.needsEmailConfirmation || !res.user) {
         nav('/check-email', { state: { email: email.trim() } });
         return;
@@ -74,8 +77,10 @@ export default function Signup() {
     <div className="app-shell" style={{ paddingTop: 16 }}>
       <form className="stack" onSubmit={review} noValidate>
         <div className="center">
-          <h1 style={{ fontFamily: 'var(--font-pixel)', color: 'var(--gold-500)', textShadow: '2px 2px 0 var(--navy-900)' }}>New player</h1>
+          <h1 style={{ fontFamily: 'var(--font-pixel)', color: 'var(--gold-500)', textShadow: '2px 2px 0 var(--navy-900)', marginBottom: 4 }}>New player</h1>
+          <p className="muted" style={{ margin: 0 }}>This year’s quest runs {fmtCycleRange(CYCLE.start, CYCLE.end)}.</p>
         </div>
+        <PendingCheckInBanner />
         <Panel title="Your account">
           <div className="stack">
             <label className="field">
@@ -99,6 +104,13 @@ export default function Signup() {
               <span>Password (8+ characters)</span>
               <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
               <ErrorText error={errors.password} />
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={emailOptIn} onChange={(e) => setEmailOptIn(e.target.checked)} />
+              <span>
+                Email me announcements from YAC
+                <small className="muted" style={{ display: 'block' }}>Event news and reminders. You’ll still see every message in the app.</small>
+              </span>
             </label>
           </div>
         </Panel>

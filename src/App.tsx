@@ -1,6 +1,6 @@
 import { CelebrateProvider } from './lib/celebrate';
 import { useEffect, useRef } from 'react';
-import { HashRouter, Navigate, Outlet, Route, Routes, useNavigate } from 'react-router-dom';
+import { HashRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { Loading, ToastProvider, useToast } from './components/ui';
 import { AuthProvider, isStaff, useAuth } from './lib/auth';
@@ -17,6 +17,8 @@ import Me from './screens/Me';
 import Notifications from './screens/Notifications';
 import Rules from './screens/Rules';
 import Help from './screens/Help';
+import CheckInLink from './screens/CheckInLink';
+import { takePendingCheckIn } from './lib/pendingCheckin';
 import AdminLayout from './screens/admin/AdminLayout';
 import AdminHome from './screens/admin/AdminHome';
 import Review from './screens/admin/Review';
@@ -85,6 +87,33 @@ function EmailLinkRedirects() {
   return null;
 }
 
+/**
+ * A check-in QR scanned while logged out is remembered (src/lib/pendingCheckin.ts). As soon as
+ * someone is logged in — after Login, Signup, or the ?confirmed=1 link — finish it once by
+ * sending them to #/checkin. Waits while a password-reset link is being handled.
+ */
+function PendingCheckInRedirect() {
+  const { user, ready } = useAuth();
+  const nav = useNavigate();
+  const { pathname } = useLocation();
+  const resetPending = useRef(initialQuery.get('reset') === '1' && !initialQuery.get('error_description'));
+  useEffect(() => {
+    if (!ready || !user) return;
+    if (pathname === '/reset-password') {
+      resetPending.current = false;
+      return;
+    }
+    // Login/Signup navigate to Home themselves right after logging in: wait until we're there.
+    if (resetPending.current || ['/checkin', '/login', '/signup', '/forgot', '/check-email'].includes(pathname)) return;
+    const p = takePendingCheckIn();
+    if (!p) return;
+    const q = new URLSearchParams({ event: p.eventId, code: p.code });
+    if (p.title) q.set('title', p.title);
+    nav(`/checkin?${q.toString()}`, { replace: true });
+  }, [ready, user, pathname, nav]);
+  return null;
+}
+
 export default function App() {
   return (
     <AuthProvider>
@@ -93,6 +122,7 @@ export default function App() {
         {/* HashRouter so deep links work on GitHub Pages without server rewrites. */}
         <HashRouter>
           <EmailLinkRedirects />
+          <PendingCheckInRedirect />
           <Routes>
             <Route element={<PublicOnly />}>
               <Route path="/login" element={<Login />} />
@@ -101,6 +131,8 @@ export default function App() {
               <Route path="/check-email" element={<CheckEmail />} />
             </Route>
             <Route path="/help" element={<Help />} />
+            {/* Event QR codes open this; it handles logged-in and logged-out visitors itself. */}
+            <Route path="/checkin" element={<CheckInLink />} />
             <Route element={<RequireAuth />}>
               {/* Outside Layout: the reset link logs the person in, then they pick a new password here. */}
               <Route path="/reset-password" element={<ResetPassword />} />

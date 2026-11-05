@@ -46,7 +46,9 @@
   --shadow: 0 var(--px) 0 var(--navy-900);
   --shadow-lg: 0 calc(var(--px) * 2) 0 var(--navy-900);
   --radius: 0;
-  --nav-h: 68px;
+  /* Bottom tab bar: icons + labels area, plus room under it for the iPhone home indicator. */
+  --nav-h: 64px;
+  --nav-safe: max(10px, env(safe-area-inset-bottom, 0px));
   --maxw: 560px;
 }
 
@@ -84,7 +86,7 @@
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; min-height: 100%; }
 /* Keep focused/scrolled-to things clear of the sticky top bar and the bottom nav */
-html { scroll-padding-top: 80px; scroll-padding-bottom: calc(var(--nav-h) + 16px); }
+html { scroll-padding-top: 80px; scroll-padding-bottom: calc(var(--nav-h) + var(--nav-safe) + 16px); }
 body {
   background: var(--bg);
   background-image:
@@ -111,7 +113,7 @@ a { color: var(--link); }
 small, .muted { color: var(--text-soft); }
 
 /* Layout */
-.app-shell { max-width: var(--maxw); margin: 0 auto; padding: 0 16px calc(var(--nav-h) + 24px); }
+.app-shell { max-width: var(--maxw); margin: 0 auto; padding: 0 16px calc(var(--nav-h) + var(--nav-safe) + 24px); }
 .stack { display: flex; flex-direction: column; gap: 14px; }
 .row { display: flex; gap: 10px; align-items: center; }
 .row.wrap { flex-wrap: wrap; }
@@ -141,10 +143,13 @@ small, .muted { color: var(--text-soft); }
 /* Bottom nav */
 .bottom-nav {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+  /* content-box: the bar is --nav-h tall for icons + labels, and the padding is extra (so the home indicator never eats into it). */
+  box-sizing: content-box;
   height: var(--nav-h); background: var(--navy-800);
   border-top: var(--px) solid var(--gold-500);
   display: flex; justify-content: center;
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-top: 4px;
+  padding-bottom: var(--nav-safe);
 }
 .bottom-nav .inner { display: flex; width: 100%; max-width: var(--maxw); }
 .bottom-nav a {

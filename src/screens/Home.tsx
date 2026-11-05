@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import * as api from '../api';
-import { CAPS, INSTAGRAM_HANDLE, INSTAGRAM_URL, PRIZE, TIER_POINTS, campusName } from '../config';
+import { CAPS, CYCLE, INSTAGRAM_HANDLE, INSTAGRAM_URL, PRIZE, TIER_POINTS, campusName } from '../config';
 import { Avatar } from '../components/Avatar';
 import { InstallButton, showInstallButton } from '../components/InstallApp';
 import { Shoutout } from '../components/Shoutout';
@@ -10,7 +10,7 @@ import { TreasureMap, checkpointsCrossed } from '../components/TreasureMap';
 import { ErrorText, Loading, Panel, StatusChip, useToast } from '../components/ui';
 import { getLastSeenPoints, setLastSeenPoints, takeCelebratedPoints, useCelebrate } from '../lib/celebrate';
 import { activityById } from '../lib/activities';
-import { fmtDate, fmtPts, timeAgo } from '../lib/format';
+import { fmtCycleDate, fmtDate, fmtPts, timeAgo } from '../lib/format';
 import { useAsync } from '../lib/useAsync';
 
 export default function Home() {
@@ -104,6 +104,7 @@ export default function Home() {
           )}
         </p>
         <p className="muted" style={{ margin: '8px 0 0', fontSize: 13 }}>Prizes must be earned legitimately: if points are later removed and you drop below {PRIZE.goal}, your prize spot is revoked and goes to the next person who qualified.</p>
+        <p className="muted" style={{ margin: '4px 0 0', fontSize: 13 }}>Quest ends {fmtCycleDate(CYCLE.end)} · {d.daysLeft} {d.daysLeft === 1 ? 'day' : 'days'} left</p>
       </Panel>
 
       <Link to="/prize" style={{ textDecoration: 'none', color: 'inherit' }}>

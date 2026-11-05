@@ -60,6 +60,7 @@ export const {
   adjustPoints,
   awardActivity,
   adminListEvents,
+  adminEventAttendees,
   createEvent,
   updateEvent,
   deleteEvent,

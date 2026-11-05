@@ -10,7 +10,9 @@ This takes about 30–45 minutes, done once. Dashboard menu names can differ sli
 ## 2. Create the database
 1. Open **SQL Editor → New query**.
 2. Paste the whole of `supabase/migrations/0001_init.sql` and click **Run**. It should finish with "Success". It is safe to run again.
-3. Then do the same for every later file in `supabase/migrations/` **in number order** (`0002_event_kinds.sql`, …). Each new migration only needs to be run once, but re-running is safe.
+3. Then do the same for every later file in `supabase/migrations/` **in number order** (`0002_event_kinds.sql`, … through `0014_goal_350.sql`). Each new migration only needs to be run once, but re-running is safe.
+   - **Already live before 0013?** Run `0013_launch_extras.sql` once (anonymous feedback, the sign-up email checkbox, and Admin → Events → **Who came**).
+   - **Already live before 0014?** Run `0014_goal_350.sql` once (prize goal 650 → 350, Halfway badge 175, Sparkle Aura at 300, "close to the prize" range 75). Deploy the new app build at the same time so the app shows the same goal.
 
 ## 3. Turn on real logins
 **Authentication → Sign In / Providers → Email**
@@ -54,6 +56,8 @@ Supabase's built-in email only sends a few messages per hour and is meant for te
 1. Admin → **Events → New event**: title, campus, start/end time, location, and a password you'll announce at the event (e.g. `PICKLE-8`).
 2. Test the whole flow with a friend's account: sign up → confirm email → check in with the password → see points on the leaderboard.
 3. Add helpers: they sign up and confirm their email, then Admin → **Team → Add an admin**.
+4. **Check-in QR code**: Admin → **Events** → the event → **QR code**. It shows a big QR, the password and the link (with **Copy link**). Project it, or screenshot it and print it for the check-in table. Scanning opens `…/YACquest/#/checkin?event=…&code=…` and checks the person in (only while check-in is open: 30 min before the start until the grace period after the end). Someone who isn't logged in is asked to log in or sign up first, and the check-in finishes automatically after they log in (remembered on that phone for 12 hours). Saying the password out loud still works too.
+5. After the event, **Who came (N)** on the event lists everyone who checked in, with **Copy list** (name, username, campus, time). Past events stay under the **Past** tab.
 
 ## 8. Weekly email + prize alerts
 YACquest emails the YAC team a **weekly report** (spots left, who's close to the prize, top 5, Campus Cup, this week's numbers) and sends **prize alerts** right away when someone wins a spot and when a winner sends their delivery info (name, email, phone, mailing address). It uses the same YAC Gmail and app password as step 4. Do this once:
@@ -108,4 +112,4 @@ Make sure no more than 5 people are chairs afterwards.
 - Database tests: `bash supabase/tests/run_tests.sh` (needs local Postgres 16).
 - App tests: `npm test`. Contract between DB and app: `docs/BACKEND.md`.
 - Email sender: `supabase/functions/send-emails/index.ts` (Deno; not part of the app's TypeScript build). Deploy from the CLI with `supabase functions deploy send-emails` if you prefer.
-- Future database changes go in a new numbered file in `supabase/migrations/` (next after `0012_admin_email_monthly_shoutout.sql`, i.e. `0013_…`). Supabase grants new functions to everyone by default, so repeat the `revoke execute … from public, anon` lines for any new function.
+- Future database changes go in a new numbered file in `supabase/migrations/` (next after `0014_goal_350.sql`, i.e. `0015_…`). Supabase grants new functions to everyone by default, so repeat the `revoke execute … from public, anon` lines for any new function.
