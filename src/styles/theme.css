@@ -240,3 +240,116 @@ textarea { resize: vertical; min-height: 80px; }
 
 /* Screen-reader-only text */
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* ───────────── Celebrations (src/lib/celebrate.tsx) ───────────── */
+.cel-small-wrap { position: fixed; left: 0; right: 0; top: 64px; z-index: 70; display: flex; justify-content: center; padding: 0 16px; pointer-events: none; }
+.cel-small {
+  pointer-events: auto; position: relative; display: flex; align-items: center; gap: 12px; max-width: 360px; width: 100%;
+  padding: 10px 14px; background: var(--navy-800); color: #fff; text-align: left; cursor: pointer;
+  border: var(--px) solid var(--gold-500); box-shadow: 0 var(--px) 0 var(--navy-900), 0 0 0 var(--px) var(--navy-900);
+  font: inherit; animation: cel-pop 0.24s steps(3), cel-out 0.2s steps(2) 1.4s forwards;
+}
+.cel-plus { font-family: var(--font-pixel); font-size: 22px; color: var(--gold-300); text-shadow: 2px 2px 0 var(--navy-900); flex: none; }
+.cel-small-text { display: flex; flex-direction: column; min-width: 0; }
+.cel-small-title { font-family: var(--font-pixel); font-weight: 400; font-size: 14px; color: var(--gold-300); }
+.cel-small-sub { font-size: 14px; color: #dfe7ff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@keyframes cel-pop { from { transform: translateY(-16px) scale(0.9); opacity: 0; } }
+@keyframes cel-out { to { transform: translateY(-10px); opacity: 0; } }
+
+.cel-burst { position: absolute; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; z-index: 1; }
+.cel-coin {
+  position: absolute; left: -6px; top: -6px; width: 12px; height: 12px;
+  background: var(--gold-500); border: 2px solid #a36a00; box-shadow: inset -2px -2px 0 #d18f12, inset 2px 2px 0 var(--gold-300);
+  opacity: 0; animation: cel-fly 0.9s steps(9) forwards;
+}
+.cel-coin:nth-child(3n) { width: 8px; height: 8px; left: -4px; top: -4px; }
+.cel-coin:nth-child(4n) { animation-duration: 1.1s; }
+@keyframes cel-fly {
+  0% { opacity: 1; transform: translate(0, 0); }
+  60% { opacity: 1; transform: translate(var(--dx), var(--dy)); }
+  100% { opacity: 0; transform: translate(var(--dx), calc(var(--dy) + 28px)); }
+}
+
+.cel-backdrop { position: fixed; inset: 0; z-index: 70; background: rgba(4, 12, 30, 0.72); display: grid; place-items: center; padding: 16px; animation: fade 0.15s; }
+.cel-big {
+  position: relative; width: 100%; max-width: 340px; padding: 22px 18px 18px; text-align: center;
+  background: var(--navy-800); color: #fff; border: var(--px) solid var(--gold-500);
+  box-shadow: 0 0 0 var(--px) var(--navy-900), 0 calc(var(--px) * 3) 0 var(--navy-900);
+  display: flex; flex-direction: column; align-items: center; gap: 8px; animation: cel-pop 0.3s steps(4);
+}
+.cel-icon { display: grid; place-items: center; width: 96px; height: 96px; background: var(--navy-700); border: var(--px) solid var(--gold-300); position: relative; z-index: 2; }
+.cel-cosmetic { font-size: 48px; line-height: 1; }
+.cel-big-title { font-family: var(--font-pixel); font-size: 22px; color: var(--gold-300); margin: 6px 0 0; text-shadow: 2px 2px 0 var(--navy-900); }
+.cel-big-sub { font-size: 18px; font-weight: 800; margin: 0; }
+.cel-big-flavor { color: #c9d6f5; margin: 0; }
+.cel-big-pts { font-family: var(--font-pixel); color: var(--gold-300); font-size: 18px; margin: 0; }
+.cel-big .btn { margin-top: 8px; min-width: 140px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cel-burst { display: none; }
+}
+
+/* ───────────── Treasure map (src/components/TreasureMap.tsx) ───────────── */
+.tmap {
+  position: relative; width: 100%; aspect-ratio: 320 / 176; margin: 4px 0 2px;
+  background: #f6e7c1;
+  background-image:
+    linear-gradient(rgba(140, 98, 40, 0.08) 2px, transparent 2px),
+    linear-gradient(90deg, rgba(140, 98, 40, 0.08) 2px, transparent 2px);
+  background-size: 16px 16px;
+  border: var(--px) solid #8a5a2b; box-shadow: inset 0 0 0 3px #e6cf98, 0 var(--px) 0 var(--navy-900);
+  color: #3d2a12; overflow: visible;
+}
+.tmap-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.tmap-doodle rect { fill: #b9d79a; }
+.tmap-doodle rect:nth-child(n + 5) { fill: #cfb27a; }
+.tmap-path { fill: none; stroke: #b8925a; stroke-width: 4; stroke-dasharray: 4 6; stroke-linecap: butt; stroke-linejoin: miter; }
+.tmap-path.done { stroke: #c97f00; }
+.tmap-start { fill: #8a5a2b; }
+.tmap-flag .base { fill: #c6c1b5; stroke: #7b7466; stroke-width: 2; }
+.tmap-flag .pole { fill: #7b7466; }
+.tmap-flag .cloth { fill: #b4ada0; }
+.tmap-flag.lit .base { fill: var(--gold-500); stroke: #8a5a2b; }
+.tmap-flag.lit .pole { fill: #6e4426; }
+.tmap-flag.lit .cloth { fill: var(--red); }
+.tmap-x rect { fill: #c0392b; }
+.tmap-label {
+  position: absolute; transform: translate(-50%, 0); white-space: nowrap;
+  font-family: var(--font-body); font-size: 11px; font-weight: 800; line-height: 1; color: #7b7466;
+  background: rgba(246, 231, 193, 0.9); padding: 1px 3px;
+}
+.tmap-label.lit { color: #6b3d00; }
+.tmap-label.start { color: #6e4426; font-family: var(--font-pixel); font-weight: 400; font-size: 9px; }
+.tmap-chest { position: absolute; transform: translate(-50%, -78%); line-height: 0; filter: drop-shadow(2px 2px 0 rgba(61, 42, 18, 0.35)); }
+.tmap-goal { position: absolute; transform: translate(-50%, 0); font-size: 11px; font-weight: 800; color: #6b3d00; line-height: 1; }
+.tmap-player { position: absolute; transform: translate(-50%, -92%); line-height: 0; z-index: 2; filter: drop-shadow(0 2px 0 rgba(61, 42, 18, 0.45)); }
+.tmap-count {
+  position: absolute; left: 6px; top: 5px; font-size: 12px; font-weight: 800; line-height: 1;
+  color: #fff; background: var(--navy-800); padding: 3px 6px; font-variant-numeric: tabular-nums;
+}
+
+/* ───────────── Adventurer of the Week (src/components/Shoutout.tsx) ───────────── */
+.shoutout .panel-title { margin-bottom: 8px; }
+.shoutout-avatar { display: grid; place-items: center; flex: none; width: 68px; height: 68px; background: var(--paper); border: var(--px) solid var(--navy-900); }
+.shoutout-name { font-size: 19px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shoutout-campus { font-size: 14px; color: #3b4770; }
+.shoutout-pts { font-weight: 800; font-size: 15px; }
+.shoutout-me { margin: 10px 0 0; padding: 6px 10px; background: var(--navy-800); color: var(--gold-300); font-family: var(--font-pixel); font-size: 13px; display: inline-block; }
+
+/* ───────────── Add to calendar (Earn) ───────────── */
+.cal-wrap { position: relative; align-self: flex-start; }
+.cal-menu {
+  position: absolute; left: 0; top: calc(100% + 6px); z-index: 15; min-width: 220px;
+  display: flex; flex-direction: column; background: var(--surface); color: var(--text);
+  border: var(--px) solid var(--border); box-shadow: var(--shadow-lg); animation: pop 0.15s steps(3);
+}
+.cal-item {
+  display: block; text-align: left; padding: 12px 14px; min-height: 44px; font: inherit; font-size: 16px; font-weight: 700;
+  color: var(--text); background: transparent; border: 0; text-decoration: none; cursor: pointer;
+}
+.cal-item + .cal-item { border-top: 2px dashed rgba(11, 42, 91, 0.25); }
+.cal-item:hover, .cal-item:focus-visible { background: var(--gold-300); color: var(--navy-900); }
+
+/* Muted text stays readable on gold panels in dark mode too */
+.panel.gold .muted { color: #5a4512; }
+.panel.gold .chip.neutral { color: #5a4512; }

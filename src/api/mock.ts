@@ -13,6 +13,8 @@
 import { CAPS, CAMPUSES, CYCLE, PRIZE, TIER_POINTS, type CampusId } from '../config';
 import { ACTIVITIES, ONCE_PER_CYCLE, activityById } from '../lib/activities';
 import { EVENT_KINDS, kindInfo } from '../lib/eventKinds';
+import { BADGES } from '../lib/badges';
+import { COSMETICS, cosmeticById, type UnlockRule } from '../lib/cosmetics';
 import { announcementError, claimContactError, isEmail } from '../lib/validate';
 import type {
   Activity,
@@ -41,6 +43,9 @@ import type {
   AnnouncementInput,
   FeedbackCategory,
   FeedbackItem,
+  BadgeProgress,
+  Look,
+  Shoutout,
 } from '../types';
 
 // ───────────────────────────── errors ─────────────────────────────
@@ -89,7 +94,7 @@ interface OutboxRow extends EmailLogRow {
 
 const DB_KEY = 'yacquest-db-v1';
 const SESSION_KEY = 'yacquest-session';
-const DB_VERSION = 7;
+const DB_VERSION = 8;
 
 let db: Db | null = null;
 
@@ -172,7 +177,7 @@ function rankedParticipants(campus?: CampusId): LeaderRow[] {
   const totals = pointsByUser();
   return load()
     .users.filter((u) => u.role === 'participant' && (!campus || u.campus === campus))
-    .map((u) => ({ userId: u.id, displayName: u.displayName, campus: u.campus, avatar: u.avatar, points: totals.get(u.id) ?? 0 }))
+    .map((u) => ({ userId: u.id, displayName: u.displayName, campus: u.campus, avatar: u.avatar, points: totals.get(u.id) ?? 0, look: u.look }))
     .sort((a, b) => b.points - a.points || a.displayName.localeCompare(b.displayName))
     .map((r, i, arr) => ({
       ...r,
@@ -945,6 +950,25 @@ export function seed(): Db {
     }
   }
 
+  // Dress up some of the crowd so leaderboards show off the wardrobe (own rng: keeps the rest of the seed stable).
+  {
+    const lr = rng(909);
+    const lp = <T,>(arr: readonly T[]) => arr[Math.floor(lr() * arr.length)];
+    const totals = new Map<string, number>();
+    for (const l of d.ledger) totals.set(l.userId, (totals.get(l.userId) ?? 0) + l.amount);
+    for (const u of d.users) {
+      if (u.role !== 'participant' || u === demo) continue;
+      const pts = totals.get(u.id) ?? 0;
+      if (lr() > (pts >= 60 ? 0.85 : 0.35)) continue;
+      const look: Look = {};
+      if (pts >= 100 && lr() < 0.6) look.hat = 'flower_crown';
+      else if (lr() < 0.45) look.hat = lp(['party_hat', 'party_hat', 'explorer_cap', 'wizard_hat']);
+      if (lr() < 0.4) look.accessory = lp(['bowtie', 'medal', 'pearls', 'bowtie']);
+      look.background = pts >= 50 && lr() < 0.4 ? 'sunset' : lp(['meadow', 'campus', 'meadow']);
+      u.look = look;
+    }
+  }
+
   // Events: past, live now (so check-in works in a demo), and upcoming.
   const ev = (e: Omit<YacEvent, 'id' | 'attendeeCount' | 'checkInGraceMinutes'>, attendees = 0) =>
     d.events.push({ ...e, id: nextId('evt'), attendeeCount: attendees, checkInGraceMinutes: 60 });
@@ -965,6 +989,11 @@ export function seed(): Db {
   d.submissions.push({ id: nextId('sub'), userId: demo.id, activityId: 'follow_ig', imageUrl: PLACEHOLDER_IMG('FOLLOW', '#3b6fd8'), note: '', status: 'approved', createdAt: iso(-11 * D), reviewedAt: iso(-10 * D) });
   d.submissions.push({ id: nextId('sub'), userId: demo.id, activityId: 'repost', imageUrl: PLACEHOLDER_IMG('REPOST', '#8a4fd8'), note: 'Reposted the trivia poster', status: 'rejected', reviewReason: 'Screenshot was cropped — we couldn’t see the YAC post.', createdAt: iso(-8 * D), reviewedAt: iso(-7 * D) });
   notify(demo.id, 'submission_rejected', 'Not approved — Repost a YAC Post', 'Screenshot was cropped — we couldn’t see the YAC post.');
+  // A digital quest + a bit of feedback so the demo player starts with a few badges (First Steps, Champion, Voice).
+  d.ledger.push({ id: nextId('led'), userId: demo.id, amount: TIER_POINTS[3], source: 'submission', activityId: 'poll', reason: 'Approved: Vote in a Community Poll', createdAt: iso(-3 * D) });
+  d.submissions.push({ id: nextId('sub'), userId: demo.id, activityId: 'poll', imageUrl: PLACEHOLDER_IMG('POLL', '#2fa36b'), note: '', status: 'approved', createdAt: iso(-4 * D), reviewedAt: iso(-3 * D) });
+  d.feedback.push({ id: nextId('fb'), userId: demo.id, category: 'idea', message: 'Love the pixel art! More game nights please.', status: 'reviewed', createdAt: iso(-9 * D) });
+  demo.look = { hat: 'party_hat', background: 'campus' };
   notify(demo.id, 'announcement', 'Welcome to YACquest!', `Earn points all year. The first ${PRIZE.count} people to reach ${PRIZE.goal} win a ${PRIZE.name}.`);
 
   // Pending review queue
@@ -992,7 +1021,7 @@ export function seed(): Db {
 }
 
 // Expose for tests
-export const __test = { load, pointsOf, rankedParticipants, setSession, addLedger, deliverOutbox };
+export const __test = { load, pointsOf, rankedParticipants, setSession, addLedger, deliverOutbox, badgesFor, unlocksFor, shoutoutSync };
 
 // ───────────────────────────── team (chairs only) ─────────────────────────────
 
@@ -1467,4 +1496,120 @@ export async function markFeedbackReviewed(kind: FeedbackItem['kind'], id: strin
   const target = d.users.find((u) => u.id === row.userId);
   logAction('feedback_reviewed', target, { kind, message: ('message' in row ? row.message : (row as { idea: string }).idea).slice(0, 120) }, admin);
   save();
+}
+
+// ───────────────────────────── quest extras (0009): badges, wardrobe, weekly shout-out ─────────────────────────────
+// SERVER RULE: my_badges(), my_unlocks(), equip_look() and weekly_shoutout() in 0009_quest_extras.sql
+// mirror these rules. Everything counts for the current cycle only (the mock ledger IS the cycle).
+
+const monthKey = (iso: string) => {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit' }).format(new Date(iso));
+  } catch {
+    return iso.slice(0, 7);
+  }
+};
+
+/** Badge progress for any user (exported for tests via __test). */
+function badgesFor(userId: string): BadgeProgress[] {
+  const d = load();
+  const mine = d.ledger.filter((l) => l.userId === userId);
+  // Check-ins: one per event.
+  const checkins = new Map<string, LedgerEntry>();
+  for (const l of mine) if (l.source === 'checkin' && l.refId && !checkins.has(l.refId)) checkins.set(l.refId, l);
+  const events = [...checkins.keys()].map((id) => d.events.find((e) => e.id === id)).filter((e): e is YacEvent => !!e);
+  const campuses = new Set(events.map((e) => e.campus).filter((c) => c !== 'all'));
+  const months = new Set([...checkins.values()].map((l) => monthKey(l.createdAt)));
+  const approved = d.submissions.filter((s) => s.userId === userId && s.status === 'approved');
+  const digital = approved.filter((s) => activityById(s.activityId)?.tier === 3).length;
+  const photos = approved.filter((s) => s.activityId === 'event_photos').length;
+  const gifts = approved.filter((s) => s.activityId === 'annual_fund').length;
+  const recruits = mine.filter((l) => l.activityId === 'bring_new_alum' && l.amount > 0).length;
+  const wins = mine.filter((l) => l.activityId === 'game_win' && l.amount > 0).length;
+  const voices = d.feedback.filter((f) => f.userId === userId).length + d.suggestions.filter((x) => x.userId === userId).length;
+  const highImpact = events.filter((e) => e.kind === 'high_impact').length;
+  const points = Math.max(0, pointsOf(userId));
+  const raw: Record<string, [number, number]> = {
+    first_checkin: [checkins.size, 1],
+    regular: [checkins.size, 5],
+    veteran: [checkins.size, 10],
+    explorer: [campuses.size, 3],
+    big_moment: [highImpact, 1],
+    seasons: [months.size, 3],
+    digital: [digital, 3],
+    shutterbug: [photos, 1],
+    recruiter: [recruits, 1],
+    giver: [gifts, 1],
+    champion: [wins, 1],
+    voice: [voices, 1],
+    halfway: [points, Math.ceil(PRIZE.goal / 2)],
+    legend: [points, PRIZE.goal],
+  };
+  return BADGES.map((b) => {
+    const [progress, goal] = raw[b.id] ?? [0, 1];
+    return { id: b.id, earned: progress >= goal, progress: Math.min(progress, goal), goal };
+  });
+}
+
+function unlocksFor(userId: string): string[] {
+  const badges = badgesFor(userId);
+  const earned = new Set(badges.filter((b) => b.earned).map((b) => b.id));
+  const points = pointsOf(userId);
+  const ok = (r: UnlockRule) =>
+    r.type === 'free' || (r.type === 'points' && points >= r.min) || (r.type === 'badge' && earned.has(r.id)) || (r.type === 'badges' && earned.size >= r.min);
+  return COSMETICS.filter((c) => ok(c.rule)).map((c) => c.id);
+}
+
+/** The most points gained (positive rows only) in the last 7 days; ties → alphabetical. */
+function shoutoutSync(): Shoutout | null {
+  const d = load();
+  const since = Date.now() - 7 * 86_400_000;
+  const gains = new Map<string, number>();
+  for (const l of d.ledger) if (l.amount > 0 && new Date(l.createdAt).getTime() >= since) gains.set(l.userId, (gains.get(l.userId) ?? 0) + l.amount);
+  let best: { u: User; pts: number } | null = null;
+  for (const u of d.users) {
+    const pts = gains.get(u.id) ?? 0;
+    if (u.role !== 'participant' || pts <= 0) continue;
+    if (!best || pts > best.pts || (pts === best.pts && u.displayName.localeCompare(best.u.displayName) < 0)) best = { u, pts };
+  }
+  if (!best) return null;
+  const { u, pts } = best;
+  return { userId: u.id, displayName: u.displayName, campus: u.campus, avatar: u.avatar, look: u.look, pointsThisWeek: pts };
+}
+
+export async function myBadges(): Promise<BadgeProgress[]> {
+  await delay(100);
+  return badgesFor(me().id);
+}
+
+export async function myUnlocks(): Promise<string[]> {
+  await delay(80);
+  return unlocksFor(me().id);
+}
+
+/** Replaces the whole look; a missing/'' slot clears it. Errors: `look` (unknown item / wrong slot), `locked`. */
+export async function equipLook(look: Look): Promise<User> {
+  await delay();
+  const user = me();
+  const unlocked = new Set(unlocksFor(user.id));
+  const next: Look = {};
+  for (const slot of ['hat', 'accessory', 'background'] as const) {
+    const id = look[slot]?.trim();
+    if (!id) continue;
+    const item = cosmeticById(id);
+    if (!item || item.slot !== slot) fail('look', 'That item doesn’t fit there.');
+    if (!unlocked.has(id)) fail('locked', `You haven’t unlocked the ${item!.name} yet.`);
+    next[slot] = id;
+  }
+  // New object so React state holding the old user sees the change.
+  const d = load();
+  const updated: User = { ...user, look: Object.keys(next).length ? next : undefined };
+  d.users[d.users.indexOf(user)] = updated;
+  save();
+  return updated;
+}
+
+export async function weeklyShoutout(): Promise<Shoutout | null> {
+  await delay(100);
+  return shoutoutSync();
 }

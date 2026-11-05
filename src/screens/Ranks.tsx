@@ -4,6 +4,7 @@ import { CAMPUSES, campusName } from '../config';
 import { useAuth } from '../lib/auth';
 import { useAsync } from '../lib/useAsync';
 import { Sprite } from '../components/Sprite';
+import { Avatar } from '../components/Avatar';
 import { Empty, ErrorText, Loading, Panel } from '../components/ui';
 import type { LeaderRow } from '../types';
 
@@ -54,7 +55,7 @@ function Row({ r, me }: { r: LeaderRow; me: boolean }) {
   return (
     <li className="row" style={{ background: me ? 'rgba(242,179,61,0.25)' : undefined, padding: '8px 6px' }} aria-current={me ? 'true' : undefined}>
       <RankBadge rank={r.rank} />
-      <Sprite id={r.avatar} size={28} />
+      <Avatar id={r.avatar} look={r.look} campus={r.campus} size={32} />
       <strong style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.displayName}{me ? ' (you)' : ''}</strong>
       <span className="chip neutral" style={{ color: campusColor(r.campus) }}>{campusName(r.campus)}</span>
       <span className="pixel" style={{ fontSize: 15 }}>{r.points}</span>

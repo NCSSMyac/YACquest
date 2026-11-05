@@ -2,7 +2,8 @@ import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import * as api from '../api';
 import { CAMPUSES, type CampusId } from '../config';
-import { Sprite, AVATAR_IDS, AVATAR_NAMES } from '../components/Sprite';
+import { AVATAR_IDS, AVATAR_NAMES } from '../components/Sprite';
+import { Avatar } from '../components/Avatar';
 import { ErrorText, Modal, Panel } from '../components/ui';
 import { useAuth } from '../lib/auth';
 import type { AvatarId } from '../types';
@@ -120,7 +121,7 @@ export default function Signup() {
                 className="panel flat"
                 style={{ margin: 0, padding: 6, cursor: 'pointer', textAlign: 'center', background: avatar === id ? 'var(--gold-300)' : undefined, color: avatar === id ? 'var(--navy-900)' : 'var(--text)', minWidth: 0, borderColor: avatar === id ? 'var(--gold-500)' : undefined }}
               >
-                <Sprite id={id} size={48} />
+                <Avatar id={id} size={48} />
                 <div style={{ fontSize: 13 }}>{AVATAR_NAMES[id]}</div>
               </button>
             ))}

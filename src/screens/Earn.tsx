@@ -1,13 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as api from '../api';
 import { CAMPUSES, CAPS, INSTAGRAM_HANDLE, INSTAGRAM_URL, TIER_LABELS, TIER_POINTS, UPLOAD, campusName, type Tier } from '../config';
 import { ACTIVITIES, activityById } from '../lib/activities';
 import { useAuth } from '../lib/auth';
+import { downloadIcs, googleCalendarUrl, type CalEvent } from '../lib/calendar';
+import { noteCelebratedPoints, useCelebrate } from '../lib/celebrate';
+import { siteUrl } from '../lib/supabase';
 import { kindTier } from '../lib/eventKinds';
 import { fmtDate, fmtDateTime } from '../lib/format';
 import { prepareImage } from '../lib/image';
 import { errorMessage, useAsync } from '../lib/useAsync';
-import { Sprite } from '../components/Sprite';
 import { Empty, ErrorText, Loading, Modal, Panel, StatusChip, TierChip, useToast } from '../components/ui';
 import type { Activity } from '../types';
 
@@ -47,7 +49,8 @@ function Events() {
   const up = useAsync(() => api.listEvents('upcoming'), [], { live: true });
   const past = useAsync(() => api.listEvents('past'), [], { live: true });
   const [showPast, setShowPast] = useState(false);
-  const [celebrate, setCelebrate] = useState<{ pts: number; title: string } | null>(null);
+  const celebrate = useCelebrate();
+  const { user } = useAuth();
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const i = setInterval(() => setNow(Date.now()), 30_000);
@@ -60,7 +63,10 @@ function Events() {
       <ErrorText error={up.error} />
       {up.data && up.data.length === 0 && <Empty>No upcoming events yet. Check back soon, adventurer!</Empty>}
       {up.data?.map((e) => (
-        <EventCard key={e.id} e={e} now={now} onDone={(pts) => setCelebrate({ pts, title: e.title })} />
+        <EventCard key={e.id} e={e} now={now} onDone={(pts) => {
+          celebrate({ title: 'Quest complete!', subtitle: e.title, points: pts, size: 'small' });
+          if (user) noteCelebratedPoints(user.id, pts);
+        }} />
       ))}
       <button className="btn ghost small" aria-expanded={showPast} onClick={() => setShowPast((s) => !s)}>
         {showPast ? '▼' : '▶'} Past events
@@ -83,21 +89,11 @@ function Events() {
           </ul>
         </Panel>
       )}
-      <Modal open={!!celebrate} onClose={() => setCelebrate(null)} title="Quest complete!" tone="gold">
-        <div className="stack" style={{ textAlign: 'center', alignItems: 'center' }}>
-          <Sprite id="yak" size={72} className="bob" />
-          <Sprite id="chest" size={56} />
-          <p className="pixel">+{celebrate?.pts} PTS</p>
-          <p>You checked in to {celebrate?.title}. The yak is proud!</p>
-          <button className="btn" onClick={() => setCelebrate(null)}>Onward!</button>
-        </div>
-      </Modal>
     </>
   );
 }
 
 function EventCard({ e, now, onDone }: { e: Ev; now: number; onDone: (pts: number) => void }) {
-  const toast = useToast();
   const [pw, setPw] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -113,7 +109,6 @@ function EventCard({ e, now, onDone }: { e: Ev; now: number; onDone: (pts: numbe
     setBusy(true);
     try {
       const r = await api.checkIn(e.id, pw.trim());
-      toast(`Checked in! +${r.points} pts`, 'success');
       setPw('');
       onDone(r.points);
     } catch (x) {
@@ -135,6 +130,7 @@ function EventCard({ e, now, onDone }: { e: Ev; now: number; onDone: (pts: numbe
           <span className="chip neutral">{e.campus === 'all' ? 'All campuses' : campusName(e.campus)}</span>
         </div>
         <div className="muted">📍 {e.location}<br />🕒 {fmtDateTime(e.startsAt)}</div>
+        {now <= new Date(e.endsAt).getTime() && <AddToCalendar e={e} />}
         {e.checkedIn ? (
           <span className="chip approved" style={{ alignSelf: 'flex-start' }}>Checked in ✓</span>
         ) : live ? (
@@ -151,6 +147,53 @@ function EventCard({ e, now, onDone }: { e: Ev; now: number; onDone: (pts: numbe
         )}
       </div>
     </Panel>
+  );
+}
+
+/** "📅 Add to calendar" with a tiny menu: Google Calendar link or an .ics download. Never includes the password. */
+function AddToCalendar({ e }: { e: Ev }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  const cal: CalEvent = { id: e.id, title: e.title, location: e.location, startsAt: e.startsAt, endsAt: e.endsAt };
+  const menuId = `cal-menu-${e.id}`;
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (x: MouseEvent | TouchEvent) => {
+      if (wrap.current && !wrap.current.contains(x.target as Node)) setOpen(false);
+    };
+    const onKey = (x: KeyboardEvent) => x.key === 'Escape' && setOpen(false);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('touchstart', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('touchstart', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+  return (
+    <div className="cal-wrap" ref={wrap}>
+      <button type="button" className="btn ghost small" aria-expanded={open} aria-controls={menuId} onClick={() => setOpen((o) => !o)}>
+        📅 Add to calendar
+      </button>
+      {open && (
+        <div className="cal-menu" id={menuId}>
+          <a className="cal-item" href={googleCalendarUrl(cal, siteUrl())} target="_blank" rel="noreferrer" onClick={() => setOpen(false)}>
+            Google Calendar ↗
+          </a>
+          <button
+            type="button"
+            className="cal-item"
+            onClick={() => {
+              downloadIcs(cal, siteUrl());
+              setOpen(false);
+            }}
+          >
+            Apple / Outlook (.ics)
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

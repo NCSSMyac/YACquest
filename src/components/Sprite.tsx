@@ -4,7 +4,7 @@ import type { AvatarId } from '../types';
  * Pixel sprites drawn from text grids (characters are 32x32, chest/trophy 16x16). Each character maps to a color in the palette.
  * '.' is transparent. Add a new character by adding a grid + palette entry.
  */
-const PALETTE: Record<string, string> = {
+export const PALETTE: Record<string, string> = {
   k: '#1b2340',
   w: '#ffffff',
   b: '#6e4426',
@@ -42,7 +42,7 @@ const PALETTE: Record<string, string> = {
 };
 
 // Human characters use fantasy skin tones (mint, pink, lilac) so nobody's real skin color is the default.
-const GRIDS: Record<AvatarId, string[]> = {
+export const GRIDS: Record<AvatarId, string[]> = {
   yak: [
     '................................',
     '....k......................k....',

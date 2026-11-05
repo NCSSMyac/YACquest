@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import * as api from '../api';
 import { CAMPUSES, CONTACT_EMAILS, PRIZE, PRIZE_POLL_MS, campusName } from '../config';
 import { fmtDate } from '../lib/format';
@@ -7,11 +8,74 @@ import { errorMessage, useAsync } from '../lib/useAsync';
 import { Sprite } from '../components/Sprite';
 import { Empty, ErrorText, Loading, Panel, ProgressBar, useToast } from '../components/ui';
 import type { PrizeClaim } from '../types';
+import { useAuth } from '../lib/auth';
+import { useCelebrate } from '../lib/celebrate';
+import { badgeById } from '../lib/badges';
+import { cosmeticById } from '../lib/cosmetics';
+import { BadgesPanel } from '../components/cosmetics/BadgesPanel';
+import { WardrobePanel } from '../components/cosmetics/WardrobePanel';
+import { takeNew } from '../components/cosmetics/seen';
 
 const GIFT_CARDS = ['Amazon', 'Target', 'Starbucks', 'Chick-fil-A', 'DoorDash', 'Visa'];
 const campusColor = (id: string) => CAMPUSES.find((c) => c.id === id)?.color ?? 'var(--navy-800)';
 
+type HubTab = 'treasure' | 'badges' | 'wardrobe';
+const HUB_TABS: { id: HubTab; label: string }[] = [
+  { id: 'treasure', label: 'Treasure' },
+  { id: 'badges', label: 'Badges' },
+  { id: 'wardrobe', label: 'Wardrobe' },
+];
+
+/** Quest hub: the prize race, the badge collection and the wardrobe. Deep link with /prize?tab=badges|wardrobe. */
 export default function Prize() {
+  const [params, setParams] = useSearchParams();
+  const raw = params.get('tab');
+  const tab: HubTab = raw === 'badges' || raw === 'wardrobe' ? raw : 'treasure';
+  const { user } = useAuth();
+  const celebrate = useCelebrate();
+  const badges = useAsync(api.myBadges, [], { live: true });
+  const unlocks = useAsync(api.myUnlocks, [], { live: true });
+
+  // One-time celebrations for badges / looks earned since this player last looked (first visit ever: none).
+  const userId = user?.id;
+  const earnedIds = badges.data?.filter((b) => b.earned).map((b) => b.id).join(',');
+  const unlockIds = unlocks.data?.join(',');
+  useEffect(() => {
+    if (!userId || earnedIds === undefined) return;
+    for (const id of takeNew('badges', userId, earnedIds ? earnedIds.split(',') : []))
+      celebrate({ title: 'Badge unlocked!', subtitle: badgeById(id)?.name ?? id, badgeId: id, size: 'big' });
+  }, [userId, earnedIds, celebrate]);
+  useEffect(() => {
+    if (!userId || unlockIds === undefined) return;
+    // Free looks aren't news.
+    const ids = unlockIds ? unlockIds.split(',').filter((id) => cosmeticById(id)?.rule.type !== 'free') : [];
+    for (const id of takeNew('looks', userId, ids))
+      celebrate({ title: 'New look unlocked!', subtitle: cosmeticById(id)?.name ?? id, cosmeticId: id, size: 'big' });
+  }, [userId, unlockIds, celebrate]);
+
+  const select = (id: HubTab) => setParams(id === 'treasure' ? {} : { tab: id }, { replace: true });
+  const title = tab === 'badges' ? 'Badge Book' : tab === 'wardrobe' ? 'Wardrobe' : 'Treasure Vault';
+
+  return (
+    <div className="stack">
+      <h1 className="pixel" style={{ margin: 0 }}>{title}</h1>
+      <div className="tabs" role="tablist" aria-label="Quest hub">
+        {HUB_TABS.map((t) => (
+          <button key={t.id} role="tab" id={`hub-tab-${t.id}`} aria-selected={tab === t.id} aria-controls="hub-panel" onClick={() => select(t.id)}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div id="hub-panel" role="tabpanel" aria-labelledby={`hub-tab-${tab}`}>
+        {tab === 'treasure' && <Treasure />}
+        {tab === 'badges' && <BadgesPanel badges={badges.data} error={badges.error} />}
+        {tab === 'wardrobe' && <WardrobePanel unlocks={unlocks.data} error={unlocks.error} />}
+      </div>
+    </div>
+  );
+}
+
+function Treasure() {
   const status = useAsync(api.prizeStatus, [], { live: true });
   const dash = useAsync(api.getDashboard, [], { live: true });
   const { reload } = status;
@@ -31,7 +95,6 @@ export default function Prize() {
 
   return (
     <div className="stack">
-      <h1 className="pixel" style={{ margin: 0 }}>Treasure Vault</h1>
       <Panel tone="gold">
         <div className="stack" style={{ alignItems: 'center', textAlign: 'center' }}>
           <Sprite id="chest" size={96} className="bob" />

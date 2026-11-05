@@ -158,3 +158,13 @@ Actions: `points_added` / `points_removed` (ledger insert with created_by and so
 - `list_feedback(p_status default null, p_limit default 50)` admin → feedback + prize suggestions (kind 'feedback'|'prize'), newest first.
 - `mark_feedback_reviewed(p_kind, p_id)` admin; logged as `feedback_reviewed`.
 - `build_weekly_report()` adds "💬 Feedback (last 7 days)".
+
+---
+
+## 0009 — Quest extras (badges, wardrobe, weekly shout-out)
+- `profiles` + `hat`, `accessory`, `background` (nullable). Table `cosmetics(id, slot, name, rule_type, rule_value, sort_order)` mirrors `src/lib/cosmetics.ts`.
+- `my_badges() → table(id, earned, progress, goal)` (current cycle, order of `src/lib/badges.ts`). Badges never award points.
+- `my_unlocks() → text[]`; `equip_look(p_hat, p_accessory, p_background) → json {hat, accessory, background}` ('' clears; errors `locked`, `look`).
+- `leaderboard(p_limit int default 10, p_campus varchar default null)` and `my_rank(p_campus text default null)` now also return `hat, accessory, background`.
+- `weekly_shoutout() → json {userId, displayName, campus, avatar, hat, accessory, background, look, pointsThisWeek}` or null — top positive-points gainer in the last 7 days.
+- Weekly email gains "⭐ Adventurer of the week"; when the week's report is queued, the winner gets a notification.

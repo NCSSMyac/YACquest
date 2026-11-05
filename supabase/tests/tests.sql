@@ -1201,5 +1201,194 @@ begin
 end $$;
 
 -- =============================================================================
+-- 23. 0009 — badges, looks, leaderboard looks, Adventurer of the Week
+-- =============================================================================
+\set as_gina   'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000006a0''; set role authenticated;'
+:as_super
+update app_config set prize_goal = 650, tier1_points = 40, tier2_points = 20, tier3_points = 5;
+insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data) values
+  ('00000000-0000-0000-0000-0000000006a0', 'gina@example.edu', now(),
+   '{"handle":"gina","display_name":"Gina <i>G","campus":"ncsu","avatar":"yak"}');
+-- an event + check-in from an OLD cycle must not count
+insert into events (id, cycle_id, title, campus, kind, starts_at, ends_at, activity_id) values
+  ('00000000-0000-0000-0000-00000000e000', (select id from cycles where not is_active order by starts_at limit 1),
+   'Old social', 'duke', 'active', now() - interval '1 year', now() - interval '1 year' + interval '2 hours', 'home_event');
+insert into ledger (cycle_id, user_id, amount, source, activity_id, ref_id, reason, created_at)
+values ((select id from cycles where not is_active order by starts_at limit 1), '00000000-0000-0000-0000-0000000006a0',
+        20, 'checkin', 'home_event', '00000000-0000-0000-0000-00000000e000', 'old check-in', now() - interval '1 year');
+
+:as_anon
+do $$ begin
+  perform t.denied('select * from my_badges()', 'anon cannot call my_badges');
+  perform t.denied('select weekly_shoutout()', 'anon cannot call weekly_shoutout');
+  perform t.eq((select count(*) from cosmetics), 17::bigint, 'anon can read the cosmetics catalogue');
+end $$;
+:as_gina
+do $$
+declare ids text[];
+begin
+  select array_agg(id order by ord) into ids from (select id, row_number() over () ord from my_badges()) x;
+  perform t.eq(ids, array['first_checkin','regular','veteran','explorer','big_moment','seasons','digital','shutterbug',
+                          'recruiter','giver','champion','voice','halfway','legend'], 'my_badges: 14 badges in badges.ts order');
+  perform t.ok((select bool_and(not earned and progress = 0) from my_badges()), 'my_badges: fresh player has nothing (old-cycle check-in ignored)');
+  perform t.eq((select goal from my_badges() where id = 'legend'), 650, 'legend goal = prize_goal');
+  perform t.eq((select goal from my_badges() where id = 'halfway'), 325, 'halfway goal 325');
+  perform t.eq(my_unlocks(), array['meadow','campus'], 'my_unlocks: only the free backgrounds at first');
+  perform t.denied('select * from badges_for(auth.uid())', 'badges_for is internal');
+  perform t.denied('select unlocks_for(auth.uid())', 'unlocks_for is internal');
+  perform t.denied('select weekly_shoutout_data()', 'weekly_shoutout_data is internal');
+  perform t.denied('insert into cosmetics (id, slot, name, rule_type) values (''x'', ''hat'', ''X'', ''free'')', 'nobody writes cosmetics');
+  perform t.throws('select equip_look(''party_hat'', null, null)', 'locked', 'equip: locked hat refused');
+end $$;
+
+-- check-ins at Duke (2 months ago), UNC high-impact (1 month ago), NC State (now), all-campus digital (now)
+:as_super
+insert into events (id, cycle_id, title, campus, cross_campus, kind, starts_at, ends_at, activity_id) values
+  ('00000000-0000-0000-0000-00000000e001', active_cycle_id(), 'Duke social', 'duke', false, 'active', now() - interval '2 months', now() - interval '2 months' + interval '2 hours', 'home_event'),
+  ('00000000-0000-0000-0000-00000000e002', active_cycle_id(), 'UNC gala',    'unc',  false, 'high_impact', now() - interval '1 month', now() - interval '1 month' + interval '2 hours', 'cross_campus_event'),
+  ('00000000-0000-0000-0000-00000000e003', active_cycle_id(), 'NCSU trivia', 'ncsu', false, 'active', now() - interval '1 hour', now() + interval '1 hour', 'home_event'),
+  ('00000000-0000-0000-0000-00000000e004', active_cycle_id(), 'Zoom poll',   'all',  true,  'digital', now() - interval '1 hour', now() + interval '1 hour', 'digital_event');
+insert into ledger (cycle_id, user_id, amount, source, activity_id, ref_id, reason, created_at)
+select active_cycle_id(), '00000000-0000-0000-0000-0000000006a0', 20, 'checkin', e.activity_id, e.id::text, 'Check-in', e.starts_at
+  from events e where e.id in ('00000000-0000-0000-0000-00000000e001', '00000000-0000-0000-0000-00000000e002',
+                               '00000000-0000-0000-0000-00000000e003', '00000000-0000-0000-0000-00000000e004');
+insert into submissions (cycle_id, user_id, activity_id, image_path, note)
+select active_cycle_id(), '00000000-0000-0000-0000-0000000006a0', a, '00000000-0000-0000-0000-0000000006a0/' || a || '.jpg', 'digital'
+  from unnest(array['poll','repost','story_game']) a;
+:as_gina
+do $$ begin
+  perform t.ok((select earned and progress = 1 and goal = 1 from my_badges() where id = 'first_checkin'), 'first_checkin earned');
+  perform t.ok((select not earned and progress = 4 and goal = 5 from my_badges() where id = 'regular'), 'regular: 4 of 5');
+  perform t.ok((select not earned and progress = 4 and goal = 10 from my_badges() where id = 'veteran'), 'veteran: 4 of 10');
+  perform t.ok((select earned and progress = 3 and goal = 3 from my_badges() where id = 'explorer'), 'explorer: Duke + UNC + NC State (all-campus ignored)');
+  perform t.ok((select earned from my_badges() where id = 'big_moment'), 'big_moment: high-impact check-in');
+  perform t.ok((select earned and progress = 3 from my_badges() where id = 'seasons'), 'seasons: 3 different months');
+  perform t.ok((select not earned and progress = 0 and goal = 3 from my_badges() where id = 'digital'), 'digital: tier-3 check-ins and pending submissions do not count');
+  perform t.eq(my_unlocks(), array['party_hat','explorer_cap','meadow','campus','sunset'], 'my_unlocks: badge + points (80 ≥ 50) rules');
+end $$;
+:as_bob
+do $$ declare s uuid;
+begin
+  for s in select id from submissions where user_id = '00000000-0000-0000-0000-0000000006a0' and status = 'pending' loop
+    perform review_submission(s, 'approve', null);
+  end loop;
+end $$;
+:as_gina
+do $$ begin
+  perform t.ok((select earned and progress = 3 and goal = 3 from my_badges() where id = 'digital'), 'digital: 3 approved tier-3 submissions');
+  perform t.eq((select count(*) from my_badges() where earned), 5::bigint, '5 badges earned');
+  perform t.ok(not ('rainbow' = any (my_unlocks())) and 'wizard_hat' = any (my_unlocks()), 'rainbow needs 6 badges; wizard hat unlocked by digital');
+  perform t.ok(not ('flower_crown' = any (my_unlocks())), 'flower crown needs 100 points (has 95)');
+end $$;
+:as_bob
+select award_activity('00000000-0000-0000-0000-0000000006a0', 'game_win', 'Trivia champ') \g /dev/null
+select award_activity('00000000-0000-0000-0000-0000000006a0', 'annual_fund', 'Gave') \g /dev/null
+:as_gina
+do $$ declare r json;
+begin
+  perform t.ok((select earned from my_badges() where id = 'champion'), 'champion: game_win award');
+  perform t.ok((select earned from my_badges() where id = 'giver'), 'giver: annual_fund');
+  perform t.ok((select not earned from my_badges() where id = 'voice'), 'voice: not yet');
+  perform submit_feedback('idea', 'More trivia please!');
+  perform t.ok((select earned from my_badges() where id = 'voice'), 'voice: after sending feedback');
+  perform t.ok((select not earned and progress = 0 from my_badges() where id in ('shutterbug')), 'shutterbug not earned');
+  perform t.ok((select not earned from my_badges() where id = 'recruiter'), 'recruiter not earned');
+  perform t.ok((select not earned and progress = 155 and goal = 325 from my_badges() where id = 'halfway'), 'halfway: progress = points (155)');
+  perform t.eq(my_unlocks(), array['party_hat','flower_crown','explorer_cap','wizard_hat','pearls','medal','meadow','campus','sunset','rainbow'],
+               'my_unlocks: 8 badges → rainbow; 155 pts → flower crown');
+  -- equip_look
+  r := equip_look('party_hat', 'medal', 'rainbow');
+  perform t.eq(r::jsonb, '{"hat":"party_hat","accessory":"medal","background":"rainbow"}'::jsonb, 'equip_look returns the look');
+  perform t.ok((select hat = 'party_hat' and accessory = 'medal' and background = 'rainbow' from profiles where id = auth.uid()), 'equip_look saved on profile');
+  perform t.throws('select equip_look(''crown'', null, null)', 'locked', 'equip: legend crown locked');
+  perform t.throws('select equip_look(null, ''gold_chain'', null)', 'locked', 'equip: gold chain locked (250 pts)');
+  perform t.throws('select equip_look(''meadow'', null, null)', 'look', 'equip: background in the hat slot');
+  perform t.throws('select equip_look(null, null, ''nope'')', 'look', 'equip: unknown item');
+  perform t.ok((select hat = 'party_hat' from profiles where id = auth.uid()), 'failed equip changes nothing');
+  r := equip_look('', null, 'meadow');
+  perform t.eq(r::jsonb, '{"hat":null,"accessory":null,"background":"meadow"}'::jsonb, 'equip_look: empty/null clears slots');
+  perform equip_look('flower_crown', 'medal', 'rainbow');
+end $$;
+:as_super
+update app_config set tier1_points = 500;   -- big manual boosts for the test (cap = tier-1 points)
+:as_bob
+select adjust_points('00000000-0000-0000-0000-0000000006a0', 230, 'halfway test') \g /dev/null
+:as_gina
+do $$ begin
+  perform t.ok((select earned and progress = 325 from my_badges() where id = 'halfway'), 'halfway: 385 pts, progress capped at 325');
+  perform t.ok((select not earned and progress = 385 and goal = 650 from my_badges() where id = 'legend'), 'legend: 385 of 650');
+  perform t.ok('gold_chain' = any (my_unlocks()) and 'night_sky' = any (my_unlocks()) and not ('sparkles' = any (my_unlocks())), 'points unlocks at 385');
+end $$;
+:as_bob
+select adjust_points('00000000-0000-0000-0000-0000000006a0', 400, 'legend test') \g /dev/null
+select adjust_points('00000000-0000-0000-0000-0000000006a0', -5, 'small correction') \g /dev/null
+:as_super
+update app_config set tier1_points = 40;
+:as_gina
+do $$ declare sh json; me record;
+begin
+  perform t.ok((select earned and progress = 650 and goal = 650 from my_badges() where id = 'legend'), 'legend: 780 pts, progress capped at goal');
+  perform t.ok(array['crown','sparkles','treasure'] <@ my_unlocks(), 'legend unlocks crown + treasure; 500 pts unlocks sparkles');
+  perform t.ok((select not ('castle' = any (my_unlocks()))), 'castle still needs veteran');
+  -- leaderboard / my_rank with looks
+  perform t.ok((select rank = 1 and points = 780 and hat = 'flower_crown' and accessory = 'medal' and background = 'rainbow'
+                  from leaderboard(10) where user_id = auth.uid()), 'leaderboard: rank 1 with look columns');
+  perform t.ok((select rank = 1 from leaderboard(10, 'ncsu') where user_id = auth.uid()) and (select bool_and(campus = 'ncsu') from leaderboard(100, 'ncsu')), 'campus leaderboard still filters + ranks');
+  perform t.ok((select bool_and(hat is null) from leaderboard(100) where user_id <> auth.uid()), 'others have no look yet');
+  select * into me from my_rank();
+  perform t.ok(me.rank = 1 and me.hat = 'flower_crown' and me.background = 'rainbow' and me.points = 780, 'my_rank includes look');
+  perform t.eq((select rank from my_rank('ncsu')), 1, 'my_rank(campus)');
+  perform t.eq((select count(*) from my_rank('duke')), 0::bigint, 'my_rank for another campus is empty');
+  perform t.eq((select count(*) from pg_proc where proname in ('leaderboard', 'my_rank') and pronamespace = 'public'::regnamespace), 2::bigint, 'old leaderboard/my_rank versions dropped');
+  -- Adventurer of the week
+  sh := weekly_shoutout();
+  perform t.eq(sh->>'userId', auth.uid()::text, 'shout-out: top 7-day gainer');
+  perform t.eq((sh->>'pointsThisWeek')::int, 745, 'shout-out: positive points in last 7 days only (old check-ins + correction excluded)');
+  perform t.ok(sh->>'displayName' = 'Gina <i>G' and sh->>'campus' = 'ncsu' and sh->>'avatar' = 'yak' and sh->>'hat' = 'flower_crown'
+               and sh->>'accessory' = 'medal' and sh->>'background' = 'rainbow' and sh->'look'->>'hat' = 'flower_crown', 'shout-out keys');
+end $$;
+:as_bob
+do $$ begin
+  perform t.ok(json_array_length(admin_overview()->'nearGoal') >= 0 and (admin_overview()->'prize') is not null, 'admin_overview still works with the new leaderboard');
+end $$;
+:as_super
+do $$ declare rep json := public.build_weekly_report();
+begin
+  perform t.ok(rep->>'text' like '%DAYS LEFT IN CYCLE%⭐ ADVENTURER OF THE WEEK%Gina <i>G (NC State) — 745 points in the last 7 days%TOP 5 OVERALL%FEEDBACK (last 7 days)%',
+               'weekly report text: Adventurer of the week near the top (feedback kept)');
+  perform t.ok(rep->>'html' like '%prize spots left%⭐ Adventurer of the week%Gina &lt;i&gt;G%745 points%' and rep->>'html' not like '%Gina <i>%',
+               'weekly report html: Adventurer section, name escaped');
+  delete from email_outbox where dedupe_key = 'weekly:' || to_char(now() at time zone 'America/New_York', 'IYYY-IW');
+end $$;
+:as_service
+do $$ begin
+  perform t.eq(enqueue_weekly_report_if_due(), true, 'enqueue (0009): queued');
+  perform t.eq(enqueue_weekly_report_if_due(), false, 'enqueue (0009): deduped');
+end $$;
+:as_cron
+do $$ begin
+  perform t.eq(enqueue_weekly_report_if_due(), false, 'enqueue (0009): deduped for pg_cron too');
+end $$;
+:as_super
+do $$ begin
+  perform t.eq((select count(*) from notifications where user_id = '00000000-0000-0000-0000-0000000006a0'
+                 and kind = 'announcement' and title = '⭐ You’re Adventurer of the Week!' and body like '%745 points%'), 1::bigint,
+               'Adventurer of the Week notified exactly once');
+  perform t.eq((select count(*) from notifications where title = '⭐ You’re Adventurer of the Week!'), 2::bigint, 'one winner notification per queued weekly report (section 16 + this one)');
+end $$;
+-- nobody gained points (fresh cycle, rolled back afterwards)
+begin;
+update cycles set is_active = false where is_active;
+insert into cycles (name, starts_at, ends_at, is_active) values ('Empty test cycle', now(), now() + interval '30 days', true);
+:as_gina
+select (weekly_shoutout() is null) as sh_null \gset
+:as_super
+select (build_weekly_report()->>'text' like '%ADVENTURER OF THE WEEK%No points earned this week yet.%') as rep_none,
+       (build_weekly_report()->>'html' like '%Adventurer of the week%No points earned this week yet.%') as rep_none_html \gset
+rollback;
+select t.ok(:'sh_null'::boolean, 'shout-out: null when nobody gained points') \g /dev/null
+select t.ok(:'rep_none'::boolean and :'rep_none_html'::boolean, 'weekly report: "No points earned this week yet."') \g /dev/null
+
+-- =============================================================================
 :as_super
 select 'PASSED: ' || current_setting('t.passed') || ' assertions' as result;

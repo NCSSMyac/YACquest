@@ -4,10 +4,12 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import * as api from '../api';
 import { campusName } from '../config';
-import { Sprite, AVATAR_IDS, AVATAR_NAMES } from '../components/Sprite';
+import { AVATAR_IDS, AVATAR_NAMES } from '../components/Sprite';
+import { Avatar } from '../components/Avatar';
 import { ErrorText, Loading, Modal, Panel, useToast } from '../components/ui';
 import { useAuth } from '../lib/auth';
 import { fmtDate, fmtPts } from '../lib/format';
+import { getSoundOn, playCoin, setSoundOn } from '../lib/sound';
 import { errorMessage, useAsync } from '../lib/useAsync';
 import type { AvatarId } from '../types';
 
@@ -116,10 +118,11 @@ export default function Me() {
     <div className="stack">
       <Panel>
         <div className="row">
-          <Sprite id={user.avatar} size={64} />
-          <div>
+          <Avatar id={user.avatar} look={user.look} campus={user.campus} size={72} />
+          <div style={{ flex: 1, minWidth: 0 }}>
             <h1 style={{ margin: 0 }}>{user.displayName}</h1>
             <div className="muted">@{user.handle} · {campusName(user.campus)} · {ROLE[user.role]}</div>
+            <Link to="/prize?tab=wardrobe" className="btn small" style={{ marginTop: 8 }}>Wardrobe</Link>
           </div>
         </div>
       </Panel>
@@ -143,7 +146,7 @@ export default function Me() {
                 className="panel flat"
                 style={{ margin: 0, padding: 6, cursor: 'pointer', textAlign: 'center', background: avatar === id ? 'var(--gold-300)' : undefined, color: avatar === id ? 'var(--navy-900)' : 'var(--text)', minWidth: 0 }}
               >
-                <Sprite id={id} size={48} />
+                <Avatar id={id} look={{ hat: user.look?.hat, accessory: user.look?.accessory }} size={48} />
                 <div style={{ fontSize: 13 }}>{AVATAR_NAMES[id]}</div>
               </button>
             ))}
@@ -159,6 +162,7 @@ export default function Me() {
             <input type="checkbox" checked={user.emailOptIn} onChange={(e) => toggleEmail(e.target.checked)} />
             <span>Email me weekly updates</span>
           </label>
+          <SoundToggle />
           <div>
             <div className="muted" style={{ marginBottom: 6 }}>Theme</div>
             <div className="tabs" role="radiogroup" aria-label="Theme">
@@ -220,5 +224,23 @@ export default function Me() {
         </div>
       </Modal>
     </div>
+  );
+}
+
+function SoundToggle() {
+  const [on, setOn] = useState(getSoundOn);
+  return (
+    <label className="check">
+      <input
+        type="checkbox"
+        checked={on}
+        onChange={(e) => {
+          setSoundOn(e.target.checked);
+          setOn(e.target.checked);
+          if (e.target.checked) playCoin();
+        }}
+      />
+      <span>Sound effects</span>
+    </label>
   );
 }

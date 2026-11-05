@@ -1,8 +1,13 @@
+import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import * as api from '../api';
 import { CAPS, INSTAGRAM_HANDLE, INSTAGRAM_URL, PRIZE, TIER_POINTS, campusName } from '../config';
+import { Avatar } from '../components/Avatar';
+import { Shoutout } from '../components/Shoutout';
 import { Sprite } from '../components/Sprite';
-import { ErrorText, Loading, Panel, ProgressBar, StatusChip, useToast } from '../components/ui';
+import { TreasureMap, checkpointsCrossed } from '../components/TreasureMap';
+import { ErrorText, Loading, Panel, StatusChip, useToast } from '../components/ui';
+import { getLastSeenPoints, setLastSeenPoints, takeCelebratedPoints, useCelebrate } from '../lib/celebrate';
 import { activityById } from '../lib/activities';
 import { fmtDate, fmtPts, timeAgo } from '../lib/format';
 import { useAsync } from '../lib/useAsync';
@@ -10,6 +15,27 @@ import { useAsync } from '../lib/useAsync';
 export default function Home() {
   const toast = useToast();
   const { data, loading, error } = useAsync(() => api.getDashboard(), [], { live: true });
+  const celebrate = useCelebrate();
+  const userId = data?.user.id;
+  const points = data?.points;
+
+  // Celebrate points / checkpoints gained since the last time this player saw Home.
+  useEffect(() => {
+    if (!userId || points === undefined) return;
+    const prev = getLastSeenPoints(userId);
+    setLastSeenPoints(userId, points);
+    const already = takeCelebratedPoints(userId);
+    if (prev === null || points <= prev) return;
+    const diff = points - prev - already;
+    if (diff > 0) celebrate({ title: 'Points earned!', subtitle: 'Since your last visit', points: diff, size: 'small' });
+    for (const c of checkpointsCrossed(prev, points)) {
+      celebrate(
+        c.label === 'Treasure'
+          ? { title: 'Treasure found!', subtitle: `You reached ${c.points} points!`, size: 'big' }
+          : { title: 'Checkpoint reached!', subtitle: `${c.label} · ${c.points} points`, size: 'big' },
+      );
+    }
+  }, [userId, points, celebrate]);
 
   if (loading && !data) return <Loading lines={4} />;
   if (error && !data) return <ErrorText error={error} />;
@@ -29,7 +55,7 @@ export default function Home() {
   return (
     <div className="stack">
       <div className="row">
-        <Sprite id={d.user.avatar} size={56} />
+        <Avatar id={d.user.avatar} look={d.user.look} campus={d.user.campus} size={56} />
         <div>
           <h1 style={{ margin: 0 }}>Hi, {d.user.displayName}!</h1>
           <div className="muted">{campusName(d.user.campus)} adventurer</div>
@@ -54,6 +80,8 @@ export default function Home() {
         )}
       </Panel>
 
+      <Shoutout meId={d.user.id} />
+
       <div className="grid-2">
         <a className="btn blue block" href={INSTAGRAM_URL} target="_blank" rel="noreferrer" aria-label={`YAC on Instagram, ${INSTAGRAM_HANDLE}`}>📷 YAC Instagram</a>
         <Link className="btn block" to="/help">❓ Help</Link>
@@ -64,7 +92,7 @@ export default function Home() {
           <span className="coin" aria-hidden />
           <span style={{ fontFamily: 'var(--font-num)', fontWeight: 800, fontSize: 34 }}>{d.points}</span>
         </div>
-        <ProgressBar value={d.points} max={PRIZE.goal} label={`${Math.min(d.points, PRIZE.goal)} / ${PRIZE.goal}`} />
+        <TreasureMap points={d.points} avatar={d.user.avatar} look={{ ...d.user.look, background: undefined }} />
         <p style={{ margin: '10px 0 0', fontSize: 18 }}>
           {d.myClaim ? (
             <>You won spot #{d.myClaim.spot}! <Link to="/prize">Claim your {PRIZE.name}</Link></>

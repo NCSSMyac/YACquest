@@ -8,6 +8,7 @@
 import type { Session, User as AuthUser } from '@supabase/supabase-js';
 import { CAMPUSES, PRIZE, TIER_POINTS, type CampusId } from '../config';
 import { ACTIVITIES, activityById } from '../lib/activities';
+import { BADGES } from '../lib/badges';
 import { getSupabase, siteUrl } from '../lib/supabase';
 import { announcementError, claimContactError, isEmail } from '../lib/validate';
 import type {
@@ -40,6 +41,9 @@ import type {
   AnnouncementInput,
   FeedbackCategory,
   FeedbackItem,
+  BadgeProgress,
+  Look,
+  Shoutout,
 } from '../types';
 import { ApiError, emitChange } from './shared';
 import type { AdminOverview, AdminUserRow, EventInput, QueueItem, SignupInput, SignupResult, TeamMember } from './shared';
@@ -122,7 +126,19 @@ const str = (v: unknown): string => (v === null || v === undefined ? '' : String
 const opt = (v: unknown): string | undefined => (v === null || v === undefined || v === '' ? undefined : String(v));
 const num = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
 
-const PROFILE_COLS = 'id, handle, display_name, email, campus, role, avatar, friend_code, referred_by, email_opt_in, points, created_at';
+const PROFILE_COLS = 'id, handle, display_name, email, campus, role, avatar, friend_code, referred_by, email_opt_in, points, created_at, hat, accessory, background';
+
+/** hat/accessory/background columns → Look (undefined when nothing is equipped). */
+function toLook(r: AnyRow): Look | undefined {
+  const look: Look = {};
+  const hat = opt(pick(r, 'hat'));
+  const accessory = opt(pick(r, 'accessory'));
+  const background = opt(pick(r, 'background'));
+  if (hat) look.hat = hat;
+  if (accessory) look.accessory = accessory;
+  if (background) look.background = background;
+  return hat || accessory || background ? look : undefined;
+}
 
 function toUser(r: AnyRow, emailVerified?: boolean): User {
   return {
@@ -138,6 +154,7 @@ function toUser(r: AnyRow, emailVerified?: boolean): User {
     createdAt: str(pick(r, 'created_at')),
     emailOptIn: pick(r, 'email_opt_in') !== false,
     emailVerified,
+    look: toLook(r),
   };
 }
 
@@ -245,6 +262,7 @@ function toLeader(r: AnyRow): LeaderRow {
     campus: pick<CampusId>(r, 'campus'),
     avatar: pick<AvatarId>(r, 'avatar'),
     points: num(r.points),
+    look: toLook(r),
   };
 }
 
@@ -482,7 +500,10 @@ export async function updateProfile(patch: Partial<Pick<User, 'displayName' | 'a
       p_email_opt_in: patch.emailOptIn ?? null,
     }),
   );
+  const prevLook = me?.look;
   me = row ? toUser(row, Boolean(s?.user.email_confirmed_at)) : await requireMe();
+  // Older update_profile versions don't return the look columns: keep what we had.
+  if (row && !('hat' in row) && !('accessory' in row) && !('background' in row)) me = { ...me, look: prevLook };
   notifyAuth(me);
   emitChange();
   return me;
@@ -1112,4 +1133,54 @@ export async function listFeedback(status?: 'new' | 'reviewed', limit = 50): Pro
 export async function markFeedbackReviewed(kind: FeedbackItem['kind'], id: string): Promise<void> {
   await rpc('mark_feedback_reviewed', { p_kind: kind, p_id: id });
   emitChange();
+}
+
+// ───────────────────────────── quest extras (0009): badges, wardrobe, weekly shout-out ─────────────────────────────
+
+/** my_badges() → rows {id, earned, progress, goal}, returned in the display order of BADGES. */
+export async function myBadges(): Promise<BadgeProgress[]> {
+  const list = ((await rpc<AnyRow[] | null>('my_badges')) ?? []).map((r) => ({
+    id: str(r.id),
+    earned: Boolean(r.earned),
+    progress: num(r.progress),
+    goal: Math.max(1, num(r.goal)),
+  }));
+  const order = new Map(BADGES.map((b, i) => [b.id, i]));
+  return list.filter((b) => order.has(b.id)).sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+}
+
+/** my_unlocks() → text[] of cosmetic ids. */
+export async function myUnlocks(): Promise<string[]> {
+  const res = (await rpc<unknown[] | null>('my_unlocks')) ?? [];
+  return res.map((v) => (v && typeof v === 'object' ? str(Object.values(v as AnyRow)[0]) : str(v))).filter(Boolean);
+}
+
+/** equip_look('' clears a slot). Errors: `locked` (not unlocked yet), `look` (unknown item / wrong slot). */
+export async function equipLook(look: Look): Promise<User> {
+  const res = one(
+    await rpc<AnyRow | AnyRow[] | null>('equip_look', {
+      p_hat: look.hat ?? '',
+      p_accessory: look.accessory ?? '',
+      p_background: look.background ?? '',
+    }),
+  );
+  const current = await requireMe();
+  me = { ...current, look: res ? toLook(res) : undefined };
+  notifyAuth(me);
+  emitChange();
+  return me;
+}
+
+/** weekly_shoutout() → json {userId, displayName, campus, avatar, hat, accessory, background, pointsThisWeek} or null. */
+export async function weeklyShoutout(): Promise<Shoutout | null> {
+  const r = one(await rpc<AnyRow | AnyRow[] | null>('weekly_shoutout'));
+  if (!r || !pick(r, 'user_id')) return null;
+  return {
+    userId: str(pick(r, 'user_id')),
+    displayName: str(pick(r, 'display_name')),
+    campus: pick<CampusId>(r, 'campus'),
+    avatar: pick<AvatarId>(r, 'avatar'),
+    look: toLook(r),
+    pointsThisWeek: num(pick(r, 'points_this_week')),
+  };
 }
