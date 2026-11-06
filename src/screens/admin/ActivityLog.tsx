@@ -82,7 +82,7 @@ export default function ActivityLog() {
 
   return (
     <Panel title="Admin activity log" action={<button className="btn small ghost" onClick={() => void loadFirst()} disabled={loading}>Refresh</button>}>
-      <p className="muted" style={{ marginTop: 0, fontSize: 14 }}>Every points change, review, role change, event edit and prize update by an admin or chair. Newest first. This log can’t be edited.</p>
+      <p className="muted" style={{ marginTop: 0, fontSize: 14 }}>Every points change, review, role change, event edit and prize update by an admin or YACquest Chair. Newest first. This log can’t be edited.</p>
       {loading && !items.length ? (
         <Loading lines={4} />
       ) : error && !items.length ? (

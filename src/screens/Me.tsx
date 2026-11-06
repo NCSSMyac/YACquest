@@ -38,7 +38,7 @@ function applyTheme(t: Theme) {
   else document.documentElement.dataset.theme = t;
 }
 
-const ROLE = { participant: 'Adventurer', admin: 'Admin', chair: 'YAC Chair' } as const;
+const ROLE = { participant: 'Adventurer', admin: 'Admin', chair: 'YACquest Chair' } as const;
 
 export default function Me() {
   const { user, refresh, signOut } = useAuth();

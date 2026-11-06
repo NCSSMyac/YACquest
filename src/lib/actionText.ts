@@ -9,7 +9,7 @@ const s = (v: unknown) => (v === null || v === undefined ? '' : String(v));
 const activityTitle = (id: unknown) => (id ? activityById(String(id))?.title ?? String(id) : '');
 const campusLabel = (c: unknown) => (c === 'all' ? 'all campuses' : CAMPUSES.find((x) => x.id === c)?.name ?? s(c));
 const possessive = (name: string) => (name.endsWith('s') ? `${name}’` : `${name}’s`);
-const ROLE: Record<string, string> = { participant: 'a participant', admin: 'an admin', chair: 'a chair' };
+const ROLE: Record<string, string> = { participant: 'a participant', admin: 'an admin', chair: 'a YACquest Chair' };
 
 const SETTING_LABELS: Record<string, string> = {
   weeklyEnabled: 'weekly email on/off',
@@ -17,7 +17,7 @@ const SETTING_LABELS: Record<string, string> = {
   weeklyHour: 'time',
   nearGoalPoints: '“close to the prize” range',
   recipients: 'recipients',
-  includeChairs: 'include chairs',
+  includeChairs: 'include YACquest Chairs',
   includeAdmins: 'include admins',
   prizeAlertsEnabled: 'prize alerts',
 };
@@ -55,8 +55,8 @@ export function describeAction(a: AdminAction): string {
     case 'role_changed': {
       const from = s(d.from);
       const to = s(d.to);
-      if (to === 'chair') return `${actor} made ${target} a chair`;
-      if (from === 'chair' && to === 'admin') return a.actorName && a.actorName === a.targetName ? `${actor} stepped down from chair to admin` : `${actor} moved ${target} from chair to admin`;
+      if (to === 'chair') return `${actor} made ${target} a YACquest Chair`;
+      if (from === 'chair' && to === 'admin') return a.actorName && a.actorName === a.targetName ? `${actor} stepped down from YACquest Chair to admin` : `${actor} moved ${target} from YACquest Chair to admin`;
       if (to === 'admin') return `${actor} made ${target} an admin`;
       if (from === 'admin' && to === 'participant') return `${actor} removed ${possessive(target)} admin access`;
       return `${actor} made ${target} ${ROLE[to] ?? to}`;

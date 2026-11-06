@@ -22,7 +22,7 @@ export default function AdminLayout() {
     <div className="stack">
       <div className="spread">
         <h1 style={{ margin: 0 }}>Admin</h1>
-        <span className="chip t1">{isChair ? 'YAC Chair' : 'Admin'}</span>
+        <span className="chip t1">{isChair ? 'YACquest Chair' : 'Admin'}</span>
       </div>
       <nav aria-label="Admin sections" className="admin-nav">
         {links.map((l) => (

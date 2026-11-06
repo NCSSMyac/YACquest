@@ -97,5 +97,5 @@ export const CONTACT_EMAILS = ['iesha.landis.yac@ncssm.edu', 'jacob.rodriguez.ya
 export const INSTAGRAM_HANDLE = '@ncssmyoungalumni';
 export const INSTAGRAM_URL = 'https://www.instagram.com/ncssmyoungalumni/';
 
-/** Up to this many YAC chairs at once (the database has its own copy: app_config.max_chairs). */
+/** Up to this many YACquest Chairs at once (the database has its own copy: app_config.max_chairs). */
 export const MAX_CHAIRS = 6;

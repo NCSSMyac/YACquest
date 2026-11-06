@@ -103,7 +103,7 @@ function PlayerModal({ user, onClose }: { user: api.AdminUserRow; onClose: () =>
   return (
     <Modal open onClose={onClose} title={user.displayName}>
       <div className="stack">
-        <p className="muted wrap-anywhere">@{user.handle} · {campusName(user.campus)} · {user.role === 'chair' ? 'YAC Chair' : user.role === 'admin' ? 'Admin' : 'Adventurer'} · {user.email}</p>
+        <p className="muted wrap-anywhere">@{user.handle} · {campusName(user.campus)} · {user.role === 'chair' ? 'YACquest Chair' : user.role === 'admin' ? 'Admin' : 'Adventurer'} · {user.email}</p>
         <div className="stat panel"><div className="num">{user.points}</div><div className="lbl">points</div></div>
 
         <button className="btn green block" disabled={busy} onClick={() => award(gameWin.id, '')}>

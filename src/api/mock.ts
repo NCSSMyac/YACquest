@@ -475,7 +475,7 @@ const checkedInAt = (userId: string, eventId: string) =>
 export async function adminEventRsvps(eventId: string): Promise<EventRsvp[]> {
   await delay();
   const user = me();
-  if (user.role === 'participant') fail('forbidden', 'Only YAC admins and chairs can see who’s going.');
+  if (user.role === 'participant') fail('forbidden', 'Only admins and YACquest Chairs can see who’s going.');
   const d = load();
   if (!d.events.some((e) => e.id === eventId)) fail('not_found', 'That event no longer exists.');
   return d.rsvps
@@ -797,7 +797,7 @@ export async function adminListEvents(): Promise<(YacEvent & AdminEventRsvpCount
 export async function adminEventAttendees(eventId: string): Promise<EventAttendee[]> {
   await delay();
   const user = me();
-  if (user.role === 'participant') fail('forbidden', 'Only YAC admins and chairs can see who came.');
+  if (user.role === 'participant') fail('forbidden', 'Only admins and YACquest Chairs can see who came.');
   const d = load();
   if (!d.events.some((e) => e.id === eventId)) fail('not_found', 'That event no longer exists.');
   return d.ledger
@@ -1210,16 +1210,16 @@ export async function setRole(userId: string, role: 'participant' | 'admin' | 'c
   const d = load();
   const u = d.users.find((x) => x.id === userId);
   if (!u) return fail('not_found', 'Person not found.');
-  if (u.role === 'chair') return fail('forbidden', role === 'chair' ? 'That person is already a chair.' : 'A chair can’t be changed here.');
+  if (u.role === 'chair') return fail('forbidden', role === 'chair' ? 'That person is already a YACquest Chair.' : 'A YACquest Chair can’t be changed here.');
   if (role === 'chair') {
     if (u.emailVerified === false) return fail('not_verified', 'They need to confirm their email first.');
-    if (d.users.filter((x) => x.role === 'chair').length >= MAX_CHAIRS) return fail('chair_limit', `YAC already has ${MAX_CHAIRS} chairs.`);
+    if (d.users.filter((x) => x.role === 'chair').length >= MAX_CHAIRS) return fail('chair_limit', `There are already ${MAX_CHAIRS} YACquest Chairs.`);
   }
   const from = u.role;
   u.role = role;
   if (from !== role) logAction('role_changed', u, { from, to: role }, caller);
   if (from !== 'participant' && role === 'participant') leaveStaffRewards(u, caller);
-  if (role === 'chair') notify(u.id, 'announcement', 'You are now a YAC Chair', `${caller.displayName} made you a YAC Chair. You can now manage the team, prizes and settings.`);
+  if (role === 'chair') notify(u.id, 'announcement', 'You are now a YACquest Chair', `${caller.displayName} made you a YACquest Chair. You can now manage the team, prizes and settings.`);
   else notify(u.id, 'announcement', role === 'admin' ? 'You are now a YACquest admin' : 'Your admin access was removed', role === 'admin' ? 'You can now review submissions and award points.' : 'You are back to being a regular adventurer.');
   refreshPrizeRace();
   save();
@@ -1231,10 +1231,10 @@ export async function stepDownChair(): Promise<void> {
   await delay();
   const caller = requireRole('chair');
   const d = load();
-  if (d.users.filter((x) => x.role === 'chair').length <= 1) return fail('last_chair', "You're the only chair — make someone else a chair first.");
+  if (d.users.filter((x) => x.role === 'chair').length <= 1) return fail('last_chair', "You're the only YACquest Chair — make someone else a YACquest Chair first.");
   caller.role = 'admin';
   logAction('role_changed', caller, { from: 'chair', to: 'admin' }, caller);
-  notify(caller.id, 'announcement', 'You stepped down as chair', 'You are now an admin. Another chair can remove you from the team.');
+  notify(caller.id, 'announcement', 'You stepped down as YACquest Chair', 'You are now an admin. Another YACquest Chair can remove you from the team.');
   refreshPrizeRace();
   save();
   emitChange();
@@ -1266,15 +1266,15 @@ export async function transferChair(userId: string): Promise<void> {
   const d = load();
   const target = d.users.find((x) => x.id === userId);
   if (!target) return fail('not_found', 'Person not found.');
-  if (target.role === 'chair') return fail('chair_limit', 'That person is already a chair.');
-  if (d.users.filter((u) => u.role === 'chair').length > MAX_CHAIRS) return fail('chair_limit', `YAC already has ${MAX_CHAIRS} chairs.`);
+  if (target.role === 'chair') return fail('chair_limit', 'That person is already a YACquest Chair.');
+  if (d.users.filter((u) => u.role === 'chair').length > MAX_CHAIRS) return fail('chair_limit', `There are already ${MAX_CHAIRS} YACquest Chairs.`);
   const from = target.role;
   target.role = 'chair';
   caller.role = 'admin';
   logAction('role_changed', target, { from, to: 'chair' }, caller);
   logAction('role_changed', caller, { from: 'chair', to: 'admin' }, caller);
-  notify(target.id, 'announcement', 'You are now a YAC Chair', `${caller.displayName} handed you their chair seat.`);
-  notify(caller.id, 'announcement', 'Chair seat handed over', `${target.displayName} is now a YAC Chair. You are an admin.`);
+  notify(target.id, 'announcement', 'You are now a YACquest Chair', `${caller.displayName} handed you their YACquest Chair seat.`);
+  notify(caller.id, 'announcement', 'YACquest Chair seat handed over', `${target.displayName} is now a YACquest Chair. You are an admin.`);
   refreshPrizeRace();
   save();
   emitChange();
@@ -1590,7 +1590,7 @@ export async function sendWeeklyReportNow(): Promise<void> {
   await delay();
   requireRole('chair');
   const to = reportRecipients();
-  if (!to.length) fail('no_recipients', 'Nobody would get it — turn on chairs/admins or add a recipient first.');
+  if (!to.length) fail('no_recipients', 'Nobody would get it — turn on YACquest Chairs/admins or add a recipient first.');
   const r = buildWeeklyReport();
   enqueueEmail('weekly_report', to, r.subject, r.text, r.html, `weekly-manual:${Date.now()}:${Math.random()}`);
   save();
@@ -2140,7 +2140,7 @@ export async function crownHero(userId: string, note = ''): Promise<void> {
   const d = load();
   const target = d.users.find((u) => u.id === userId);
   if (!target) return fail('not_found', 'That person wasn’t found.');
-  if (!isStaff(target)) return fail('not_staff', 'Only admins and chairs can be Hero of the Week.');
+  if (!isStaff(target)) return fail('not_staff', 'Only admins and YACquest Chairs can be Hero of the Week.');
   const text = note.trim();
   if (text.length > 120) fail('note', 'Keep the note to 120 characters.');
   const cur = currentReign();
@@ -2169,7 +2169,7 @@ export async function grantStaffReward(userId: string, rewardId: string): Promis
   const d = load();
   const target = d.users.find((u) => u.id === userId);
   if (!target) return fail('not_found', 'That person wasn’t found.');
-  if (!isStaff(target)) return fail('not_staff', 'Only admins and chairs can get Council rewards.');
+  if (!isStaff(target)) return fail('not_staff', 'Only admins and YACquest Chairs can get Council rewards.');
   const g = staffGrantById(rewardId);
   if (!g) return fail('reward', 'Pick one of the Council rewards.');
   if (d.staffGrants.some((x) => x.userId === userId && x.rewardId === rewardId)) return fail('already', `${target.displayName} already has the ${g.name}.`);

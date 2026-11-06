@@ -256,7 +256,7 @@ function ClaimForm({ claim, onDone }: { claim: PrizeClaim; onDone: () => void })
       <div style={{ textAlign: 'center' }}>
         <Sprite id="trophy" size={64} className="bob" />
         <div className="pixel" style={{ fontSize: 18 }}>YOU DID IT! Spot #{claim.spot}</div>
-        <p style={{ margin: '6px 0 0' }}>Tell us where to send your {PRIZE.name}. Only the YAC chairs see this.</p>
+        <p style={{ margin: '6px 0 0' }}>Tell us where to send your {PRIZE.name}. Only the YACquest Chairs see this.</p>
       </div>
       <label className="field"><span>Full name</span><input className="input" {...fieldProps('fullName')} value={form.fullName} onChange={set('fullName')} required autoComplete="name" />{fieldError('fullName')}</label>
       <label className="field"><span>Email</span><input className="input" type="email" {...fieldProps('email')} value={form.email} onChange={set('email')} required autoComplete="email" inputMode="email" />{fieldError('email')}</label>

@@ -114,7 +114,7 @@ export function WardrobePanel({ unlocks, error, staff }: { unlocks: string[] | n
         <>
           <StaffSection
             title="🏛️ Council wardrobe"
-            note="Staff only. Earned from your YAC staff work (all-time) or granted by a chair."
+            note="Staff only. Earned from your YAC staff work (all-time) or granted by a YACquest Chair."
             items={STAFF_COSMETICS.filter((c) => c.rule.type !== 'hero')}
             have={have}
             draft={draft}
@@ -123,7 +123,7 @@ export function WardrobePanel({ unlocks, error, staff }: { unlocks: string[] | n
           />
           <StaffSection
             title="🦸 Hero of the Week"
-            note={staff.isHero ? 'You’re the reigning Hero of the Week! These are yours until the next hero is crowned.' : 'Only for the reigning Hero of the Week. Chairs crown a hero at YAC meetings.'}
+            note={staff.isHero ? 'You’re the reigning Hero of the Week! These are yours until the next hero is crowned.' : 'Only for the reigning Hero of the Week. YACquest Chairs crown a hero at YAC meetings.'}
             items={STAFF_COSMETICS.filter((c) => c.rule.type === 'hero')}
             have={have}
             draft={draft}

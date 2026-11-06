@@ -81,7 +81,7 @@ export default function AdminHome() {
               <div><strong>Subject:</strong> {rep.data.subject}</div>
               <div style={{ wordBreak: 'break-word' }}>
                 <strong>To:</strong>{' '}
-                {rep.data.recipients.length ? rep.data.recipients.join(', ') : <span className="muted">nobody yet — a chair can add recipients in Admin → System</span>}
+                {rep.data.recipients.length ? rep.data.recipients.join(', ') : <span className="muted">nobody yet — a YACquest Chair can add recipients in Admin → System</span>}
               </div>
             </div>
             {rep.data.html ? (

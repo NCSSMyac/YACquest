@@ -13,7 +13,7 @@ const breakableEmail = (email: string) => {
   return at < 0 ? email : <>{email.slice(0, at)}<wbr />{email.slice(at)}</>;
 };
 
-/** Help page: quick answers + one-tap email to the YAC chairs. Works logged in or out. */
+/** Help page: quick answers + one-tap email to the YAC team. Works logged in or out. */
 export default function Help() {
   const { user } = useAuth();
   const toast = useToast();

@@ -158,7 +158,7 @@ describe('team roles', () => {
     let i = 0;
     while (n < MAX_CHAIRS) { await api.setRole(ppl[i++].id, 'chair'); n++; }
     expect(load().users.filter((u) => u.role === 'chair').length).toBe(MAX_CHAIRS);
-    await expect(api.setRole(ppl[i].id, 'chair')).rejects.toMatchObject({ code: 'chair_limit', message: `YAC already has ${MAX_CHAIRS} chairs.` });
+    await expect(api.setRole(ppl[i].id, 'chair')).rejects.toMatchObject({ code: 'chair_limit', message: `There are already ${MAX_CHAIRS} YACquest Chairs.` });
     expect(load().users.find((u) => u.id === ppl[i].id)!.role).toBe('participant');
   });
   it('refuses to make an unconfirmed account a chair', async () => {

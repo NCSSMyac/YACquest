@@ -210,7 +210,7 @@ function WeeklyEmail() {
           <legend className="field-legend">Who gets it</legend>
           <label className="check">
             <input type="checkbox" checked={form.includeChairs} onChange={(e) => patch({ includeChairs: e.target.checked })} />
-            <span>All chairs</span>
+            <span>All YACquest Chairs</span>
           </label>
           <label className="check">
             <input type="checkbox" checked={form.includeAdmins} onChange={(e) => patch({ includeAdmins: e.target.checked })} />

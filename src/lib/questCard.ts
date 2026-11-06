@@ -82,7 +82,7 @@ export function cardModel(r: QuestRecap, at: Date = new Date()): CardModel {
     title: 'YACquest',
     subtitle: ended ? `${CYCLE.name.replace(/ Pilot$/, '')} YEAR-END RECAP`.toUpperCase() : 'MY QUEST CARD',
     name: r.displayName,
-    campusLine: staff ? `${r.role === 'chair' ? 'YAC Chair' : 'YAC Council'} · ${campus}` : `${campus} adventurer`,
+    campusLine: staff ? `${r.role === 'chair' ? 'YACquest Chair' : 'YAC Council'} · ${campus}` : `${campus} adventurer`,
     tiles,
     badgeIds: r.earnedBadgeIds.slice(0, 6),
     badgeLine: r.badgesEarned > 6 ? `+${r.badgesEarned - 6} MORE` : '',

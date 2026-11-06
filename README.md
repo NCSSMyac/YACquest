@@ -17,7 +17,7 @@ npm run dev        # http://localhost:5173
 |---|---|---|
 | `yak001` | Participant (Duke) | Check in, submit quests, race for the prize |
 | `admin` | Admin ("YAC Helper") | Review screenshots, award points, run events, send announcements (including email to everyone), **for all campuses** |
-| `iesha`, `jacob` | YAC Chair (up to 6 — `MAX_CHAIRS` in src/config.ts) | Everything an admin does, plus prizes and fulfillment, Team (grant/remove admin, make chair, step down, hand over chair seat), admin activity log, weekly email settings and delivery log, CSV export, cycle reset |
+| `iesha`, `jacob` | YACquest Chair (up to 6 — `MAX_CHAIRS` in src/config.ts) | Everything an admin does, plus prizes and fulfillment, Team (grant/remove admin, make YACquest Chair, step down, hand over YACquest Chair seat), admin activity log, weekly email settings and delivery log, CSV export, cycle reset |
 
 Any password works in the demo. Live demo events have passwords `BLUEDEVIL` (Duke), `PANEL` (UNC), `WOLFPACK` (NC State), `TRIANGLE` (all campuses). Admins can see passwords under **Admin → Events**. **Me → Reset demo data** starts over (demo mode only).
 
@@ -42,7 +42,7 @@ src/
   lib/activities.ts  ← the ways to earn points (from the proposal)
   components/        ← shared UI: Panel, ProgressBar, Modal, toasts, Sprite, Layout
   screens/           ← one file per participant screen
-  screens/admin/     ← admin + chair screens
+  screens/admin/     ← admin + YACquest Chair screens
   styles/theme.css   ← NCSSM navy/gold pixel theme (colors are CSS variables)
 docs/POINTS.md       ← why the numbers are what they are
 scripts/simulate-points.py ← rerun the points model if YAC changes plans
@@ -54,7 +54,7 @@ scripts/simulate-points.py ← rerun the points model if YAC changes plans
 
 **Admins (all campuses):** overview · review queue (approve / reject with reason) · player search, quick "+20 game win", manual adjustments with required reason (+35 at most per entry) · create/edit events and passwords · announcements to everyone, a campus or one person (in the app and optionally by email).
 
-**Chair:** everything above · team management (grant/remove admin, hand over the chair seat) · revoked prize spots refill automatically when points are removed · prize claims (with phone and mailing address) and fulfillment · prize suggestions · **weekly committee email** (day/time/recipients, test email, send now, delivery log with retry) · **prize alert emails** when someone wins and when a winner sends their info · **admin activity log** (every points change, review, role change, event edit) · ledger CSV export · end-of-cycle reset with archive.
+**YACquest Chair:** everything above · team management (grant/remove admin, hand over the YACquest Chair seat) · revoked prize spots refill automatically when points are removed · prize claims (with phone and mailing address) and fulfillment · prize suggestions · **weekly committee email** (day/time/recipients, test email, send now, delivery log with retry) · **prize alert emails** when someone wins and when a winner sends their info · **admin activity log** (every points change, review, role change, event edit) · ledger CSV export · end-of-cycle reset with archive.
 
 ## Hooking up the backend
 

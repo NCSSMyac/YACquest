@@ -7,7 +7,7 @@ import type { CampusId, Tier } from './config';
 /**
  * participant — anyone who signs up.
  * admin       — helpers: review submissions, award/adjust points, run events (all campuses).
- * chair       — YAC chairs: everything, incl. granting admin/chair, prizes, reset. Up to MAX_CHAIRS (5) at a time.
+ * chair       — YACquest Chairs (run this app): everything, incl. granting admin/chair, prizes, reset. Up to MAX_CHAIRS (5) at a time.
  */
 export type Role = 'participant' | 'admin' | 'chair';
 

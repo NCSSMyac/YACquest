@@ -85,7 +85,7 @@ export default function Login() {
             <ul className="list" style={{ fontSize: 15 }}>
               <li><b>yak001</b> — participant (Duke)</li>
               <li><b>admin</b> — admin helper</li>
-              <li><b>iesha</b>, <b>jacob</b> — YAC chairs</li>
+              <li><b>iesha</b>, <b>jacob</b> — YACquest Chairs</li>
             </ul>
             <p className="muted" style={{ margin: '6px 0 0' }}>Any password works in the demo.</p>
           </Panel>

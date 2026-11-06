@@ -24,7 +24,7 @@ export function HeroBannerPanel({ board }: { board: HeroBoard }) {
       ) : (
         <div>
           <div className="pixel" style={{ fontSize: 15 }}>🦸 Hero of the Week</div>
-          <p style={{ margin: '4px 0 0' }}>No hero right now. Chairs crown one at the next YAC meeting (Admin → Heroes).</p>
+          <p style={{ margin: '4px 0 0' }}>No hero right now. YACquest Chairs crown one at the next YAC meeting (Admin → Heroes).</p>
         </div>
       )}
     </section>

@@ -13,13 +13,13 @@ The database SQL (`supabase/migrations/*.sql`) and the front end's live API (`sr
 | role | who | can |
 |---|---|---|
 | `participant` | anyone who signs up | earn points, submit proof, claim prize |
-| `admin` | helpers granted by a chair | review submissions, award/adjust points, create/edit events, see event passwords, search players, see suggestions, overview, send announcements (incl. email to everyone, since 0012) — **all campuses** |
-| `chair` | the YAC chairs (up to `app_config.max_chairs` = 6, since 0011) | everything admins can + team (admins/chairs), prize claims & fulfillment, admin action log, system settings (weekly committee email, export, cycle reset) |
+| `admin` | helpers granted by a YACquest Chair | review submissions, award/adjust points, create/edit events, see event passwords, search players, see suggestions, overview, send announcements (incl. email to everyone, since 0012) — **all campuses** |
+| `chair` | the YACquest Chairs (up to `app_config.max_chairs` = 6, since 0011) | everything admins can + team (admins/YACquest Chairs), prize claims & fulfillment, admin action log, system settings (weekly committee email, export, cycle reset) |
 
 - **Bootstrap:** table `chair_bootstrap(email)` seeded with `iesha.landis.yac@ncssm.edu`, `jacob.rodriguez.yac@ncssm.edu`. When an auth user is created with one of those emails, their profile starts as `chair`. (They still must confirm the email before they can log in.)
-- **Max 2 chairs in 0001; up to 6 since 0011** (`app_config.max_chairs`; `set_role` can make chairs, see 0011). In 0001 `set_role` couldn't create chairs. A chair passes their seat with `transfer_chair(target)` → target becomes `chair`, caller becomes `admin`, in one transaction. A chair cannot demote the other chair. Emergency recovery: run SQL in the Supabase dashboard (see SETUP.md).
-- Only accounts with a **confirmed email** (`auth.users.email_confirmed_at is not null`) can be made admin or chair (`not_verified`).
-- Helper SQL functions: `is_admin()` (admin or chair), `is_chair()`, both `stable security definer` reading `profiles.role` for `auth.uid()`.
+- **Max 2 YACquest Chairs in 0001; up to 6 since 0011** (`app_config.max_chairs`; `set_role` can make YACquest Chairs, see 0011). In 0001 `set_role` couldn't create YACquest Chairs. A YACquest Chair passes their seat with `transfer_chair(target)` → target becomes `chair`, caller becomes `admin`, in one transaction. A YACquest Chair cannot demote the other YACquest Chair. Emergency recovery: run SQL in the Supabase dashboard (see SETUP.md).
+- Only accounts with a **confirmed email** (`auth.users.email_confirmed_at is not null`) can be made admin or YACquest Chair (`not_verified`).
+- Helper SQL functions: `is_admin()` (admin or YACquest Chair), `is_chair()`, both `stable security definer` reading `profiles.role` for `auth.uid()`.
 
 ## Tables (public schema)
 - `app_config` (id int pk check id=1, prize_goal int 650 **(350 since 0014; 0016 briefly set 300, now a no-op; 350 since 0018)**, prize_count int 5 **(4 since 0004)**, prize_value_usd int 50 **(75 since 0004)**, fulfill_by date '2027-05-15', tier1_points 40 **(35 since 0003; column default 35 since 0017)**, tier2_points 20, tier3_points 5, digital_per_week 1, social_tag_per_month 2, referrals_per_cycle 3, photos_per_event 1, photos_per_cycle 4, max_chairs **(6, since 0011)**)
@@ -42,9 +42,9 @@ The database SQL (`supabase/migrations/*.sql`) and the front end's live API (`sr
 - `events`: any authenticated user. `event_secrets`: admins only. `event_rsvps` (0022): own rows only (counts via `event_rsvp_summary()`, lists via `admin_event_rsvps()`).
 - `activities`, `app_config`, `cycles`: any authenticated user (app_config/activities also anon).
 - `submissions`, `ledger`, `notifications`: own rows; admins read all (notifications: own only).
-- `prize_claims`: own rows; chairs read all. (Public view of the race is the `prize_status()` RPC — no contact info.)
+- `prize_claims`: own rows; YACquest Chairs read all. (Public view of the race is the `prize_status()` RPC — no contact info.)
 - `prize_suggestions`: admins.
-- `sync_status`: chairs.
+- `sync_status`: YACquest Chairs.
 - Storage bucket `proofs` (private): authenticated users may upload only under `<their uid>/…`; read own files; admins read all.
 
 ## Triggers
@@ -83,10 +83,10 @@ Admin (`is_admin()` else `forbidden`):
 - `delete_event(p_id uuid)` — refuse if attendee_count > 0 (`has_attendees`)
 - `admin_overview() → json {participants, activeThisWeek, pointsThisWeek, pendingReviews, newSignupsThisWeek, prize (same as prize_status), nearGoal:[leaderboard rows within 75 of goal (100 before 0014), unclaimed, top 10]}`
 
-Chair (`is_chair()` else `forbidden`):
-- `list_team() → table(id, display_name, handle, email, role, email_verified boolean)` — admins + chairs
-- `set_role(p_user_id uuid, p_role text)` — p_role in ('participant','admin') only (0011 adds 'chair'); target must not be a chair (`forbidden`); for 'admin' target email must be confirmed (`not_verified`); notify target.
-- `transfer_chair(p_user_id uuid)` — target ≠ caller, email confirmed; chairs count stays ≤ max_chairs (2 in 0001, 6 since 0011): target → chair, caller → admin; notify both.
+YACquest Chair (`is_chair()` else `forbidden`):
+- `list_team() → table(id, display_name, handle, email, role, email_verified boolean)` — admins + YACquest Chairs
+- `set_role(p_user_id uuid, p_role text)` — p_role in ('participant','admin') only (0011 adds 'chair'); target must not be a YACquest Chair (`forbidden`); for 'admin' target email must be confirmed (`not_verified`); notify target.
+- `transfer_chair(p_user_id uuid)` — target ≠ caller, email confirmed; the number of YACquest Chairs stays ≤ max_chairs (2 in 0001, 6 since 0011): target → YACquest Chair, caller → admin; notify both.
 - `list_claims() → setof prize_claims` (all statuses, spot asc then revoked last)
 - `mark_fulfilled(p_spot int)` — active claim in active cycle + notify.
 - `reset_cycle(p_confirm text, p_name text, p_ends_at timestamptz)` — p_confirm = 'RESET' (`confirm`); archive current cycle (is_active false, archived_at now()), create new active cycle, set all profiles.points = 0, notify all participants. Ledger/claims/submissions stay (they belong to the old cycle_id).
@@ -104,20 +104,20 @@ Email + password; **Confirm email ON**; min password length 8; PKCE flow. Redire
 
 **Config:** `app_config.prize_count = 4`, `prize_value_usd = 75`. Drop table `sync_status` (Google Sheets sync is cancelled).
 
-### New tables (RLS on; **chairs read**, nobody writes directly; writes via RPCs/triggers)
+### New tables (RLS on; **YACquest Chairs read**, nobody writes directly; writes via RPCs/triggers)
 - `report_settings` (id int pk check id=1, weekly_enabled bool default true, weekly_day int 0–6 default 1 (0=Sunday, America/New_York), weekly_hour int 0–23 default 9, near_goal_points int default 150 **(75 since 0014; 0016 briefly set 50, now a no-op; 75 since 0018)**, recipients text[] default '{}' (extra emails), include_chairs bool default true, include_admins bool default true, prize_alerts_enabled bool default true, updated_at, updated_by uuid). Seed one row.
 - `email_outbox` (id uuid, kind text check in ('weekly_report','prize_qualified','prize_info','test'), to_emails text[] not null, subject text, body_text text, body_html text, dedupe_key text unique not null, status text check in ('pending','sending','sent','failed') default 'pending', attempts int default 0, last_error text, created_at, sent_at). **dedupe_key prevents duplicate reports/alerts.**
 - `admin_actions` (id bigint identity, actor_id uuid null, actor_name text, action text, target_user_id uuid null, target_name text, details jsonb default '{}', created_at default now()). Append-only.
 
 ### Recipients
-`report_recipients() → text[]` (internal): distinct lower-case emails from `report_settings.recipients` ∪ (chairs if include_chairs) ∪ (admins if include_admins), only profiles whose auth email is confirmed.
+`report_recipients() → text[]` (internal): distinct lower-case emails from `report_settings.recipients` ∪ (YACquest Chairs if include_chairs) ∪ (admins if include_admins), only profiles whose auth email is confirmed.
 
 ### Weekly committee report
 `build_weekly_report() → json {subject, text, html}` (internal). Contents: spots left (`N of 4 left`); **Close to the prize**: participants with no active claim and points ≥ goal − near_goal_points, ordered by points desc, showing name, campus, points, points to go (this is the "Johnny is dominating" shout-out list); top 5 overall; Campus Cup per-capita; this week (Mon 00:00 NY): active participants, points awarded, new sign-ups; pending reviews; days left in cycle. Simple inline-styled HTML (navy/gold), plain-text twin.
 - `enqueue_weekly_report_if_due() → boolean` — **service_role only**. If weekly_enabled and now (NY) is on/after weekly_day+weekly_hour of the current ISO week, insert with dedupe_key `weekly:<IYYY-IW>` (on conflict do nothing). Returns true if a row was inserted. No recipients → do nothing.
-- `send_weekly_report_now() → void` — chair; dedupe_key `weekly-manual:<epoch ms>`.
-- `weekly_report_preview() → json {subject, text, html, recipients text[]}` — admin or chair.
-- `send_test_email() → void` — chair; to the caller's email, kind 'test', dedupe `test:<uuid>`.
+- `send_weekly_report_now() → void` — YACquest Chair; dedupe_key `weekly-manual:<epoch ms>`.
+- `weekly_report_preview() → json {subject, text, html, recipients text[]}` — admin or YACquest Chair.
+- `send_test_email() → void` — YACquest Chair; to the caller's email, kind 'test', dedupe `test:<uuid>`.
 
 ### Prize alerts (triggers on `prize_claims`, only if prize_alerts_enabled and recipients exist)
 - After insert (a new winner): kind 'prize_qualified', dedupe `prize_qualified:<claim id>`, subject `🏆 YACquest: <name> won spot #N`, body says they're waiting for delivery info.
@@ -126,15 +126,15 @@ Email + password; **Confirm email ON**; min password length 8; PKCE flow. Redire
 ### Sending (Edge Function `send-emails`, run every 10 min by Supabase Cron)
 - `claim_email_batch(p_limit int default 20) → setof email_outbox` — service_role only. Picks rows with status 'pending', or 'failed' with attempts < 5, or 'sending' older than 15 min; sets status 'sending', attempts+1; returns them (`for update skip locked`).
 - `mark_email_result(p_id uuid, p_ok boolean, p_error text)` — service_role only. ok → 'sent', sent_at now(), last_error null; else 'failed', last_error = left(p_error, 500).
-- Chair: `email_log(p_limit int default 50) → table(id, kind, to_emails, subject, status, attempts, last_error, created_at, sent_at)` newest first; `retry_email(p_id uuid)` → status 'pending', attempts 0.
-- Chair: `get_report_settings() → json` (camelCase: weeklyEnabled, weeklyDay, weeklyHour, nearGoalPoints, recipients, includeChairs, includeAdmins, prizeAlertsEnabled, updatedAt) and `update_report_settings(p_settings jsonb) → json` (same keys, any subset; validate day 0–6, hour 0–23, near_goal_points 0–1000, recipients valid emails ≤ 20).
+- YACquest Chair: `email_log(p_limit int default 50) → table(id, kind, to_emails, subject, status, attempts, last_error, created_at, sent_at)` newest first; `retry_email(p_id uuid)` → status 'pending', attempts 0.
+- YACquest Chair: `get_report_settings() → json` (camelCase: weeklyEnabled, weeklyDay, weeklyHour, nearGoalPoints, recipients, includeChairs, includeAdmins, prizeAlertsEnabled, updatedAt) and `update_report_settings(p_settings jsonb) → json` (same keys, any subset; validate day 0–6, hour 0–23, near_goal_points 0–1000, recipients valid emails ≤ 20).
 
 ### Winner form
 `submit_claim_info(p_full_name text, p_email text, p_phone text, p_address text, p_preference text default null, p_notes text default null) → json claim` — drop the old 4-argument version. Validation codes: `fullName` (≥2), `email`, `phone` (≥7 digits), `address` (≥10 chars). Contact jsonb keys: fullName, email, phone, address, preference, notes. Everything else as before.
 
 ### Admin action log (triggers; actor = auth.uid(), null = system)
 Actions: `points_added` / `points_removed` (ledger insert with created_by and source 'manual'; details {amount, reason, activityId}), `submission_approved` / `submission_rejected` (status change; details {activityId, reason}), `role_changed` (details {from, to}), `event_created` / `event_updated` / `event_deleted` (details {title, kind, campus}), `prize_fulfilled` / `prize_revoked` (details {spot, reason}), `cycle_reset` (details {name}), `report_settings_changed` (details = changed keys). actor_name/target_name are display names at the time.
-- `admin_action_log(p_limit int default 100, p_before bigint default null) → table(id, actor_name, action, target_name, details, created_at)` — **chair**, newest first, keyset paging by id.
+- `admin_action_log(p_limit int default 100, p_before bigint default null) → table(id, actor_name, action, target_name, details, created_at)` — **YACquest Chair**, newest first, keyset paging by id.
 
 ---
 
@@ -144,9 +144,9 @@ Actions: `points_added` / `points_removed` (ledger insert with created_by and so
 ---
 
 ## 0006 — Announcements
-- Table `announcements` (admins read via RLS). `send_announcement(p_title, p_body, p_audience 'all'|'campus'|'user', p_campus, p_user_id, p_send_email) → json {id, recipients, emailed}` — admin/chair; any admin or chair may email 'all' (chair-only until 0012); 20 per sender per day (`limit`); codes `title`, `body`, `audience`, `campus`, `user`.
+- Table `announcements` (admins read via RLS). `send_announcement(p_title, p_body, p_audience 'all'|'campus'|'user', p_campus, p_user_id, p_send_email) → json {id, recipients, emailed}` — admin/YACquest Chair; any admin or YACquest Chair may email 'all' (only YACquest Chairs until 0012); 20 per sender per day (`limit`); codes `title`, `body`, `audience`, `campus`, `user`.
 - Creates one `notifications` row (kind 'announcement') per target; Home shows the latest 3. Email copy → `email_outbox` kind 'announcement', ≤ 90 BCC per row, only opted-in confirmed emails (a direct message always emails that person). Logged as `announcement_sent`.
-- `list_announcements(p_limit default 20)` — admin/chair, newest first, snake_case rows.
+- `list_announcements(p_limit default 20)` — admin/YACquest Chair, newest first, snake_case rows.
 
 ---
 
@@ -172,20 +172,20 @@ Actions: `points_added` / `points_removed` (ledger insert with created_by and so
 
 ## 0010 — Name filter
 - `name_is_clean(text)` (internal) mirrors `src/lib/nameFilter.ts`. Enforced in `handle_new_user` (codes `handle` / `displayName`), `update_profile`, and `handle_available` (false for unclean handles).
-- `admin_rename_user(p_user_id, p_display_name)` — admin/chair; renames, updates active claims, notifies the user, logs `user_renamed` {from, to}.
+- `admin_rename_user(p_user_id, p_display_name)` — admin/YACquest Chair; renames, updates active claims, notifies the user, logs `user_renamed` {from, to}.
 
 ---
 
-## 0011 — More chairs (`max_chairs`; 6 for 2026–27)
+## 0011 — More YACquest Chairs (`max_chairs`; 6 for 2026–27)
 - `app_config.max_chairs int default 5 (set to 6 for 2026–27)` (`MAX_CHAIRS` in src/config.ts).
-- `set_role(p_user_id, p_role)` now accepts 'participant' | 'admin' | **'chair'** (caller must be a chair). Making a chair: target email must be confirmed (`not_verified`) and current chairs < max_chairs (`chair_limit`: "YAC already has 6 chairs."). A chair still can't demote another chair (`forbidden`).
-- `step_down_chair() → void`: caller (a chair) becomes 'admin'; refused if they're the only chair (`last_chair`: "You're the only chair — make someone else a chair first."). Notifies the caller; logged as role_changed.
-- `transfer_chair` unchanged. Bootstrap emails (chair_bootstrap) become chairs on sign-up while chairs < max_chairs.
+- `set_role(p_user_id, p_role)` now accepts 'participant' | 'admin' | **'chair'** (caller must be a YACquest Chair). Making a YACquest Chair: target email must be confirmed (`not_verified`) and current YACquest Chairs < max_chairs (`chair_limit`: "There are already 6 YACquest Chairs." — wording since 0023). A YACquest Chair still can't demote another YACquest Chair (`forbidden`).
+- `step_down_chair() → void`: caller (a YACquest Chair) becomes 'admin'; refused if they're the only YACquest Chair (`last_chair`: "You're the only YACquest Chair — make someone else a YACquest Chair first." — wording since 0023). Notifies the caller; logged as role_changed.
+- `transfer_chair` unchanged. Bootstrap emails (chair_bootstrap) become YACquest Chairs on sign-up while YACquest Chairs < max_chairs.
 
 ---
 
 ## 0012 — Admins email everyone; Adventurer of the Month
-- `send_announcement(...)`: same signature; **admins and chairs** may send audience 'all' with `p_send_email = true`. Participants still get `forbidden` for any announcement.
+- `send_announcement(...)`: same signature; **admins and YACquest Chairs** may send audience 'all' with `p_send_email = true`. Participants still get `forbidden` for any announcement.
 - `monthly_shoutout() → json {userId, displayName, campus, avatar, hat, accessory, background, look, pointsThisMonth, month 'YYYY-MM', final boolean}` or null — any logged-in user. Replaces `weekly_shoutout()` (dropped, with `weekly_shoutout_data()`).
   - Counts **positive** ledger rows of the **active cycle**, **participants only** (current role), grouped by **America/New_York calendar month**.
   - Shows the winner of the most recent completed month (last month) → `final: true`. If nobody earned points last month in this cycle (e.g. the cycle started this month), falls back to the current month's leader so far → `final: false`. Older months are never shown. null if nobody earned points last month or this month.
@@ -202,7 +202,7 @@ Actions: `points_added` / `points_removed` (ledger insert with created_by and so
 - `list_feedback(p_status varchar default null, p_limit int default 50)` now also returns `anonymous boolean`. Anonymous rows: `display_name = 'Anonymous'`, `handle` and `campus` null. (`p_status` is varchar so re-running 0008 can't clash — the old `(text, int)` version is dropped.)
 - `build_weekly_report()`: copy of 0012; in "💬 Feedback (last 7 days)" anonymous rows show **Anonymous** (no name, handle or campus).
 - `handle_new_user()`: copy of 0011; reads `raw_user_meta_data.email_opt_in` (sign-up checkbox "Email me announcements from YAC") into `profiles.email_opt_in`. Missing → true. `email_opt_in` only controls whether **admin announcements** are also emailed (`send_announcement`); there is no participant weekly email.
-- `admin_event_attendees(p_event_id uuid) → table(user_id, display_name, handle, campus, checked_in_at, points)` — admin or chair (else `forbidden`); unknown event → `not_found`. One row per check-in ledger row (`source = 'checkin'`, `ref_id = event id`) as recorded, oldest first.
+- `admin_event_attendees(p_event_id uuid) → table(user_id, display_name, handle, campus, checked_in_at, points)` — admin or YACquest Chair (else `forbidden`); unknown event → `not_found`. One row per check-in ledger row (`source = 'checkin'`, `ref_id = event id`) as recorded, oldest first.
 - Check-in QR links (front end only, no DB change): `<site>#/checkin?event=<eventId>&code=<password>[&title=<title>]` calls the existing `check_in()`.
 
 ## 0014 — Prize goal 350 (fewer events this year)
@@ -210,7 +210,7 @@ Actions: `points_added` / `points_removed` (ledger insert with created_by and so
 - `badges_for()`: copy of 0012; the `halfway` goal is now half the prize goal, rounded up (**175**), instead of a hard-coded 325. `legend` already used `prize_goal`.
 - `cosmetics`: Sparkle Aura (`sparkles`) unlocks at **300** points (was 500). Same in `src/lib/cosmetics.ts`.
 - `admin_overview()`: copy of 0001; `nearGoal` = within **75** of the goal (was 100).
-- `report_settings.near_goal_points` default **75** (was 150); the existing row is moved from 150 to 75 (a different value chosen by a chair is kept).
+- `report_settings.near_goal_points` default **75** (was 150); the existing row is moved from 150 to 75 (a different value chosen by a YACquest Chair is kept).
 - Manual removals in `adjust_points` are capped at the goal, so now at −350.
 
 ## 0015 — Yak puns
@@ -225,7 +225,7 @@ Actions: `points_added` / `points_removed` (ledger insert with created_by and so
 - `app_config.prize_goal` = **300** (column default too); 0016 runs after 0003 (650) and 0014 (350), so running every migration in order ends at 300. 0015 does not touch the goal. Then `refresh_prize_race(active_cycle_id())` (inside a `do` block, so the SQL Editor shows no result box) gives anyone already at 300+ a spot in the order they crossed. Tier points (35/20/5), 4 spots and $75 unchanged.
 - `halfway` badge: no function change — `badges_for()` from 0014 already uses half the goal rounded up, now **150**. `legend` = 300.
 - `cosmetics`: Sparkle Aura (`sparkles`) unlocks at **275** points (was 300 = the goal). Same in `src/lib/cosmetics.ts`.
-- `report_settings.near_goal_points` default **50** (was 75); the existing row is moved from 75 to 50 (a different value chosen by a chair is kept). `admin_overview()` `nearGoal` stays within **75** of the goal.
+- `report_settings.near_goal_points` default **50** (was 75); the existing row is moved from 75 to 50 (a different value chosen by a YACquest Chair is kept). `admin_overview()` `nearGoal` stays within **75** of the goal.
 - Manual removals in `adjust_points` are capped at the goal, so now at −300.
 
 ## 0017 — Consistency pass (no rule changes)
@@ -239,17 +239,17 @@ Actions: `points_added` / `points_removed` (ledger insert with created_by and so
 - `app_config.prize_goal` = **350** (column default too); running every migration in order ends at **350** (0014 also sets 350; since the 0019 pass 0003 no longer sets 650 and 0016 is a no-op). Then `refresh_prize_race(active_cycle_id())` (inside a `do` block) gives anyone already at 350+ a spot in the order they crossed, **and revokes** any open claim (qualified / info submitted, not fulfilled) whose holder is below 350, with a "Your prize spot was released" notification. Tier points (35/20/5), 4 spots and $75 unchanged.
 - `badges_for()`: copy of 0017; only the fallback goal used when `app_config` has no row changes from 300 to **350**. `halfway` = half the goal rounded up = **175**, `legend` = 350.
 - `cosmetics`: Sparkle Aura (`sparkles`) back to **300** points (was 275). Same in `src/lib/cosmetics.ts`.
-- `report_settings.near_goal_points` default **75** (was 50); the existing row is moved from 50 to 75 (a different value chosen by a chair is kept). `admin_overview()` `nearGoal` stays within **75** of the goal.
+- `report_settings.near_goal_points` default **75** (was 50); the existing row is moved from 50 to 75 (a different value chosen by a YACquest Chair is kept). `admin_overview()` `nearGoal` stays within **75** of the goal.
 - Manual removals in `adjust_points` are capped at the goal, so now at −350 again.
 - App: `PRIZE.goal` = 350; treasure-map checkpoints Trailhead 50 · Camp 100 · Halfway 175 · Summit 250 · Treasure 350.
 
 ## 0019 — Consistency pass for the 350 goal (no rule changes)
-- `set_role()` and `transfer_chair()`: copies of 0011; only the fallback chair limit (used if `app_config.max_chairs` were null — it is NOT NULL, 6) changes from 5 to **6**. Same signatures and grants.
+- `set_role()` and `transfer_chair()`: copies of 0011; only the fallback YACquest Chair limit (used if `app_config.max_chairs` were null — it is NOT NULL, 6) changes from 5 to **6**. Same signatures and grants.
 - Old migrations made re-run safe for the goal: `0003` no longer sets `prize_goal = 650`, and `0016` (goal 300) is now a no-op, so running every migration again on a live database never hands out or revokes spots at a stale goal.
 - Final state after all migrations: `prize_goal` 350 (default 350), Halfway 175, Quest Legend 350, cosmetics Sunset 50 · Flower Crown 100 · Starry Night 200 · Gold Chain 250 · Sparkle Aura 300, `near_goal_points` 75 (default 75), `admin_overview()` `nearGoal` within 75 of the goal, manual removals down to −350, `max_chairs` 6.
 
 ## 0020 — Staff-only rewards (Hero of the Week, Council wardrobe + badges, Golden Yak)
-Everything here is for **admins + chairs only**; the server filters by role, not just the UI. Participants get `null` from `my_staff_rewards()`, `forbidden` from the rest, and the plain `look` / `avatar` errors if they try to wear any of it. Nothing participants already see changes: `my_badges()`, `my_unlocks()`, `leaderboard()`, `my_rank()`, `monthly_shoutout()` are untouched and only ever list participants, so a staff look can't show up there.
+Everything here is for **admins + YACquest Chairs only**; the server filters by role, not just the UI. Participants get `null` from `my_staff_rewards()`, `forbidden` from the rest, and the plain `look` / `avatar` errors if they try to wear any of it. Nothing participants already see changes: `my_badges()`, `my_unlocks()`, `leaderboard()`, `my_rank()`, `monthly_shoutout()` are untouched and only ever list participants, so a staff look can't show up there.
 
 ### New tables (RLS on, **no policies, no grants**: RPC-only, not even readable by staff directly)
 - `staff_cosmetics` (id pk, slot hat|accessory|background, name, rule_type staff|reviews|announcements|hosted|grant|hero, rule_value int, sort_order). Mirrors `STAFF_COSMETICS` in `src/lib/staffRewards.ts` (kept out of the public `cosmetics` table on purpose).
@@ -260,11 +260,11 @@ Everything here is for **admins + chairs only**; the server filters by role, not
 ### Rules (staff work counts **all-time**, not per cycle)
 | Item | Slot | Unlock |
 |---|---|---|
-| Council Chamber | background | every admin/chair |
+| Council Chamber | background | every admin/YACquest Chair |
 | Gatekeeper’s Monocle | accessory | reviewed 25 submissions (`submissions.reviewer_id`, approved or rejected) |
 | Herald’s Horn | accessory | sent 5 announcements (`announcements.created_by`) |
 | Event Host Top Hat | hat | created 3 events (`events.created_by`) that each reached 5 check-ins (`attendee_count >= 5`) |
-| Wizard Council Hat · Royal Scepter · Starlit Throne Room | hat · accessory · background | chair grant only |
+| Wizard Council Hat · Royal Scepter · Starlit Throne Room | hat · accessory · background | YACquest Chair grant only |
 | Hero’s Crown · Hero’s Cape · Hall of Heroes | hat · accessory · background | only while reigning Hero of the Week; taken off automatically when the reign ends |
 
 Council badges (`staff_badges_for(uuid)`, order = `STAFF_BADGES`): `gatekeeper` (25 reviews), `town_crier` (5 announcements), `event_host` (3 events with 5+ check-ins), `hero_week` (progress = times crowned, **not capped**, goal 1), `council_legend` (progress 0–4: the three above + crowned at least once).
@@ -272,22 +272,22 @@ Council badges (`staff_badges_for(uuid)`, order = `STAFF_BADGES`): `gatekeeper` 
 
 ### RPCs
 - `my_staff_rewards()` → json `{isHero, heroCount, unlocks: text[], badges: [{id, earned, progress, goal}], legendary, grants: text[]}`, or **null** for participants.
-- `hero_board()` (admins + chairs) → json `{current: reign|null, history: [reign…] newest first, team: [{userId, displayName, handle, role, campus, avatar, hat, accessory, background, isHero, heroCount, grants, legendary}]}`; reign = `{id, userId, displayName, campus, avatar, hat, accessory, background, note, crownedAt, crownedByName, endedAt}`.
-- `crown_hero(p_user_id uuid, p_note text default '')` (chairs): target must be admin/chair (`not_staff`), note ≤ 120 (`note`). Ends the current reign (taking hero items off the previous hero unless it's the same person), starts a new one, notifies the hero (kind `hero_crowned`, "You’re Hero of the Week!"), logs `hero_crowned` `{note}`.
-- `clear_hero()` (chairs): ends the reign, takes hero items off, logs `hero_cleared`. `not_found` if nobody reigns.
-- `grant_staff_reward(p_user_id uuid, p_reward text)` (chairs): `reward` (unknown id), `not_staff`, `already`. Notifies (kind `staff_reward`) and logs `staff_reward_granted` `{reward, name}`. `council_mvp` = Council MVP (unlocks the Golden Yak).
+- `hero_board()` (admins + YACquest Chairs) → json `{current: reign|null, history: [reign…] newest first, team: [{userId, displayName, handle, role, campus, avatar, hat, accessory, background, isHero, heroCount, grants, legendary}]}`; reign = `{id, userId, displayName, campus, avatar, hat, accessory, background, note, crownedAt, crownedByName, endedAt}`.
+- `crown_hero(p_user_id uuid, p_note text default '')` (YACquest Chairs): target must be admin/YACquest Chair (`not_staff`), note ≤ 120 (`note`). Ends the current reign (taking hero items off the previous hero unless it's the same person), starts a new one, notifies the hero (kind `hero_crowned`, "You’re Hero of the Week!"), logs `hero_crowned` `{note}`.
+- `clear_hero()` (YACquest Chairs): ends the reign, takes hero items off, logs `hero_cleared`. `not_found` if nobody reigns.
+- `grant_staff_reward(p_user_id uuid, p_reward text)` (YACquest Chairs): `reward` (unknown id), `not_staff`, `already`. Notifies (kind `staff_reward`) and logs `staff_reward_granted` `{reward, name}`. `council_mvp` = Council MVP (unlocks the Golden Yak).
 - `equip_look(…)`: copy of 0009 + staff items (staff only and unlocked → else `locked`; participants get `look`, as for any unknown item).
 - `update_profile(…)`: copy of 0010 + `golden_yak` only when `legendary_for(caller)` (else `avatar`); keeps `normal_avatar` up to date.
 - Internal (no API access): `is_staff_user`, `staff_stats`, `staff_badges_for`, `staff_unlocks_for`, `legendary_for`, `strip_staff_look`, `hero_reign_json`.
 
 ### Back to participant
-Trigger `profiles_staff_rewards_role` (before update of `role`): when an admin/chair becomes a participant (only `set_role` can do that), staff items come off, a Golden Yak goes back to `normal_avatar` (or `yak`), and a current reign ends (logged `hero_cleared` with `{reason: 'role_changed'}`). Reigns, grants and work counts are kept, so everything returns if they become staff again.
+Trigger `profiles_staff_rewards_role` (before update of `role`): when an admin/YACquest Chair becomes a participant (only `set_role` can do that), staff items come off, a Golden Yak goes back to `normal_avatar` (or `yak`), and a current reign ends (logged `hero_cleared` with `{reason: 'role_changed'}`). Reigns, grants and work counts are kept, so everything returns if they become staff again.
 
 **Re-run note:** 0007 re-creates the avatar check without `golden_yak`. If you ever re-run 0007 after 0020, run 0020 again right after (0007 fails while someone is a Golden Yak; switch them back first).
 
 ## 0021 — Council team board (staff only, view-only)
-- `council_board()` (admins + chairs; participants get `forbidden`) → json array, one row per admin/chair: `{userId, displayName, handle, role, campus, avatar, hat, accessory, background, isHero, heroCount, badges: [{id, earned, progress, goal}] (0020 Council badges, same order), unlockCount (Council items they can wear now, hero perks included while reigning), legendary}`. Sorted: reigning hero first, then chairs, then admins, then display name.
-- Shown in Admin → **Council** (all staff). Crowning and granting stay in Admin → Heroes (chairs). Nothing else changes.
+- `council_board()` (admins + YACquest Chairs; participants get `forbidden`) → json array, one row per admin/YACquest Chair: `{userId, displayName, handle, role, campus, avatar, hat, accessory, background, isHero, heroCount, badges: [{id, earned, progress, goal}] (0020 Council badges, same order), unlockCount (Council items they can wear now, hero perks included while reigning), legendary}`. Sorted: reigning hero first, then YACquest Chairs, then admins, then display name.
+- Shown in Admin → **Council** (all staff). Crowning and granting stay in Admin → Heroes (YACquest Chairs). Nothing else changes.
 
 ## 0022 — Event RSVPs, monthly check-in streaks, Hot Streak badge, My Quest Card
 Additive only: no point values, caps or prize rules change.
@@ -296,8 +296,8 @@ Additive only: no point values, caps or prize rules change.
 - Table `event_rsvps (event_id → events on delete cascade, user_id → profiles on delete cascade, created_at; PK (event_id, user_id))`. RLS on: `select` own rows only (`user_id = auth.uid()`); no write policies (writes only through `set_rsvp`). No points.
 - `set_rsvp(p_event_id uuid, p_going boolean)` (any signed-in user, participants + staff) → json `{eventId, going, goingCount}`. Idempotent. Errors: `not_found` (unknown event or not in the active cycle), `going` (null), `closed` ("RSVPs close when the event starts." — on **and** off are refused once `now() >= starts_at`).
 - `event_rsvp_summary()` → json `[{eventId, goingCount, myRsvp}]` for every event of the active cycle (counts only — participant-safe). The app merges it into `listEvents()` as `goingCount` / `myRsvp`.
-- `admin_event_rsvps(p_event_id uuid)` (admins + chairs; participants get `forbidden`) → table `(user_id, display_name, handle, campus, email, rsvp_at, checked_in boolean)`, oldest RSVP first. `checked_in` = a ledger row with `source = 'checkin'` and `ref_id = event id`. `not_found` for an unknown event.
-- `admin_event_rsvp_counts()` (admins + chairs, `forbidden` otherwise) → table `(event_id, going, going_came)`. Admin → Events shows "going · came" (came = `attendee_count`) and, for past events, "RSVP'd but didn't come" = `going − going_came`.
+- `admin_event_rsvps(p_event_id uuid)` (admins + YACquest Chairs; participants get `forbidden`) → table `(user_id, display_name, handle, campus, email, rsvp_at, checked_in boolean)`, oldest RSVP first. `checked_in` = a ledger row with `source = 'checkin'` and `ref_id = event id`. `not_found` for an unknown event.
+- `admin_event_rsvp_counts()` (admins + YACquest Chairs, `forbidden` otherwise) → table `(event_id, going, going_came)`. Admin → Events shows "going · came" (came = `attendee_count`) and, for past events, "RSVP'd but didn't come" = `going − going_came`.
 
 ### Monthly check-in streaks
 - Internal `checkin_streak(p_user uuid)` → `(current_streak, best_streak, this_month)`: distinct America/New_York calendar months with a `ledger` row `source = 'checkin'`, `amount > 0`, active cycle. `current` = the run ending this month, or — when there's no check-in yet this month — the run ending last month (`this_month = false`, the app says "Check in this month to keep your streak!"); 0 if neither month has one. `best` = longest run this cycle.
@@ -314,3 +314,9 @@ Additive only: no point values, caps or prize rules change.
 
 ### Grants
 `badges_for`, `checkin_streak`, `build_weekly_report` are internal (revoked from everyone). `set_rsvp`, `event_rsvp_summary`, `admin_event_rsvps`, `admin_event_rsvp_counts`, `my_streak`, `my_recap`: revoked from `public, anon`, granted to `authenticated`.
+
+## 0023 — "YACquest Chair" wording
+The people with role `chair` run this app; they are not chairs of the YAC organization. 0023 only changes the human-readable text the server produces; the role value `chair`, every error **code** (the part before `': '`), rules and grants are unchanged.
+- Re-created from their latest definitions with new wording only: `require_chair()` (0001; `forbidden: Only a YACquest Chair can do that.`), `set_role()` and `transfer_chair()` (0019), `step_down_chair()` (0011), `crown_hero()` and `grant_staff_reward()` (0020), `admin_event_attendees()` (0013), `admin_event_rsvps()` (0022).
+- Notifications now say e.g. "You’re now a YACquest Chair", "You stepped down as YACquest Chair", "A YACquest Chair crowned you…".
+- Grants restated as before: revoked from `public, anon`, granted to `authenticated`.

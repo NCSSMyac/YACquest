@@ -53,7 +53,7 @@ export default function Heroes() {
 
       <Panel title="🦸 Crown Hero of the Week">
         <p style={{ margin: '0 0 8px', fontSize: 15 }}>
-          Picked at YAC’s biweekly meeting. The hero gets the Hero’s Crown, Cape and Hall of Heroes background plus a gold glow until a chair crowns the next hero. Admins and chairs only.
+          Picked at YAC’s biweekly meeting. The hero gets the Hero’s Crown, Cape and Hall of Heroes background plus a gold glow until a YACquest Chair crowns the next hero. Admins and YACquest Chairs only.
         </p>
         <form
           className="stack"
@@ -69,7 +69,7 @@ export default function Heroes() {
           <label className="field">
             <span>Team member</span>
             <select className="input" value={heroId} onChange={(e) => setHeroId(e.target.value)}>
-              <option value="">Pick an admin or chair…</option>
+              <option value="">Pick an admin or YACquest Chair…</option>
               {team.map((m) => (
                 <option key={m.userId} value={m.userId}>{m.displayName} (@{m.handle}){m.isHero ? ' · current hero' : ''}</option>
               ))}
@@ -92,7 +92,7 @@ export default function Heroes() {
 
       <Panel title="🎁 Grant a Council reward">
         <p style={{ margin: '0 0 8px', fontSize: 15 }}>
-          Royal Scepter, Starlit Throne Room and Wizard Council Hat are chair-granted only. <b>Council MVP</b> is for an extra-special accomplishment: it unlocks the Legendary Golden Yak.
+          Royal Scepter, Starlit Throne Room and Wizard Council Hat are granted by YACquest Chairs only. <b>Council MVP</b> is for an extra-special accomplishment: it unlocks the Legendary Golden Yak.
         </p>
         <form
           className="stack"
@@ -106,7 +106,7 @@ export default function Heroes() {
           <label className="field">
             <span>Team member</span>
             <select className="input" value={grantTo} onChange={(e) => setGrantTo(e.target.value)}>
-              <option value="">Pick an admin or chair…</option>
+              <option value="">Pick an admin or YACquest Chair…</option>
               {team.map((m) => (
                 <option key={m.userId} value={m.userId}>{m.displayName} (@{m.handle})</option>
               ))}
@@ -159,7 +159,7 @@ function CouncilRow({ m }: { m: StaffRewardRow }) {
       <div style={{ minWidth: 0, flex: 1 }}>
         <strong style={{ wordBreak: 'break-word' }}>{m.displayName}</strong> <span className="muted">@{m.handle}</span>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 2 }}>
-          <span className={`chip ${m.role === 'chair' ? 't1' : 't2'}`}>{m.role === 'chair' ? 'Chair' : 'Admin'}</span>
+          <span className={`chip ${m.role === 'chair' ? 't1' : 't2'}`}>{m.role === 'chair' ? 'YACquest Chair' : 'Admin'}</span>
           {m.isHero && <span className="chip t1">🦸 Hero</span>}
           {m.heroCount > 0 && <span className="chip neutral">Hero ×{m.heroCount}</span>}
           {m.legendary && <span className="chip legendary">★ Golden Yak</span>}

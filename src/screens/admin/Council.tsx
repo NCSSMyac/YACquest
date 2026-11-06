@@ -39,7 +39,7 @@ function CouncilCard({ m }: { m: CouncilMember }) {
         <div style={{ minWidth: 0, flex: 1 }}>
           <b style={{ fontSize: 18, display: 'block', wordBreak: 'break-word' }}>{m.displayName}</b>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
-            <span className={`chip ${m.role === 'chair' ? 't1' : 't2'}`}>{m.role === 'chair' ? 'YAC Chair' : 'Admin'}</span>
+            <span className={`chip ${m.role === 'chair' ? 't1' : 't2'}`}>{m.role === 'chair' ? 'YACquest Chair' : 'Admin'}</span>
             {m.isHero && <span className="chip t1">🦸 Hero of the Week</span>}
             {m.legendary && <span className="chip legendary">★ Legendary</span>}
           </div>

@@ -644,8 +644,8 @@ do $$ begin
   perform t.eq((select role from profiles where id = t.u('admin')), 'chair', 'transfer_chair: target is chair');
   perform t.eq((select role from profiles where id = t.u('chair1')), 'admin', 'transfer_chair: caller is admin');
   perform t.eq((select count(*) from profiles where role = 'chair'), 2::bigint, 'still exactly 2 chairs');
-  perform t.ok(exists (select 1 from notifications where user_id = t.u('admin') and title like '%chair%'), 'transfer_chair notifies target');
-  perform t.ok(exists (select 1 from notifications where user_id = t.u('chair1') and title like '%chair seat%'), 'transfer_chair notifies caller');
+  perform t.ok(exists (select 1 from notifications where user_id = t.u('admin') and title like '%YACquest Chair%'), 'transfer_chair notifies target');
+  perform t.ok(exists (select 1 from notifications where user_id = t.u('chair1') and title like '%YACquest Chair seat%'), 'transfer_chair notifies caller');
 end $$;
 :as_chair1
 do $$ begin
@@ -1645,7 +1645,7 @@ begin
     perform set_role(t.u('seat7'), 'chair');
   exception when others then v_msg := sqlerrm;
   end;
-  perform t.eq(v_msg, 'chair_limit: YAC already has 5 chairs.', 'chair_limit message uses max_chairs');
+  perform t.eq(v_msg, 'chair_limit: There are already 5 YACquest Chairs.', 'chair_limit message uses max_chairs');
   perform t.eq((select role from profiles where id = t.u('seat7')), 'participant', 'refused 6th chair keeps their role');
   perform set_role(t.u('seat3'), 'chair');   -- already a chair → no-op
   perform t.pass('set_role chair on an existing chair is a no-op');
@@ -1659,7 +1659,7 @@ do $$ begin
   perform t.throws(format('select set_role(%L, ''participant'')', t.u('chair1')), 'forbidden', 'new chair cannot demote an older chair');
   perform step_down_chair();
   perform t.ok(not is_chair() and is_admin(), 'step_down_chair: caller is now an admin');
-  perform t.ok(exists (select 1 from notifications where title = 'You stepped down as chair'), 'step_down_chair notifies the caller');
+  perform t.ok(exists (select 1 from notifications where title = 'You stepped down as YACquest Chair'), 'step_down_chair notifies the caller');
   perform t.throws('select step_down_chair()', 'forbidden', 'admin cannot step_down_chair');
   perform t.throws(format('select set_role(%L, ''chair'')', t.u('seat7')), 'forbidden', 'admin cannot make a chair');
 end $$;
@@ -1679,7 +1679,7 @@ do $$ begin
 end $$;
 :as_super
 do $$ begin
-  perform t.eq((select count(*) from notifications where user_id = t.u('seat4') and title = 'You’re now a YAC chair'), 1::bigint, 'new chair notified once');
+  perform t.eq((select count(*) from notifications where user_id = t.u('seat4') and title = 'You’re now a YACquest Chair'), 1::bigint, 'new chair notified once');
   perform t.eq((select count(*) from admin_actions where action = 'role_changed' and target_user_id = t.u('seat3')
                   and actor_id = t.u('chair1') and details = '{"from":"participant","to":"chair"}'), 1::bigint, 'log: making a chair logged once');
   perform t.eq((select count(*) from admin_actions where action = 'role_changed' and target_user_id = t.u('seat3')
@@ -2363,6 +2363,47 @@ end $$;
 rollback;
 drop function t.ci(text, int, uuid);
 drop function t.at22(int, int);
+
+-- =============================================================================
+-- 27. 0023 — the chair role reads "YACquest Chair" in server messages; error codes unchanged
+--     (everything rolled back afterwards)
+-- =============================================================================
+:as_super
+begin;
+update profiles set role = 'admin' where id = t.u('admin');
+update profiles set role = 'participant' where id = t.u('alice');
+:as_admin
+do $$ declare v_msg text;
+begin
+  begin
+    perform clear_hero();
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform t.eq(v_msg, 'forbidden: Only a YACquest Chair can do that.', '0023: chair-only call by an admin → forbidden + "YACquest Chair"');
+  perform t.ok(split_part(v_msg, ':', 1) = 'forbidden' and v_msg like '%YACquest Chair%', '0023: code kept, message names the YACquest Chair');
+  v_msg := null;
+  begin
+    perform step_down_chair();
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform t.eq(v_msg, 'forbidden: Only a YACquest Chair can do that.', '0023: step_down_chair by an admin → same forbidden message');
+end $$;
+:as_alice
+do $$ declare v_msg text;
+begin
+  begin
+    perform * from admin_event_rsvps(gen_random_uuid());
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform t.eq(v_msg, 'forbidden: Only admins and YACquest Chairs can see who’s going.', '0023: participant RSVP list → forbidden + "YACquest Chairs"');
+end $$;
+:as_super
+do $$
+begin
+  perform t.eq((select count(*) from pg_proc where pronamespace = 'public'::regnamespace and prosrc ~* 'YAC chair'), 0::bigint,
+               '0023: no public function still says "YAC chair"');
+end $$;
+rollback;
 
 -- =============================================================================
 :as_super

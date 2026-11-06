@@ -90,7 +90,7 @@ export function staffRequirementText(rule: StaffRule): string {
     case 'hosted':
       return `Host ${rule.min} events with ${HOSTED_EVENT_MIN_CHECKINS}+ check-ins`;
     case 'grant':
-      return 'Granted by a chair';
+      return 'Granted by a YACquest Chair';
     case 'hero':
       return 'While you’re Hero of the Week';
   }

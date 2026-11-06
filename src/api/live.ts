@@ -427,7 +427,7 @@ export async function login(handleOrEmail: string, password: string): Promise<Us
   const { data, error } = await sb().auth.signInWithPassword({ email, password });
   if (error) throw authError(error, 'invalid');
   const u = await loadProfile(data.user);
-  if (!u) return fail('profile', 'We couldn’t find your player profile. Contact a YAC chair.');
+  if (!u) return fail('profile', 'We couldn’t find your player profile. Contact a YACquest Chair.');
   void refreshUnread().catch(() => {});
   emitChange();
   return u;
