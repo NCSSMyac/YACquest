@@ -7,7 +7,9 @@ import { useAuth } from '../../lib/auth';
 import { fmtDateTime } from '../../lib/format';
 import { checkInUrl } from '../../lib/pendingCheckin';
 import { errorMessage, useAsync } from '../../lib/useAsync';
-import type { EventAttendee, YacEvent } from '../../types';
+import type { AdminEventRsvpCounts, EventAttendee, EventRsvp, YacEvent } from '../../types';
+
+type AdminEvent = YacEvent & AdminEventRsvpCounts;
 
 const WORDS = ['YAK', 'MOO', 'HORN', 'QUEST', 'GOLD', 'SHAGGY', 'FJORD', 'RIDGE'];
 const genPassword = () => `${WORDS[Math.floor(Math.random() * WORDS.length)]}-${1000 + Math.floor(Math.random() * 9000)}`;
@@ -36,6 +38,7 @@ export default function Events() {
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<'current' | 'past'>('current');
   const [whoCame, setWhoCame] = useState<YacEvent | null>(null);
+  const [whoGoing, setWhoGoing] = useState<AdminEvent | null>(null);
   const [qrFor, setQrFor] = useState<YacEvent | null>(null);
 
   // Upcoming + live: soonest first. Past (kept forever): newest first.
@@ -112,8 +115,13 @@ export default function Events() {
                 <br />📍 {e.location} · {e.campus === 'all' ? 'All campuses' : campusName(e.campus)}
                 <br />Tier {kindTier(e.kind)} · {kindInfo(e.kind).label} (+{kindPoints(e.kind)})
               </p>
-              <p>Password: <strong style={{ fontFamily: 'monospace', fontSize: 18 }}>{e.password}</strong> · {e.attendeeCount} checked in</p>
+              <p>Password: <strong style={{ fontFamily: 'monospace', fontSize: 18 }}>{e.password}</strong></p>
+              <p style={{ marginTop: -6 }}>
+                <b>{e.goingCount}</b> going · <b>{e.attendeeCount}</b> came
+                {p === 'Past' && e.goingCount > 0 && <span className="muted"> · {e.goingCount - e.rsvpCame} RSVP’d but didn’t come</span>}
+              </p>
               <div className="btn-row">
+                <button className="btn small blue" onClick={() => setWhoGoing(e)}>Who’s going ({e.goingCount})</button>
                 <button className="btn small" onClick={() => setWhoCame(e)}>Who came ({e.attendeeCount})</button>
                 <button className="btn small navy" onClick={() => setQrFor(e)}>QR code</button>
                 <button className="btn small blue" onClick={() => open(e)}>Edit</button>
@@ -126,6 +134,9 @@ export default function Events() {
 
       <Modal open={!!whoCame} onClose={() => setWhoCame(null)} title={whoCame ? `Who came: ${whoCame.title}` : undefined}>
         {whoCame && <Attendees e={whoCame} onClose={() => setWhoCame(null)} />}
+      </Modal>
+      <Modal open={!!whoGoing} onClose={() => setWhoGoing(null)} title={whoGoing ? `Who’s going: ${whoGoing.title}` : undefined}>
+        {whoGoing && <Going e={whoGoing} past={phase(whoGoing) === 'Past'} onClose={() => setWhoGoing(null)} />}
       </Modal>
       <Modal open={!!qrFor} onClose={() => setQrFor(null)} title="Check-in QR code">
         {qrFor && <CheckInQr e={qrFor} onClose={() => setQrFor(null)} />}
@@ -203,6 +214,41 @@ function Attendees({ e, onClose }: { e: YacEvent; onClose: () => void }) {
             <li key={a.userId + a.checkedInAt} className="spread" style={{ gap: 8 }}>
               <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}><b>{a.displayName}</b> <span className="muted">· {campusName(a.campus)}</span></span>
               <small className="muted" style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(a.checkedInAt)}</small>
+            </li>
+          ))}
+        </ol>
+      )}
+      <div className="btn-row">
+        <button className="btn ghost" onClick={onClose}>Close</button>
+        <button className="btn" disabled={!rows.length} onClick={() => copyText(csv, toast, 'List')}>Copy list</button>
+      </div>
+    </div>
+  );
+}
+
+/** 0022: Admin → Events → Who's going: everyone who RSVP'd, oldest first, ✓ if they checked in. */
+function Going({ e, past, onClose }: { e: YacEvent; past: boolean; onClose: () => void }) {
+  const toast = useToast();
+  const list = useAsync<EventRsvp[]>(() => api.adminEventRsvps(e.id), [e.id]);
+  const rows = list.data ?? [];
+  const came = rows.filter((r) => r.checkedIn).length;
+  const csv = ['name,username,campus,email,rsvp_at,came', ...rows.map((r) => [r.displayName, '@' + r.handle, campusName(r.campus), r.email, fmtDateTime(r.rsvpAt), r.checkedIn ? 'yes' : 'no'].map(csvCell).join(','))].join('\n');
+  return (
+    <div className="stack">
+      {rows.length > 0 && (
+        <p className="muted" style={{ margin: 0 }}>
+          {rows.length} going · {came} of them came{past && <> · <b>{rows.length - came}</b> RSVP’d but didn’t come</>}
+        </p>
+      )}
+      {list.loading && !list.data ? <Loading lines={3} /> : list.error ? <ErrorText error={list.error} /> : !rows.length ? <Empty>No RSVPs yet.</Empty> : (
+        <ol className="list" style={{ maxHeight: '50vh', overflow: 'auto' }}>
+          {rows.map((r) => (
+            <li key={r.userId} className="spread" style={{ gap: 8 }}>
+              <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+                <b>{r.displayName}</b> <span className="muted">· {campusName(r.campus)}</span>
+                {r.checkedIn && <span className="chip approved" style={{ marginLeft: 6 }} aria-label="came">✓ came</span>}
+              </span>
+              <small className="muted" style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(r.rsvpAt)}</small>
             </li>
           ))}
         </ol>

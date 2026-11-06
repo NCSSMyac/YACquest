@@ -55,6 +55,11 @@ import type {
   StaffRewardRow,
   StaffRewards,
   CouncilMember,
+  AdminEventRsvpCounts,
+  EventRsvp,
+  EventRsvpInfo,
+  QuestRecap,
+  Streak,
 } from '../types';
 
 // ───────────────────────────── errors ─────────────────────────────
@@ -104,6 +109,8 @@ interface Db {
   announcementSenders: Record<string, string>;
   /** user id → last normal character, restored if a Golden Yak goes back to participant (profiles.normal_avatar). */
   normalAvatars: Record<string, AvatarId>;
+  /** 0022: event RSVPs (the real one is event_rsvps). */
+  rsvps: { eventId: string; userId: string; createdAt: string }[];
   seq: number;
 }
 
@@ -115,7 +122,7 @@ interface OutboxRow extends EmailLogRow {
 
 const DB_KEY = 'yacquest-db-v1';
 const SESSION_KEY = 'yacquest-session';
-const DB_VERSION = 9;
+const DB_VERSION = 10;
 
 let db: Db | null = null;
 
@@ -414,6 +421,7 @@ export async function getDashboard(): Promise<Dashboard> {
     daysLeft: Math.max(0, Math.ceil((new Date(CYCLE.end).getTime() - Date.now()) / 86_400_000)),
     referralsUsed: d.ledger.filter((l) => l.userId === user.id && l.activityId === 'bring_new_alum').length,
     messages: d.notifications.filter((n) => n.userId === user.id && n.kind === 'announcement').slice(0, 3),
+    streak: streakFor(user.id),
   };
 }
 
@@ -421,7 +429,7 @@ export async function listActivities(): Promise<Activity[]> {
   return ACTIVITIES;
 }
 
-export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Promise<(YacEvent & { checkedIn: boolean })[]> {
+export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Promise<(YacEvent & { checkedIn: boolean } & EventRsvpInfo)[]> {
   await delay();
   const d = load();
   const user = me();
@@ -438,7 +446,50 @@ export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Pr
     .map((e) => ({
       ...strip(e, isAdmin && canManage(user)),
       checkedIn: d.ledger.some((l) => l.userId === user.id && l.source === 'checkin' && l.refId === e.id),
+      goingCount: d.rsvps.filter((r) => r.eventId === e.id).length,
+      myRsvp: d.rsvps.some((r) => r.eventId === e.id && r.userId === user.id),
     }));
+}
+
+// ───────────────────────────── 0022: RSVPs ─────────────────────────────
+
+/** SERVER RULE (set_rsvp, 0022): anyone signed in; toggling (on or off) closes when the event starts. No points. */
+export async function setRsvp(eventId: string, going: boolean): Promise<{ going: boolean; goingCount: number }> {
+  await delay(80);
+  const user = me();
+  const d = load();
+  const e = d.events.find((x) => x.id === eventId);
+  if (!e) return fail('not_found', 'That event no longer exists.');
+  if (Date.now() >= new Date(e.startsAt).getTime()) fail('closed', 'RSVPs close when the event starts.');
+  const has = d.rsvps.some((r) => r.eventId === eventId && r.userId === user.id);
+  if (going && !has) d.rsvps.push({ eventId, userId: user.id, createdAt: now() });
+  if (!going && has) d.rsvps = d.rsvps.filter((r) => !(r.eventId === eventId && r.userId === user.id));
+  save();
+  return { going, goingCount: d.rsvps.filter((r) => r.eventId === eventId).length };
+}
+
+const checkedInAt = (userId: string, eventId: string) =>
+  load().ledger.some((l) => l.userId === userId && l.source === 'checkin' && l.refId === eventId);
+
+/** SERVER RULE (admin_event_rsvps, 0022): admins + chairs; oldest RSVP first, with whether they checked in. */
+export async function adminEventRsvps(eventId: string): Promise<EventRsvp[]> {
+  await delay();
+  const user = me();
+  if (user.role === 'participant') fail('forbidden', 'Only YAC admins and chairs can see who’s going.');
+  const d = load();
+  if (!d.events.some((e) => e.id === eventId)) fail('not_found', 'That event no longer exists.');
+  return d.rsvps
+    .filter((r) => r.eventId === eventId)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .flatMap((r) => {
+      const u = d.users.find((x) => x.id === r.userId);
+      return u ? [{ userId: u.id, displayName: u.displayName, handle: u.handle, campus: u.campus, email: u.email, rsvpAt: r.createdAt, checkedIn: checkedInAt(u.id, eventId) }] : [];
+    });
+}
+
+function rsvpCounts(eventId: string): AdminEventRsvpCounts {
+  const rows = load().rsvps.filter((r) => r.eventId === eventId);
+  return { goingCount: rows.length, rsvpCame: rows.filter((r) => checkedInAt(r.userId, eventId)).length };
 }
 
 /** Which activity a check-in earns for this user (cross-campus is Tier 1). */
@@ -732,13 +783,14 @@ export async function awardActivity(userId: string, activityId: string, note: st
 }
 
 
-export async function adminListEvents(): Promise<YacEvent[]> {
+export async function adminListEvents(): Promise<(YacEvent & AdminEventRsvpCounts)[]> {
   await delay();
   const admin = requireRole('admin', 'chair');
   return load()
     .events.filter(() => canManage(admin))
     .slice()
-    .sort((a, b) => b.startsAt.localeCompare(a.startsAt));
+    .sort((a, b) => b.startsAt.localeCompare(a.startsAt))
+    .map((e) => ({ ...e, ...rsvpCounts(e.id) }));
 }
 
 /** SERVER RULE (admin_event_attendees in 0013): admins + chairs; every check-in ledger row for the event, oldest first. */
@@ -802,6 +854,7 @@ export async function deleteEvent(id: string): Promise<void> {
   if (!e || !canManage(admin)) return fail('forbidden', 'Not found.');
   if (e.attendeeCount > 0) fail('has_attendees', 'People already checked in — this event can’t be deleted.');
   d.events = d.events.filter((x) => x.id !== id);
+  d.rsvps = d.rsvps.filter((r) => r.eventId !== id);
   logAction('event_deleted', undefined, { title: e.title, kind: e.kind, campus: e.campus }, admin);
   save();
 }
@@ -954,6 +1007,7 @@ export function seed(): Db {
     eventCreators: {},
     announcementSenders: {},
     normalAvatars: {},
+    rsvps: [],
     seq: 1000,
   };
   db = d;
@@ -1045,6 +1099,28 @@ export function seed(): Db {
   demo.look = { hat: 'party_hat', background: 'campus' };
   notify(demo.id, 'announcement', 'Welcome to YACquest!', `Earn points all year. The first ${PRIZE.count} people to reach ${PRIZE.goal} win a ${PRIZE.name}.`);
 
+  // 0022: one more past event in the month BEFORE the kickoff's month, so the demo player has a
+  // 2-month check-in streak (and All Seasons 2/3, Hot Streak 2/3) whatever day the demo is seeded.
+  {
+    const key = shiftMonth(monthKey(kickoff.startsAt), -1);
+    const startsAt = new Date(`${key}-15T21:00:00Z`).toISOString(); // 5 pm Eastern (4 pm in winter)
+    const endsAt = new Date(new Date(startsAt).getTime() + 2 * H).toISOString();
+    d.events.push({ id: nextId('evt'), title: 'Fall Welcome Picnic', campus: 'duke', crossCampus: false, kind: 'active', location: 'Duke East Campus Quad', startsAt, endsAt, password: 'PICNIC', activityId: 'home_event', attendeeCount: 22, checkInGraceMinutes: 60 });
+    const picnic = d.events[d.events.length - 1];
+    d.ledger.push({ id: nextId('led'), userId: demo.id, amount: TIER_POINTS[2], source: 'checkin', activityId: 'home_event', refId: picnic.id, reason: `Checked in: ${picnic.title}`, createdAt: picnic.startsAt });
+    // A few regulars came too. Their points are MOVED out of an existing seed row (totals and the
+    // leaderboard don't change), and the first one out-earns the demo player that month, so the demo
+    // player doesn't become that month's Adventurer of the Month.
+    const regulars = d.users.filter((u) => u.role === 'participant' && u !== demo && d.ledger.some((l) => l.userId === u.id && l.source === 'seed' && l.amount >= 45)).slice(0, 3);
+    regulars.forEach((u, i) => {
+      const row = d.ledger.find((l) => l.userId === u.id && l.source === 'seed' && l.amount >= 45)!;
+      const extra = i === 0 ? 5 : 0;
+      row.amount -= TIER_POINTS[2] + extra;
+      d.ledger.push({ id: nextId('led'), userId: u.id, amount: TIER_POINTS[2], source: 'checkin', activityId: 'home_event', refId: picnic.id, reason: `Checked in: ${picnic.title}`, createdAt: picnic.startsAt });
+      if (extra) d.ledger.push({ id: nextId('led'), userId: u.id, amount: extra, source: 'seed', reason: 'Points earned earlier this cycle', createdAt: picnic.endsAt });
+    });
+  }
+
   // Pending review queue
   const participants = d.users.filter((u) => u.role === 'participant' && u.id !== demo.id);
   const colors = ['#3b6fd8', '#d84f8a', '#2fa36b', '#d8873b', '#8a4fd8'];
@@ -1088,12 +1164,32 @@ export function seed(): Db {
     seedAction(iesha, 'hero_crowned', jacob.displayName, { note: 'Ran the kickoff check-in table' }, iso(-14 * D));
     seedAction(iesha, 'hero_cleared', jacob.displayName, {}, iso(-1 * D));
   }
+  // 0022: RSVPs (own rng so the rest of the seed stays stable). The demo player RSVP'd to the two
+  // past events they came to; nobody else who RSVP'd to a past event checked in ("RSVP'd but didn't come").
+  {
+    const rr = rng(2022);
+    const crowd = d.users.filter((u) => u.role === 'participant' && u.id !== demo.id);
+    const plan: [string, number][] = [
+      ['Kickoff Mixer', 15], ['Trivia Night', 20], ['Fall Welcome Picnic', 8], ['Triangle Trivia Showdown', 18],
+      ['Mentorship Circle', 12], ['Winter Service Day', 27],
+    ];
+    for (const [title, n] of plan) {
+      const e = d.events.find((x) => x.title === title);
+      if (!e) continue;
+      const start = new Date(e.startsAt).getTime();
+      const latest = Math.min(start, t) - H;
+      const picked = new Set<string>();
+      while (picked.size < n) picked.add(crowd[Math.floor(rr() * crowd.length)].id);
+      for (const userId of picked) d.rsvps.push({ eventId: e.id, userId, createdAt: new Date(latest - rr() * 6 * D).toISOString() });
+      if (title === 'Kickoff Mixer' || title === 'Fall Welcome Picnic') d.rsvps.push({ eventId: e.id, userId: demo.id, createdAt: new Date(start - 2 * D).toISOString() });
+    }
+  }
   d.actions.sort((a, b) => a.createdAt.localeCompare(b.createdAt)).forEach((a, i) => (a.id = i + 1));
   return d;
 }
 
 // Expose for tests
-export const __test = { load, pointsOf, rankedParticipants, setSession, addLedger, deliverOutbox, badgesFor, unlocksFor, shoutoutSync, staffStats, staffUnlocksFor, legendaryFor };
+export const __test = { load, pointsOf, rankedParticipants, setSession, addLedger, deliverOutbox, badgesFor, unlocksFor, shoutoutSync, staffStats, staffUnlocksFor, legendaryFor, streakFor };
 
 // ───────────────────────────── team (chairs only) ─────────────────────────────
 
@@ -1372,6 +1468,13 @@ function buildWeeklyReport(): Omit<WeeklyReport, 'recipients'> {
   ].filter((f) => new Date(f.at).getTime() >= weekAgo).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 30);
   // Adventurer of the Month (0012): same pick as the Home shout-out.
   const star = shoutoutSync();
+  // 0022: one line — events starting in the next 7 days with RSVP counts.
+  const soon = d.events
+    .filter((e) => { const st = new Date(e.startsAt).getTime(); return st >= Date.now() && st < Date.now() + 7 * 86_400_000; })
+    .sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.id.localeCompare(b.id))
+    .map((e) => ({ title: e.title, when: new Date(e.startsAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'America/New_York' }).replace(',', ''), going: d.rsvps.filter((r) => r.eventId === e.id).length }));
+  const soonText = soon.length ? soon.map((x) => `${x.title} (${x.when}) · ${x.going} going`).join('; ') : 'No events scheduled.';
+  const soonHtml = soon.length ? soon.map((x) => `<b>${esc(x.title)}</b> (${esc(x.when)}) · ${x.going} going`).join('; ') : 'No events scheduled.';
   const starLine = !star
     ? 'No points earned this month yet.'
     : star.final
@@ -1395,6 +1498,8 @@ function buildWeeklyReport(): Omit<WeeklyReport, 'recipients'> {
     '',
     'FEEDBACK (last 7 days)',
     ...(recentFeedback.length ? recentFeedback.map((f) => `- [${fbLabel[f.cat]}] ${f.who}: ${f.msg}`) : ['- No new feedback this week.']),
+    '',
+    `📅 NEXT 7 DAYS (RSVPs): ${soonText}`, // 0022
     '',
     'THIS WEEK',
     `- ${active} active participants, ${pts} points awarded, ${signups} new sign-ups`,
@@ -1423,6 +1528,7 @@ function buildWeeklyReport(): Omit<WeeklyReport, 'recipients'> {
       (recentFeedback.length
         ? recentFeedback.map((f) => `<div style="border-left:4px solid #f2b33d;padding:6px 10px;margin:0 0 8px;background:#fffaf0"><div style="font-size:12px;color:#4a5672"><b>${esc(fbLabel[f.cat])}</b> · ${esc(f.who)}</div><div style="white-space:pre-wrap">${esc(f.msg)}</div></div>`).join('')
         : '<p style="margin:0;color:#4a5672">No new feedback this week.</p>') +
+      `<p style="margin:16px 0 0;font-size:14px">📅 <b>Next 7 days (RSVPs):</b> ${soonHtml}</p>` + // 0022
       h2('This week') +
       `<ul style="padding-left:18px;margin:0">${li(`${active} active participants · ${pts} points awarded · ${signups} new sign-ups`)}${li(`${pending} submissions waiting for review`)}${li(`${daysLeft} days left in the cycle`)}</ul>` +
       yakLineHtml(),
@@ -1721,6 +1827,7 @@ function badgesFor(userId: string): BadgeProgress[] {
   const highImpact = events.filter((e) => e.kind === 'high_impact').length;
   const points = Math.max(0, pointsOf(userId));
   const monthWins = [...monthLeaders().values()].filter((m) => m.final && m.user.id === userId).length;
+  const bestStreak = streakFor(userId).best;
   const raw: Record<string, [number, number]> = {
     first_checkin: [checkins.size, 1],
     regular: [checkins.size, 5],
@@ -1737,6 +1844,7 @@ function badgesFor(userId: string): BadgeProgress[] {
     halfway: [points, Math.ceil(PRIZE.goal / 2)],
     legend: [points, PRIZE.goal],
     monthly_star: [monthWins, 1],
+    hot_streak: [bestStreak, 3], // 0022
   };
   return BADGES.map((b) => {
     const [progress, goal] = raw[b.id] ?? [0, 1];
@@ -1764,6 +1872,74 @@ function shoutoutSync(): Shoutout | null {
   if (!top) return null;
   const u = top.user;
   return { userId: u.id, displayName: u.displayName, campus: u.campus, avatar: u.avatar, look: u.look, pointsThisMonth: top.pts, month: top.month, final: top.final };
+}
+
+/**
+ * SERVER RULE (checkin_streak, 0022): consecutive America/New_York calendar months (this cycle = the mock
+ * ledger) with at least one event check-in. `current` counts back from this month, or from last month if
+ * there's no check-in yet this month. `best` = longest run.
+ */
+function streakFor(userId: string): Streak {
+  const idx = (key: string) => {
+    const [y, m] = key.split('-').map(Number);
+    return y * 12 + (m - 1);
+  };
+  const months = [...new Set(load().ledger.filter((l) => l.userId === userId && l.source === 'checkin' && l.amount > 0).map((l) => idx(monthKey(l.createdAt))))].sort((a, b) => a - b);
+  const cur = idx(monthKey(now()));
+  const has = new Set(months);
+  let best = 0;
+  let run = 0;
+  for (let i = 0; i < months.length; i++) {
+    run = i > 0 && months[i] === months[i - 1] + 1 ? run + 1 : 1;
+    best = Math.max(best, run);
+  }
+  const from = has.has(cur) ? cur : has.has(cur - 1) ? cur - 1 : null;
+  let current = 0;
+  if (from !== null) for (let m = from; has.has(m); m--) current++;
+  return { current, best, checkedInThisMonth: has.has(cur) };
+}
+
+export async function myStreak(): Promise<Streak> {
+  await delay(60);
+  return streakFor(me().id);
+}
+
+/** SERVER RULE (my_recap, 0022): the caller's own stats only. Ranks for participants; Council badge count for staff. */
+export async function myRecap(): Promise<QuestRecap> {
+  await delay(120);
+  const u = me();
+  const d = load();
+  const earnedIds = badgesFor(u.id).filter((b) => b.earned).map((b) => b.id);
+  const st = streakFor(u.id);
+  const recap: QuestRecap = {
+    displayName: u.displayName,
+    handle: u.handle,
+    campus: u.campus,
+    role: u.role,
+    avatar: u.avatar,
+    look: u.look,
+    points: pointsOf(u.id),
+    badgesEarned: earnedIds.length,
+    badgeTotal: BADGES.length,
+    earnedBadgeIds: earnedIds,
+    eventsAttended: new Set(d.ledger.filter((l) => l.userId === u.id && l.source === 'checkin' && l.amount > 0 && l.refId).map((l) => l.refId)).size,
+    currentStreak: st.current,
+    bestStreak: st.best,
+    monthWins: [...monthLeaders().values()].filter((m) => m.final && m.user.id === u.id).length,
+    cycleName: CYCLE.name,
+    cycleEndsAt: CYCLE.end,
+  };
+  if (u.role === 'participant') {
+    const overall = rankedParticipants();
+    const campus = rankedParticipants(u.campus);
+    recap.rankOverall = overall.find((r) => r.userId === u.id)?.rank ?? overall.length;
+    recap.rankCampus = campus.find((r) => r.userId === u.id)?.rank ?? campus.length;
+    recap.participants = overall.length;
+    recap.campusParticipants = campus.length;
+  } else {
+    recap.councilBadges = staffBadgesFor(u.id).filter((b) => b.earned).length;
+  }
+  return recap;
 }
 
 export async function myBadges(): Promise<BadgeProgress[]> {

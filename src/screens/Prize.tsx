@@ -14,6 +14,7 @@ import { badgeById } from '../lib/badges';
 import { cosmeticById } from '../lib/cosmetics';
 import { BadgesPanel } from '../components/cosmetics/BadgesPanel';
 import { WardrobePanel } from '../components/cosmetics/WardrobePanel';
+import { QuestCardButton } from '../components/QuestCard';
 import { takeNew } from '../components/cosmetics/seen';
 import { useStaffRewards } from '../lib/useStaffRewards';
 import { staffBadgeById, staffCosmeticById } from '../lib/staffRewards';
@@ -118,6 +119,7 @@ function Treasure() {
           <Sprite id="chest" size={96} className="bob" />
           <div className="pixel" style={{ fontSize: 22 }} aria-live="polite">{s.remaining} / {s.total} LEFT</div>
           <p style={{ margin: 0 }}>The first {s.total} adventurers to reach {s.goal} points each win a {PRIZE.name}.</p>
+          <QuestCardButton />
         </div>
       </Panel>
 

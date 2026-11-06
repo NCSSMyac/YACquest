@@ -29,6 +29,7 @@ The database SQL (`supabase/migrations/*.sql`) and the front end's live API (`sr
 - `profiles` (id uuid pk → auth.users on delete cascade, handle citext unique 3–20 `[a-zA-Z0-9_.]`, display_name text 2–24, email citext, campus text check in ('duke','unc','ncsu'), role text default 'participant', avatar text check in ('yak','knight','mage','ranger'), friend_code text unique like 'YAC-XXXX', referred_by uuid → profiles, email_opt_in bool default true, points int default 0 **(current cycle total, maintained by ledger trigger)**, created_at)
 - `events` (id uuid, cycle_id, title, campus text check in ('duke','unc','ncsu','all'), cross_campus bool, kind text check in ('home','cross_campus','panel') **(since 0002: kind decides points — cross_campus → Tier 1 and campus forced to 'all'; home/panel → Tier 2 and need a host campus; cross_campus flag is derived)**, location, starts_at, ends_at, check_in_grace_minutes int default 60, activity_id text → activities, attendee_count int default 0, created_by uuid, created_at)
 - `event_secrets` (event_id uuid pk → events on delete cascade, password text) — admins only.
+- `event_rsvps` **(0022)** (event_id → events on delete cascade, user_id → profiles on delete cascade, created_at; pk (event_id, user_id)) — written only by `set_rsvp()`.
 - `submissions` (id uuid, cycle_id, user_id, activity_id, event_id null, image_path text — storage path in bucket `proofs`, note text ≤280, status text 'pending'|'approved'|'rejected', reviewer_id, review_reason, created_at, reviewed_at)
 - `ledger` (id bigint identity, cycle_id, user_id, amount int ≠ 0, source text check in ('checkin','submission','manual','referral'), activity_id null, ref_id text null, reason text, created_by uuid null, created_at)
 - `prize_claims` (id uuid, cycle_id, spot int, user_id, display_name text, campus text, qualified_at, status text 'qualified'|'info_submitted'|'fulfilled'|'revoked', reference text, contact jsonb {fullName,email,preference,notes}, fulfilled_at, revoked_at, revoke_reason). Partial unique indexes: (cycle_id, spot) where status <> 'revoked'; (cycle_id, user_id) where status <> 'revoked'.
@@ -38,7 +39,7 @@ The database SQL (`supabase/migrations/*.sql`) and the front end's live API (`sr
 
 ### RLS read rules
 - `profiles`: own row; admins read all.
-- `events`: any authenticated user. `event_secrets`: admins only.
+- `events`: any authenticated user. `event_secrets`: admins only. `event_rsvps` (0022): own rows only (counts via `event_rsvp_summary()`, lists via `admin_event_rsvps()`).
 - `activities`, `app_config`, `cycles`: any authenticated user (app_config/activities also anon).
 - `submissions`, `ledger`, `notifications`: own rows; admins read all (notifications: own only).
 - `prize_claims`: own rows; chairs read all. (Public view of the race is the `prize_status()` RPC — no contact info.)
@@ -190,7 +191,7 @@ Actions: `points_added` / `points_removed` (ledger insert with created_by and so
   - Shows the winner of the most recent completed month (last month) → `final: true`. If nobody earned points last month in this cycle (e.g. the cycle started this month), falls back to the current month's leader so far → `final: false`. Older months are never shown. null if nobody earned points last month or this month.
   - Ties: whoever reached that month's total first (earliest time of their last positive row that month), then display name, then user id.
   - Internal helpers (not callable through the API): `monthly_standings()`, `monthly_shoutout_data()`, `month_label('YYYY-MM') → 'November'`.
-- Badges: `my_badges()` now returns **15** badges; new last one `monthly_star` ("Adventurer of the Month", goal 1) = number of completed months in this cycle the user won (same rule as above). The other 14 are unchanged. Rainbow still needs 6 badges.
+- Badges: `my_badges()` now returns **15** badges (**16** since 0022, which adds `hot_streak`); new last one `monthly_star` ("Adventurer of the Month", goal 1) = number of completed months in this cycle the user won (same rule as above). The other 14 are unchanged. Rainbow still needs 6 badges.
 - Weekly committee email stays weekly; its "⭐ Adventurer of the month" section shows `monthly_shoutout` ("<name> (<campus>) — N points in <Month>", or "Leading <Month> so far: …", or "No points earned this month yet."). When a weekly report is queued and the shout-out is `final`, the winner gets a notification "⭐ You’re Adventurer of the Month!" — at most once per calendar month.
 
 ---
@@ -287,3 +288,29 @@ Trigger `profiles_staff_rewards_role` (before update of `role`): when an admin/c
 ## 0021 — Council team board (staff only, view-only)
 - `council_board()` (admins + chairs; participants get `forbidden`) → json array, one row per admin/chair: `{userId, displayName, handle, role, campus, avatar, hat, accessory, background, isHero, heroCount, badges: [{id, earned, progress, goal}] (0020 Council badges, same order), unlockCount (Council items they can wear now, hero perks included while reigning), legendary}`. Sorted: reigning hero first, then chairs, then admins, then display name.
 - Shown in Admin → **Council** (all staff). Crowning and granting stay in Admin → Heroes (chairs). Nothing else changes.
+
+## 0022 — Event RSVPs, monthly check-in streaks, Hot Streak badge, My Quest Card
+Additive only: no point values, caps or prize rules change.
+
+### RSVPs
+- Table `event_rsvps (event_id → events on delete cascade, user_id → profiles on delete cascade, created_at; PK (event_id, user_id))`. RLS on: `select` own rows only (`user_id = auth.uid()`); no write policies (writes only through `set_rsvp`). No points.
+- `set_rsvp(p_event_id uuid, p_going boolean)` (any signed-in user, participants + staff) → json `{eventId, going, goingCount}`. Idempotent. Errors: `not_found` (unknown event or not in the active cycle), `going` (null), `closed` ("RSVPs close when the event starts." — on **and** off are refused once `now() >= starts_at`).
+- `event_rsvp_summary()` → json `[{eventId, goingCount, myRsvp}]` for every event of the active cycle (counts only — participant-safe). The app merges it into `listEvents()` as `goingCount` / `myRsvp`.
+- `admin_event_rsvps(p_event_id uuid)` (admins + chairs; participants get `forbidden`) → table `(user_id, display_name, handle, campus, email, rsvp_at, checked_in boolean)`, oldest RSVP first. `checked_in` = a ledger row with `source = 'checkin'` and `ref_id = event id`. `not_found` for an unknown event.
+- `admin_event_rsvp_counts()` (admins + chairs, `forbidden` otherwise) → table `(event_id, going, going_came)`. Admin → Events shows "going · came" (came = `attendee_count`) and, for past events, "RSVP'd but didn't come" = `going − going_came`.
+
+### Monthly check-in streaks
+- Internal `checkin_streak(p_user uuid)` → `(current_streak, best_streak, this_month)`: distinct America/New_York calendar months with a `ledger` row `source = 'checkin'`, `amount > 0`, active cycle. `current` = the run ending this month, or — when there's no check-in yet this month — the run ending last month (`this_month = false`, the app says "Check in this month to keep your streak!"); 0 if neither month has one. `best` = longest run this cycle.
+- `my_streak()` → json `{current, best, checkedInThisMonth}`. The app adds it to the dashboard as `streak` (zeros if 0022 isn't installed yet).
+
+### Hot Streak badge
+- `badges_for()`: copy of 0018's + a 16th row `hot_streak` (goal 3, progress = `best_streak`). `my_badges()` therefore returns **16** badges. Staff Council badges (`staff_badges_for`) are unchanged.
+
+### My Quest Card
+- `my_recap()` (no arguments: always the caller) → json `{displayName, handle, campus, role, avatar, hat, accessory, background, points, earnedBadgeIds (badges.ts order), badgesEarned, badgeTotal, eventsAttended (distinct check-in events this cycle), currentStreak, bestStreak, monthWins (finished months won), cycleName, cycleEndsAt}` plus, for participants only, `{rankOverall, rankCampus, participants, campusParticipants}` (same formula as `dashboard_stats`), or for staff only `{councilBadges}` (earned Council badges). The card itself is drawn in the browser (`src/lib/questCard.ts`, lazy-loaded).
+
+### Weekly committee email
+- `build_weekly_report()`: copy of 0015 + one line before "This week": `📅 NEXT 7 DAYS (RSVPs): <title> (Tue Nov 10) · 12 going; …` (events of the active cycle starting in the next 7 days, soonest first; "No events scheduled." otherwise). Same line in the HTML.
+
+### Grants
+`badges_for`, `checkin_streak`, `build_weekly_report` are internal (revoked from everyone). `set_rsvp`, `event_rsvp_summary`, `admin_event_rsvps`, `admin_event_rsvp_counts`, `my_streak`, `my_recap`: revoked from `public, anon`, granted to `authenticated`.

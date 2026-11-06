@@ -79,6 +79,11 @@ export const {
   clearHero,
   grantStaffReward,
   councilBoard,
+  // 0022: event RSVPs, monthly check-in streaks, "My Quest Card"
+  setRsvp,
+  adminEventRsvps,
+  myStreak,
+  myRecap,
   submitFeedback,
   listFeedback,
   markFeedbackReviewed,

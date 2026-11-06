@@ -1259,7 +1259,7 @@ declare ids text[];
 begin
   select array_agg(id order by ord) into ids from (select id, row_number() over () ord from my_badges()) x;
   perform t.eq(ids, array['first_checkin','regular','veteran','explorer','big_moment','seasons','digital','shutterbug',
-                          'recruiter','giver','champion','voice','halfway','legend','monthly_star'], 'my_badges: 15 badges in badges.ts order');
+                          'recruiter','giver','champion','voice','halfway','legend','monthly_star','hot_streak'], 'my_badges: 16 badges in badges.ts order (0022: + hot_streak)');
   perform t.ok((select bool_and(not earned and progress = 0) from my_badges()), 'my_badges: fresh player has nothing (old-cycle check-in ignored)');
   perform t.eq((select goal from my_badges() where id = 'legend'), 650, 'legend goal = prize_goal');
   perform t.eq((select goal from my_badges() where id = 'halfway'), 325, 'halfway goal = half of prize_goal 650 (325)');
@@ -1316,8 +1316,10 @@ end $$;
 :as_gina
 do $$ begin
   perform t.ok((select earned and progress = 3 and goal = 3 from my_badges() where id = 'digital'), 'digital: 3 approved tier-3 submissions');
-  perform t.eq((select count(*) from my_badges() where earned), 5::bigint, '5 badges earned');
-  perform t.ok(not ('rainbow' = any (my_unlocks())) and 'wizard_hat' = any (my_unlocks()), 'rainbow needs 6 badges; wizard hat unlocked by digital');
+  -- 0022: check-ins 2 months ago, last month and this month = a 3-month streak → Hot Streak is badge #6
+  perform t.ok((select earned and progress = 3 and goal = 3 from my_badges() where id = 'hot_streak'), '0022: hot_streak earned (3 months in a row)');
+  perform t.eq((select count(*) from my_badges() where earned), 6::bigint, '6 badges earned (5 + Hot Streak)');
+  perform t.ok('rainbow' = any (my_unlocks()) and 'wizard_hat' = any (my_unlocks()), 'rainbow at 6 badges (Hot Streak counts); wizard hat unlocked by digital');
   perform t.ok(not ('flower_crown' = any (my_unlocks())), 'flower crown needs 100 points (has 95)');
   perform t.ok((select not earned and progress = 0 and goal = 1 from my_badges() where id = 'monthly_star'), 'monthly_star: Gina never won a finished month');
 end $$;
@@ -1336,7 +1338,7 @@ begin
   perform t.ok((select not earned from my_badges() where id = 'recruiter'), 'recruiter not earned');
   perform t.ok((select not earned and progress = 155 and goal = 325 from my_badges() where id = 'halfway'), 'halfway: progress = points (155)');
   perform t.eq(my_unlocks(), array['party_hat','flower_crown','explorer_cap','wizard_hat','pearls','medal','meadow','campus','sunset','rainbow'],
-               'my_unlocks: 8 badges → rainbow; 155 pts → flower crown');
+               'my_unlocks: 9 badges → rainbow; 155 pts → flower crown');
   -- equip_look
   r := equip_look('party_hat', 'medal', 'rainbow');
   perform t.eq(r::jsonb, '{"hat":"party_hat","accessory":"medal","background":"rainbow"}'::jsonb, 'equip_look returns the look');
@@ -1492,7 +1494,7 @@ begin
   perform t.eq(sh->>'userId', t.u('alice')::text, 'monthly: empty last month → current month (older months ignored)');
   perform t.ok((select earned and progress = 1 from badges_for(t.u('carol')) where id = 'monthly_star'), 'monthly_star: won a finished month (two months ago)');
   perform t.ok((select not earned and progress = 0 from badges_for(t.u('alice')) where id = 'monthly_star'), 'monthly_star: current-month leader has not earned it');
-  perform t.eq((select count(*) from badges_for(t.u('carol'))), 15::bigint, '15 badges');
+  perform t.eq((select count(*) from badges_for(t.u('carol'))), 16::bigint, '16 badges (0022)');
 
   -- Last month: carol and erin tie on 40 positive points; carol reached 40 first (8h vs 10h).
   perform t.give('carol', 25, t.at(-1, 3));
@@ -2189,6 +2191,178 @@ update profiles set avatar = coalesce(normal_avatar, 'yak') where avatar = 'gold
 do $$ begin
   perform t.eq((select count(*) from profiles where avatar = 'golden_yak'), 0::bigint, '0020: test leaves no Golden Yak behind');
 end $$;
+
+-- =============================================================================
+-- 26. 0022 — Event RSVPs, monthly check-in streaks, Hot Streak badge, my_recap
+--     (fresh cycle; everything rolled back afterwards)
+-- =============================================================================
+:as_super
+create function t.at22(k int, h int) returns timestamptz language sql stable as $$
+  select (date_trunc('month', now() at time zone 'America/New_York') + make_interval(months => k, hours => h))
+         at time zone 'America/New_York';
+$$;
+-- a check-in ledger row k months from now (k = 0 → this month)
+create function t.ci(p_user text, k int, p_cycle uuid default null) returns void language sql as $$
+  insert into public.ledger (cycle_id, user_id, amount, source, activity_id, ref_id, reason, created_at)
+  values (coalesce(p_cycle, public.active_cycle_id()), t.u(p_user), 20, 'checkin', 'home_event', gen_random_uuid()::text, 'streak test', t.at22(k, 30));
+$$;
+begin;
+update profiles set role = 'participant' where id in (t.u('alice'), t.u('carol'), t.u('erin'), t.u('dave')) and role <> 'participant';
+update cycles set is_active = false where is_active;
+insert into cycles (name, starts_at, ends_at, is_active) values ('RSVP test cycle', now() - interval '200 days', now() + interval '30 days', true);
+insert into events (id, cycle_id, title, campus, kind, location, starts_at, ends_at, activity_id) values
+  ('00000000-0000-0000-0000-0000000022e1', active_cycle_id(), 'RSVP Mixer',     'duke', 'active', 'Quad', now() + interval '2 days', now() + interval '2 days 2 hours', 'home_event'),
+  ('00000000-0000-0000-0000-0000000022e2', active_cycle_id(), 'Started Social', 'unc',  'active', 'Pit',  now() - interval '1 hour', now() + interval '1 hour', 'home_event'),
+  ('00000000-0000-0000-0000-0000000022e3', active_cycle_id(), 'Past Panel',     'ncsu', 'active', 'Hall', now() - interval '3 days', now() - interval '3 days' + interval '2 hours', 'home_event'),
+  ('00000000-0000-0000-0000-0000000022e4', (select id from cycles where not is_active order by starts_at limit 1), 'Old cycle event', 'duke', 'active', 'X', now() + interval '1 day', now() + interval '1 day 1 hour', 'home_event'),
+  ('00000000-0000-0000-0000-0000000022e5', active_cycle_id(), 'Soon <Social>',  'unc',  'active', 'Pit',  now() + interval '3 days', now() + interval '3 days 2 hours', 'home_event'),
+  ('00000000-0000-0000-0000-0000000022e6', active_cycle_id(), 'Far Gala',       'all',  'high_impact', 'Durham', now() + interval '10 days', now() + interval '10 days 3 hours', 'cross_campus_event');
+-- the past event: alice + carol RSVP'd before it started; only alice came
+insert into event_rsvps (event_id, user_id, created_at) values
+  ('00000000-0000-0000-0000-0000000022e3', t.u('alice'), now() - interval '5 days'),
+  ('00000000-0000-0000-0000-0000000022e3', t.u('carol'), now() - interval '4 days');
+insert into ledger (cycle_id, user_id, amount, source, activity_id, ref_id, reason, created_at)
+values (active_cycle_id(), t.u('alice'), 20, 'checkin', 'home_event', '00000000-0000-0000-0000-0000000022e3', 'Checked in: Past Panel', now() - interval '3 days');
+
+:as_alice
+do $$ declare r json; s json;
+begin
+  r := set_rsvp('00000000-0000-0000-0000-0000000022e1', true);
+  perform t.ok((r->>'going')::boolean and (r->>'goingCount')::int = 1 and (r->>'eventId')::uuid = '00000000-0000-0000-0000-0000000022e1', '0022: RSVP on → going, count 1');
+  r := set_rsvp('00000000-0000-0000-0000-0000000022e1', true);
+  perform t.eq((r->>'goingCount')::int, 1, '0022: RSVP twice is idempotent');
+  perform t.throws('select set_rsvp(''00000000-0000-0000-0000-0000000022e2'', true)', 'closed', '0022: can''t RSVP after the event starts');
+  perform t.throws('select set_rsvp(''00000000-0000-0000-0000-0000000022e2'', false)', 'closed', '0022: can''t un-RSVP after the event starts either');
+  perform t.throws('select set_rsvp(''00000000-0000-0000-0000-0000000022e4'', true)', 'not_found', '0022: other cycle''s event');
+  perform t.throws(format('select set_rsvp(%L, true)', gen_random_uuid()), 'not_found', '0022: unknown event');
+  perform t.throws('select set_rsvp(''00000000-0000-0000-0000-0000000022e1'', null)', 'going', '0022: going is required');
+  perform t.throws('select * from admin_event_rsvps(''00000000-0000-0000-0000-0000000022e1'')', 'forbidden', '0022: participant can''t see who''s going');
+  perform t.throws('select * from admin_event_rsvp_counts()', 'forbidden', '0022: participant can''t read RSVP counts per person');
+  s := event_rsvp_summary();
+  perform t.eq(json_array_length(s), 5, '0022: summary lists the active cycle''s events only');
+  perform t.ok((select (x->>'myRsvp')::boolean and (x->>'goingCount')::int = 1 from json_array_elements(s) x where x->>'eventId' = '00000000-0000-0000-0000-0000000022e1'), '0022: summary: my RSVP + count');
+  perform t.ok((select not (x->>'myRsvp')::boolean and (x->>'goingCount')::int = 0 from json_array_elements(s) x where x->>'eventId' = '00000000-0000-0000-0000-0000000022e5'), '0022: summary: not going, 0');
+  perform t.eq((select count(*) from event_rsvps), 2::bigint, '0022: participant reads only their own RSVPs (RLS)');
+  perform t.denied(format('insert into event_rsvps (event_id, user_id) values (%L, %L)', '00000000-0000-0000-0000-0000000022e5', auth.uid()), '0022: no direct inserts');
+  perform t.denied('delete from event_rsvps', '0022: no direct deletes');
+end $$;
+:as_carol
+do $$ declare r json;
+begin
+  r := set_rsvp('00000000-0000-0000-0000-0000000022e1', true);
+  perform t.eq((r->>'goingCount')::int, 2, '0022: second person → 2 going');
+  perform t.eq((select count(*) from event_rsvps where user_id = t.u('alice')), 0::bigint, '0022: can''t read someone else''s RSVPs');
+  r := set_rsvp('00000000-0000-0000-0000-0000000022e1', false);
+  perform t.ok(not (r->>'going')::boolean and (r->>'goingCount')::int = 1, '0022: toggle off → 1 going');
+  perform t.ok((select not (x->>'myRsvp')::boolean and (x->>'goingCount')::int = 1 from json_array_elements(event_rsvp_summary()) x where x->>'eventId' = '00000000-0000-0000-0000-0000000022e1'), '0022: summary after toggle off');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied('select set_rsvp(''00000000-0000-0000-0000-0000000022e1'', true)', '0022: anon can''t RSVP');
+  perform t.denied('select event_rsvp_summary()', '0022: anon can''t read RSVP counts');
+  perform t.denied('select my_recap()', '0022: anon can''t call my_recap');
+  perform t.denied('select my_streak()', '0022: anon can''t call my_streak');
+end $$;
+:as_chair1
+do $$ declare rep json; n int;
+begin
+  perform t.eq((select string_agg(handle || ':' || email || ':' || checked_in, ',') from admin_event_rsvps('00000000-0000-0000-0000-0000000022e1')),
+               'alice:alice@example.edu:false', '0022: staff see who''s going (name, email, not checked in yet)');
+  perform t.eq((select string_agg(handle || ':' || checked_in, ',' order by rsvp_at) from admin_event_rsvps('00000000-0000-0000-0000-0000000022e3')),
+               'alice:true,carol:false', '0022: past event: who came ✓, oldest RSVP first');
+  perform t.ok((select going = 2 and going_came = 1 from admin_event_rsvp_counts() where event_id = '00000000-0000-0000-0000-0000000022e3'), '0022: counts: 2 going, 1 came (1 RSVP''d but didn''t come)');
+  perform t.throws(format('select * from admin_event_rsvps(%L)', gen_random_uuid()), 'not_found', '0022: admin_event_rsvps unknown event');
+  perform t.eq((set_rsvp('00000000-0000-0000-0000-0000000022e1', true)->>'goingCount')::int, 2, '0022: staff can RSVP too');
+  perform t.denied('select * from checkin_streak(auth.uid())', '0022: checkin_streak is internal');
+  rep := weekly_report_preview();
+  perform t.ok(rep->>'text' like '%FEEDBACK (last 7 days)%📅 NEXT 7 DAYS (RSVPs): RSVP Mixer (% · 2 going; Soon <Social> (% · 0 going%THIS WEEK (since Monday)%', '0022: weekly email: next-7-days RSVP line (text, before This week)');
+  perform t.ok(rep->>'text' not like '%Far Gala%' and rep->>'text' not like '%Started Social%' and rep->>'text' not like '%Old cycle event%', '0022: weekly line: only events starting in the next 7 days');
+  perform t.ok(rep->>'html' like '%Next 7 days (RSVPs):</b> <b>RSVP Mixer</b> (%) · 2 going; <b>Soon &lt;Social&gt;</b>%', '0022: weekly line in HTML (escaped)');
+  perform t.ok(rep->>'text' like '%🐂 Yak of the week:%', '0022: rest of the weekly report unchanged (yak footer)');
+end $$;
+
+-- Streaks: months are America/New_York calendar months of the active cycle
+:as_super
+select t.ci('erin', -4), t.ci('erin', -3), t.ci('erin', -1) \g /dev/null
+-- don't count: a manual award this month, and a check-in from another cycle this month
+insert into ledger (cycle_id, user_id, amount, source, reason, created_at) values (active_cycle_id(), t.u('erin'), 5, 'manual', 'not a check-in', t.at22(0, 30));
+select t.ci('erin', 0, (select id from cycles where not is_active order by starts_at limit 1)) \g /dev/null
+:as_erin
+do $$ declare s json;
+begin
+  s := my_streak();
+  perform t.ok((s->>'current')::int = 1 and (s->>'best')::int = 2 and not (s->>'checkedInThisMonth')::boolean,
+               '0022: streak: gap resets; no check-in this month yet → current counts through last month (1), best 2');
+  perform t.ok((select not earned and progress = 2 and goal = 3 from my_badges() where id = 'hot_streak'), '0022: hot_streak 2/3');
+end $$;
+:as_super
+select t.ci('erin', 0) \g /dev/null
+:as_erin
+do $$ declare s json;
+begin
+  s := my_streak();
+  perform t.ok((s->>'current')::int = 2 and (s->>'best')::int = 2 and (s->>'checkedInThisMonth')::boolean, '0022: streak: checked in this month → 2, this month true');
+end $$;
+:as_super
+select t.ci('erin', -2), t.ci('erin', -2) \g /dev/null
+:as_erin
+do $$ declare s json; r json;
+begin
+  s := my_streak();
+  perform t.ok((s->>'current')::int = 5 and (s->>'best')::int = 5, '0022: filling the gap → 5 months in a row (two check-ins in one month count once)');
+  perform t.ok((select earned and progress = 3 and goal = 3 from my_badges() where id = 'hot_streak'), '0022: Hot Streak earned (progress capped at 3)');
+  r := my_recap();
+  perform t.ok((r->>'currentStreak')::int = 5 and (r->>'bestStreak')::int = 5, '0022: recap streaks');
+  perform t.eq((r->>'eventsAttended')::int, 6, '0022: recap: events attended this cycle (other cycle ignored)');
+  perform t.ok((r->'earnedBadgeIds')::jsonb ? 'hot_streak' and (r->>'badgesEarned')::int = jsonb_array_length((r->'earnedBadgeIds')::jsonb), '0022: recap badges include Hot Streak');
+end $$;
+:as_super
+select t.ci('dave', -3) \g /dev/null
+:as_dave
+do $$ declare s json;
+begin
+  s := my_streak();
+  perform t.ok((s->>'current')::int = 0 and (s->>'best')::int = 1 and not (s->>'checkedInThisMonth')::boolean, '0022: streak: last check-in 3 months ago → current 0, best 1');
+end $$;
+
+-- my_recap: own stats only, participant vs staff
+:as_super
+insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data) values
+  ('00000000-0000-0000-0000-0000000022a0', 'newbie22@example.edu', now(), '{"handle":"newbie22","display_name":"Newbie","campus":"unc","avatar":"unicorn"}');
+\set as_newbie22 'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000022a0''; set role authenticated;'
+:as_alice
+do $$ declare r json; d json := dashboard_stats();
+begin
+  r := my_recap();
+  perform t.ok(r->>'displayName' = (select display_name from profiles where id = t.u('alice')) and r->>'handle' = 'alice' and r->>'campus' = 'duke' and r->>'role' = 'participant', '0022: recap is the caller''s own');
+  perform t.eq((r->>'points')::int, (select points from profiles where id = auth.uid()), '0022: recap points = profile points');
+  perform t.ok((r->>'rankOverall')::int = (d->>'rankOverall')::int and (r->>'rankCampus')::int = (d->>'rankCampus')::int, '0022: recap ranks match the dashboard');
+  perform t.ok((r->>'participants')::int = (d->>'participants')::int and (r->>'campusParticipants')::int between 1 and (r->>'participants')::int - 1, '0022: recap participant counts');
+  perform t.ok(not ((r)::jsonb ? 'councilBadges'), '0022: participant recap has no staff info');
+  perform t.ok((r->>'eventsAttended')::int = 1 and (r->>'badgeTotal')::int = 16 and (r->>'badgesEarned')::int = (select count(*) from my_badges() where earned), '0022: recap events + badges');
+  perform t.ok(r->>'cycleName' = 'RSVP test cycle' and (r->>'monthWins')::int >= 0, '0022: recap cycle + month wins');
+  perform t.eq((select count(*) from pg_proc where proname = 'my_recap' and pronamespace = 'public'::regnamespace and pronargs = 0), 1::bigint, '0022: my_recap takes no user argument');
+  perform t.eq((select count(*) from pg_proc where proname = 'my_recap' and pronamespace = 'public'::regnamespace), 1::bigint, '0022: no other my_recap overload (can''t read someone else''s)');
+end $$;
+:as_newbie22
+do $$ declare r json;
+begin
+  r := my_recap();
+  perform t.ok((r->>'points')::int = 0 and (r->>'badgesEarned')::int = 0 and (r->>'eventsAttended')::int = 0
+               and (r->>'bestStreak')::int = 0 and (r->>'currentStreak')::int = 0 and json_array_length(r->'earnedBadgeIds') = 0
+               and (r->>'rankOverall')::int >= 1, '0022: brand-new user recap works (all zeros)');
+  perform t.ok((my_streak()->>'best')::int = 0, '0022: brand-new user streak 0');
+end $$;
+:as_chair1
+do $$ declare r json := my_recap();
+begin
+  perform t.ok(r->>'role' = 'chair' and (r)::jsonb ? 'councilBadges' and (r->>'councilBadges')::int >= 0, '0022: staff recap shows Council badges');
+  perform t.ok(not ((r)::jsonb ? 'rankOverall') and not ((r)::jsonb ? 'rankCampus'), '0022: staff recap has no rank');
+end $$;
+:as_super
+rollback;
+drop function t.ci(text, int, uuid);
+drop function t.at22(int, int);
 
 -- =============================================================================
 :as_super

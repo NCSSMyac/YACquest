@@ -11,6 +11,7 @@ import { fmtDate, fmtDateTime } from '../lib/format';
 import { prepareImage } from '../lib/image';
 import { errorMessage, useAsync } from '../lib/useAsync';
 import { Empty, ErrorText, Loading, Modal, Panel, StatusChip, TierChip, useToast } from '../components/ui';
+import { RsvpRow } from '../components/Rsvp';
 import type { Activity } from '../types';
 
 type Ev = Awaited<ReturnType<typeof api.listEvents>>[number];
@@ -130,7 +131,12 @@ function EventCard({ e, now, onDone }: { e: Ev; now: number; onDone: (pts: numbe
           <span className="chip neutral">{e.campus === 'all' ? 'All campuses' : campusName(e.campus)}</span>
         </div>
         <div className="muted">📍 {e.location}<br />🕒 {fmtDateTime(e.startsAt)}</div>
-        {now <= new Date(e.endsAt).getTime() && <AddToCalendar e={e} />}
+        {/* 0022: RSVP until the event starts; Add to calendar sits on the same line. */}
+        {!e.checkedIn && now < start ? (
+          <RsvpRow e={e} calendar={<AddToCalendar e={e} />} />
+        ) : (
+          now <= new Date(e.endsAt).getTime() && <AddToCalendar e={e} />
+        )}
         {e.checkedIn ? (
           <span className="chip approved" style={{ alignSelf: 'flex-start' }}>Checked in ✓</span>
         ) : live ? (

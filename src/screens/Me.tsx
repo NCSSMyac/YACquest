@@ -45,6 +45,7 @@ export default function Me() {
   const toast = useToast();
   const nav = useNavigate();
   const ledger = useAsync(() => api.myLedger(), [], { live: true });
+  const streak = useAsync(() => api.myStreak(), [], { live: true });
   // Staff only (0020): null for participants, so the Golden Yak never shows for them.
   const staff = useStaffRewards().data;
   const legendary = staff?.legendary ? LEGENDARY_AVATARS : [];
@@ -117,6 +118,13 @@ export default function Me() {
           <div style={{ flex: 1, minWidth: 0 }}>
             <h1 style={{ margin: 0 }}>{user.displayName}</h1>
             <div className="muted">@{user.handle} · {campusName(user.campus)} · {ROLE[user.role]}</div>
+            {streak.data && (streak.data.current >= 1 || streak.data.best >= 1) && (
+              <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                {streak.data.current >= 1 && <span className="chip streak">🔥 {streak.data.current}-month streak</span>}
+                {streak.data.best > streak.data.current && <small className="muted">Best: {streak.data.best} months</small>}
+                {streak.data.current >= 1 && !streak.data.checkedInThisMonth && <small className="muted">Check in this month to keep it going!</small>}
+              </div>
+            )}
             <Link to="/prize?tab=wardrobe" className="btn small" style={{ marginTop: 8 }}>👒 Wardrobe</Link>
           </div>
         </div>

@@ -95,10 +95,16 @@ export default function Home() {
       </div>
 
       <Panel tone="gold" title="Your points">
-        <div className="row" style={{ marginBottom: 10 }}>
+        <div className="row" style={{ marginBottom: 10, flexWrap: 'wrap' }}>
           <span className="coin" aria-hidden />
           <span style={{ fontFamily: 'var(--font-num)', fontWeight: 800, fontSize: 34 }}>{d.points}</span>
+          {d.streak.current >= 2 && (
+            <span className="chip streak" title="Months in a row with an event check-in">🔥 {d.streak.current}-month streak</span>
+          )}
         </div>
+        {d.streak.current >= 1 && !d.streak.checkedInThisMonth && (
+          <p className="streak-hint" style={{ margin: '-4px 0 10px' }}>🔥 Check in this month to keep your streak!</p>
+        )}
         <TreasureMap points={d.points} avatar={d.user.avatar} look={{ ...d.user.look, background: undefined }} />
         <p style={{ margin: '10px 0 0', fontSize: 18 }}>
           {d.myClaim ? (

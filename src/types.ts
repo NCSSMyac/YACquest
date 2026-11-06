@@ -197,6 +197,8 @@ export interface Dashboard {
   referralsUsed: number;
   /** Latest admin announcements sent to this person (newest first, up to 3). */
   messages: AppNotification[];
+  /** 0022: monthly check-in streak (all zeros if the server doesn't have 0022 yet). */
+  streak: Streak;
 }
 
 /** Weekly committee email + prize alert settings (chairs edit these in Admin → System). */
@@ -435,4 +437,69 @@ export interface StaffRewards {
   legendary: boolean;
   /** Chair grants held (STAFF_GRANTS ids). */
   grants: string[];
+}
+
+// ───────────── 0022: event RSVPs, monthly check-in streaks, "My Quest Card" ─────────────
+
+/** RSVP info merged into the participant event list (counts only: participant-safe). */
+export interface EventRsvpInfo {
+  goingCount: number;
+  myRsvp: boolean;
+}
+
+/** Admin → Events card counts. `rsvpCame` = people who RSVP'd AND checked in. */
+export interface AdminEventRsvpCounts {
+  goingCount: number;
+  rsvpCame: number;
+}
+
+/** One row of Admin → Events → Who's going (admins + chairs only). */
+export interface EventRsvp {
+  userId: string;
+  displayName: string;
+  handle: string;
+  campus: CampusId;
+  email: string;
+  rsvpAt: string;
+  checkedIn: boolean;
+}
+
+/**
+ * Monthly check-in streak: consecutive America/New_York calendar months of this cycle with at least one
+ * event check-in. `current` counts back from this month, or from last month when there's no check-in yet
+ * this month (`checkedInThisMonth` false → "keep it going"). `best` = longest run this cycle.
+ */
+export interface Streak {
+  current: number;
+  best: number;
+  checkedInThisMonth: boolean;
+}
+
+/** my_recap() (0022): the caller's own stats for the shareable "My Quest Card". */
+export interface QuestRecap {
+  displayName: string;
+  handle: string;
+  campus: CampusId;
+  role: Role;
+  avatar: AvatarId;
+  look?: Look;
+  points: number;
+  badgesEarned: number;
+  badgeTotal: number;
+  /** Earned participant badge ids, in BADGES order. */
+  earnedBadgeIds: string[];
+  eventsAttended: number;
+  currentStreak: number;
+  bestStreak: number;
+  /** Adventurer of the Month wins (finished months). */
+  monthWins: number;
+  /** Participants only. */
+  rankOverall?: number;
+  rankCampus?: number;
+  participants?: number;
+  campusParticipants?: number;
+  /** Staff only: Council badges earned. */
+  councilBadges?: number;
+  cycleName: string;
+  cycleEndsAt: string;
 }

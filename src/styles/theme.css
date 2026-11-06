@@ -413,6 +413,17 @@ input[type='radio'] { width: 20px; height: 20px; accent-color: var(--navy-800); 
 .cal-item + .cal-item { border-top: 2px dashed var(--rule); }
 .cal-item:hover, .cal-item:focus-visible { background: var(--gold-300); color: var(--navy-900); }
 
+/* ───────────── 0022: RSVP row (Earn), streak chip (Home / Me) ───────────── */
+.rsvp-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.rsvp-row .btn[aria-pressed] { min-width: 108px; }
+.rsvp-count { font-size: 14px; font-weight: 700; white-space: nowrap; }
+.rsvp-row .cal-wrap { align-self: center; }
+.chip.streak { color: #b3361c; background: #ffe9dc; }
+.quest-card-preview { display: grid; place-items: center; min-height: 200px; background: var(--navy-900); border: var(--px) solid var(--navy-900); padding: 8px; }
+.quest-card-preview img { display: block; width: auto; max-width: 100%; max-height: 60vh; aspect-ratio: 9 / 16; }
+.streak-hint { margin: 6px 0 0; font-size: 13px; font-weight: 700; color: #b3361c; }
+.panel.gold .streak-hint { color: #9a2e14; }
+
 /* Muted text stays readable on gold panels in dark mode too */
 .panel.gold .muted { color: #5a4512; }
 .panel.gold .chip.neutral { color: #5a4512; }

@@ -59,3 +59,10 @@ Nobody gets there from events alone (all 6 = 150, short of halfway at 175): ever
 - **Feb 1:** if almost nobody is past halfway (175), lower the goal and announce it. The goal, number of spots and gift card value live in `src/config.ts` (`PRIZE`) **and** the database (`app_config.prize_goal`, `prize_count`, `prize_value_usd`; to change it, copy the goal section of `supabase/migrations/0018_goal_350_again.sql` into a new migration).
 - If YAC plans more or fewer events, edit `OPP` (and `GOAL`) in the script and rerun it.
 - **Revoked prizes:** if points are removed and a winner drops below 350, their spot goes to the next person who qualified.
+
+## Badges (16, just for fun)
+Badges never award points, so they can't change the prize race. Participants can collect **16** (Prize → Badges; the server's list is `badges_for()` in `supabase/migrations/0022_rsvp_streaks.sql`, names in `src/lib/badges.ts`): First Steps, Regular (5 check-ins), Veteran (10), Campus Explorer (Duke + UNC + NC State), Big Moment (a High-Impact event), All Seasons (check-ins in 3 different months), Digital Native (3 digital quests), Shutterbug, Recruiter, Giver, Champion, Voice of the Herd, Halfway There (175), Quest Legend (350), Adventurer of the Month, and **Hot Streak** (new in 0022).
+
+**Hot Streak** = check in at events **3 calendar months in a row** (America/New_York, this cycle). Progress is your best streak this cycle (e.g. 2/3). With only ~6 events this year, YAC needs an event in each of 3 consecutive months for anyone to earn it, so it's a nice reason to space events out. The Rainbow background still unlocks at 6 badges (Hot Streak counts like any other).
+
+**Monthly streak** (shown on Home and Me): consecutive months with at least one check-in. It counts back from this month; if you haven't checked in yet this month it still counts through last month and Home says "Check in this month to keep your streak!". Missing a whole month resets it. RSVPs ("I'm going") don't count and earn no points; only check-ins do.

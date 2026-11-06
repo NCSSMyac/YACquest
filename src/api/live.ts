@@ -52,6 +52,11 @@ import type {
   StaffRewardRow,
   StaffRewards,
   CouncilMember,
+  AdminEventRsvpCounts,
+  EventRsvp,
+  EventRsvpInfo,
+  QuestRecap,
+  Streak,
 } from '../types';
 import { ApiError, emitChange } from './shared';
 import type { AdminOverview, AdminUserRow, EventInput, QueueItem, SignupInput, SignupResult, TeamMember } from './shared';
@@ -527,7 +532,7 @@ export async function getDashboard(): Promise<Dashboard> {
   if (!s) return fail('unauthenticated', 'Please log in again.');
   const userId = s.user.id;
   const cycle = await activeCycle();
-  const [user, stats, prize, claimRows, subRows, ledgerRows, msgRows] = await Promise.all([
+  const [user, stats, prize, claimRows, subRows, ledgerRows, msgRows, streak] = await Promise.all([
     loadProfile(s.user),
     rpc<AnyRow | AnyRow[]>('dashboard_stats').then(one),
     rpc<AnyRow | AnyRow[]>('prize_status').then(one),
@@ -535,6 +540,7 @@ export async function getDashboard(): Promise<Dashboard> {
     sb().from('submissions').select(SUBMISSION_COLS).eq('user_id', userId).order('created_at', { ascending: false }).limit(5).then(rows),
     sb().from('ledger').select(LEDGER_COLS).eq('user_id', userId).eq('cycle_id', cycle.id).order('created_at', { ascending: false }).limit(8).then(rows),
     sb().from('notifications').select('id, user_id, kind, title, body, read, created_at').eq('user_id', userId).eq('kind', 'announcement').order('created_at', { ascending: false }).limit(3).then(rows),
+    myStreak(),
   ]);
   if (!user) return fail('unauthenticated', 'Please log in again.');
   const st = stats ?? {};
@@ -556,6 +562,7 @@ export async function getDashboard(): Promise<Dashboard> {
     messages: ((msgRows as AnyRow[]) ?? []).map(toNotification),
     daysLeft: Math.max(0, Math.ceil((new Date(cycle.endsAt).getTime() - Date.now()) / 86_400_000)),
     referralsUsed: num(pick(st, 'referrals_used')),
+    streak,
   };
 }
 
@@ -563,7 +570,7 @@ export async function listActivities(): Promise<Activity[]> {
   return ACTIVITIES;
 }
 
-export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Promise<(YacEvent & { checkedIn: boolean })[]> {
+export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Promise<(YacEvent & { checkedIn: boolean } & EventRsvpInfo)[]> {
   const user = await requireMe();
   const cycle = await activeCycle();
   const evRows = rows(await sb().from('events').select(EVENT_COLS).eq('cycle_id', cycle.id).order('starts_at', { ascending: true }).limit(500)) as AnyRow[];
@@ -580,14 +587,94 @@ export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Pr
   if (!events.length) return [];
   const ids = events.map((e) => e.id);
   const isAdmin = user.role === 'admin' || user.role === 'chair';
-  const [checkins, secrets] = await Promise.all([
+  const [checkins, secrets, rsvps] = await Promise.all([
     sb().from('ledger').select('ref_id').eq('user_id', user.id).eq('source', 'checkin').in('ref_id', ids).then(rows),
     isAdmin ? sb().from('event_secrets').select('event_id, password').in('event_id', ids).then(rows) : Promise.resolve([] as AnyRow[]),
+    rsvpSummary(),
   ]);
   const attended = new Set(((checkins as AnyRow[]) ?? []).map((r) => str(r.ref_id)));
   const pw = new Map(((secrets as AnyRow[]) ?? []).map((r) => [str(r.event_id), str(r.password)]));
   // Participants never receive passwords (RLS on event_secrets enforces this too).
-  return events.map((e) => ({ ...e, ...(isAdmin && pw.has(e.id) ? { password: pw.get(e.id) } : {}), checkedIn: attended.has(e.id) }));
+  return events.map((e) => ({
+    ...e,
+    ...(isAdmin && pw.has(e.id) ? { password: pw.get(e.id) } : {}),
+    checkedIn: attended.has(e.id),
+    goingCount: rsvps.get(e.id)?.goingCount ?? 0,
+    myRsvp: rsvps.get(e.id)?.myRsvp ?? false,
+  }));
+}
+
+// ───────────────────────────── 0022: RSVPs + streaks + quest card ─────────────────────────────
+
+/** event_rsvp_summary() → json [{eventId, goingCount, myRsvp}]. Empty (no RSVP info) if the server doesn't have 0022 yet. */
+async function rsvpSummary(): Promise<Map<string, EventRsvpInfo>> {
+  try {
+    const list = (await rpc<AnyRow[] | null>('event_rsvp_summary')) ?? [];
+    return new Map(list.map((r) => [str(pick(r, 'event_id')), { goingCount: num(pick(r, 'going_count')), myRsvp: Boolean(pick(r, 'my_rsvp')) }]));
+  } catch {
+    return new Map();
+  }
+}
+
+/** set_rsvp(p_event_id, p_going) → {eventId, going, goingCount}. Errors: `closed` (event started), `not_found`. No points. */
+export async function setRsvp(eventId: string, going: boolean): Promise<{ going: boolean; goingCount: number }> {
+  const r = one(await rpc<AnyRow | AnyRow[] | null>('set_rsvp', { p_event_id: eventId, p_going: going })) ?? {};
+  emitChange();
+  return { going: Boolean(r.going), goingCount: num(pick(r, 'going_count')) };
+}
+
+/** admin_event_rsvps (0022) → who's going, oldest RSVP first. Admins + chairs (participants get `forbidden`). */
+export async function adminEventRsvps(eventId: string): Promise<EventRsvp[]> {
+  return ((await rpc<AnyRow[]>('admin_event_rsvps', { p_event_id: eventId })) ?? []).map((r) => ({
+    userId: str(pick(r, 'user_id')),
+    displayName: str(pick(r, 'display_name')),
+    handle: str(r.handle),
+    campus: str(r.campus) as CampusId,
+    email: str(r.email),
+    rsvpAt: str(pick(r, 'rsvp_at')),
+    checkedIn: Boolean(pick(r, 'checked_in')),
+  }));
+}
+
+/** my_streak() (0022) → {current, best, checkedInThisMonth}. Zeros if the server doesn't have 0022 yet. */
+export async function myStreak(): Promise<Streak> {
+  try {
+    const r = one(await rpc<AnyRow | AnyRow[] | null>('my_streak')) ?? {};
+    return { current: num(r.current), best: num(r.best), checkedInThisMonth: Boolean(pick(r, 'checked_in_this_month')) };
+  } catch {
+    return { current: 0, best: 0, checkedInThisMonth: false };
+  }
+}
+
+/** my_recap() (0022) → the caller's own quest-card stats (ranks for participants, Council badge count for staff). */
+export async function myRecap(): Promise<QuestRecap> {
+  const r = one(await rpc<AnyRow | AnyRow[] | null>('my_recap')) ?? {};
+  const optNum = (v: unknown) => (v === null || v === undefined ? undefined : Number(v));
+  const order = new Map(BADGES.map((b, i) => [b.id, i]));
+  const ids = strList(pick(r, 'earned_badge_ids')).filter((id) => order.has(id));
+  return {
+    displayName: str(pick(r, 'display_name')),
+    handle: str(r.handle),
+    campus: pick<CampusId>(r, 'campus'),
+    role: (str(r.role) || 'participant') as Role,
+    avatar: (str(r.avatar) || 'yak') as AvatarId,
+    look: toLook(r),
+    points: num(r.points),
+    badgesEarned: ids.length,
+    badgeTotal: BADGES.length,
+    earnedBadgeIds: ids,
+    eventsAttended: num(pick(r, 'events_attended')),
+    currentStreak: num(pick(r, 'current_streak')),
+    bestStreak: num(pick(r, 'best_streak')),
+    monthWins: num(pick(r, 'month_wins')),
+    rankOverall: optNum(pick(r, 'rank_overall')),
+    rankCampus: optNum(pick(r, 'rank_campus')),
+    participants: optNum(r.participants),
+    campusParticipants: optNum(pick(r, 'campus_participants')),
+    councilBadges: optNum(pick(r, 'council_badges')),
+    cycleName: str(pick(r, 'cycle_name')),
+    cycleEndsAt: str(pick(r, 'cycle_ends_at')),
+  };
 }
 
 export async function checkIn(eventId: string, password: string): Promise<{ points: number; activity: Activity }> {
@@ -835,8 +922,17 @@ export async function awardActivity(userId: string, activityId: string, note: st
   emitChange();
 }
 
-export async function adminListEvents(): Promise<YacEvent[]> {
-  return ((await rpc<AnyRow[]>('admin_list_events')) ?? []).map(toEvent);
+export async function adminListEvents(): Promise<(YacEvent & AdminEventRsvpCounts)[]> {
+  const [list, counts] = await Promise.all([
+    rpc<AnyRow[]>('admin_list_events'),
+    // 0022 (admins + chairs): RSVP counts per event. Zeros if the server doesn't have 0022 yet.
+    rpc<AnyRow[] | null>('admin_event_rsvp_counts').catch(() => [] as AnyRow[]),
+  ]);
+  const byId = new Map((counts ?? []).map((r) => [str(pick(r, 'event_id')), r]));
+  return (list ?? []).map(toEvent).map((e) => {
+    const c = byId.get(e.id);
+    return { ...e, goingCount: c ? num(c.going) : 0, rsvpCame: c ? num(pick(c, 'going_came')) : 0 };
+  });
 }
 
 /** admin_event_attendees (0013) → who checked in, oldest first. Admins + chairs. */

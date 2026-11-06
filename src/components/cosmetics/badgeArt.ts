@@ -251,6 +251,23 @@ export const BADGE_ART: Record<string, BadgeArt> = {
       '..kk..kk..',
     ],
   },
+  // 0022: Hot Streak — a pixel flame
+  hot_streak: {
+    ring: 'r',
+    fill: 'h',
+    symbol: [
+      '....k.....',
+      '...krk....',
+      '...krrk...',
+      '..krrrk.k.',
+      '..krOrkkrk',
+      '.krOOrrrrk',
+      '.krOgOOOrk',
+      'krOggyyOrk',
+      '.krOyyyOk.',
+      '..kkkkkk..',
+    ],
+  },
 };
 
 /** The medallion shape: 'k' outline, 'R' ring, 'F' fill, 'S' shine, '.' outside. */
