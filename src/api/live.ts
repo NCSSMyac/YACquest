@@ -9,6 +9,7 @@ import type { Session, User as AuthUser } from '@supabase/supabase-js';
 import { CAMPUSES, PRIZE, TIER_POINTS, type CampusId } from '../config';
 import { ACTIVITIES, activityById } from '../lib/activities';
 import { BADGES } from '../lib/badges';
+import { STAFF_BADGES } from '../lib/staffRewards';
 import { NAME_NOT_ALLOWED, nameIsClean } from '../lib/nameFilter';
 import { getSupabase, siteUrl } from '../lib/supabase';
 import { announcementError, claimContactError, isEmail } from '../lib/validate';
@@ -46,6 +47,11 @@ import type {
   Look,
   Shoutout,
   EventAttendee,
+  HeroBoard,
+  HeroReign,
+  StaffRewardRow,
+  StaffRewards,
+  CouncilMember,
 } from '../types';
 import { ApiError, emitChange } from './shared';
 import type { AdminOverview, AdminUserRow, EventInput, QueueItem, SignupInput, SignupResult, TeamMember } from './shared';
@@ -1222,4 +1228,114 @@ export async function monthlyShoutout(): Promise<Shoutout | null> {
     month: str(pick(r, 'month')),
     final: pick(r, 'final') === true || pick(r, 'final') === 'true',
   };
+}
+
+// ───────────────────────────── staff-only rewards (0020) ─────────────────────────────
+// Hero of the Week, Council wardrobe + badges, Golden Yak. The server filters by role:
+// my_staff_rewards() is null for participants, the rest is staff/chair-only.
+
+const strList = (v: unknown): string[] => (Array.isArray(v) ? v.map(str).filter(Boolean) : []);
+
+function toReign(r: AnyRow): HeroReign {
+  return {
+    id: str(r.id),
+    userId: str(pick(r, 'user_id')),
+    displayName: str(pick(r, 'display_name')),
+    campus: pick<CampusId>(r, 'campus'),
+    avatar: pick<AvatarId>(r, 'avatar'),
+    look: toLook(r),
+    note: str(r.note),
+    crownedAt: str(pick(r, 'crowned_at')),
+    crownedByName: str(pick(r, 'crowned_by_name')),
+    endedAt: opt(pick(r, 'ended_at')),
+  };
+}
+
+/** my_staff_rewards() → json or null (participants always get null). */
+export async function myStaffRewards(): Promise<StaffRewards | null> {
+  const r = one(await rpc<AnyRow | AnyRow[] | null>('my_staff_rewards'));
+  if (!r) return null;
+  const order = new Map(STAFF_BADGES.map((b, i) => [b.id, i]));
+  const badges = ((r.badges as AnyRow[] | null) ?? [])
+    .map((b) => ({ id: str(b.id), earned: Boolean(b.earned), progress: num(b.progress), goal: Math.max(1, num(b.goal)) }))
+    .filter((b) => order.has(b.id))
+    .sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+  return {
+    isHero: Boolean(pick(r, 'is_hero')),
+    heroCount: num(pick(r, 'hero_count')),
+    unlocks: strList(r.unlocks),
+    badges,
+    legendary: Boolean(r.legendary),
+    grants: strList(r.grants),
+  };
+}
+
+/** hero_board() (admins + chairs) → {current, history[], team[]}. */
+export async function heroBoard(): Promise<HeroBoard> {
+  const r = one(await rpc<AnyRow | AnyRow[] | null>('hero_board')) ?? {};
+  const cur = r.current as AnyRow | null;
+  const team: StaffRewardRow[] = ((r.team as AnyRow[] | null) ?? []).map((t) => ({
+    userId: str(pick(t, 'user_id')),
+    displayName: str(pick(t, 'display_name')),
+    handle: str(t.handle),
+    role: t.role as Role,
+    campus: pick<CampusId>(t, 'campus'),
+    avatar: pick<AvatarId>(t, 'avatar'),
+    look: toLook(t),
+    isHero: Boolean(pick(t, 'is_hero')),
+    heroCount: num(pick(t, 'hero_count')),
+    grants: strList(t.grants),
+    legendary: Boolean(t.legendary),
+  }));
+  return { current: cur && pick(cur, 'user_id') ? toReign(cur) : null, history: ((r.history as AnyRow[] | null) ?? []).map(toReign), team };
+}
+
+/** crown_hero (chairs). Errors: forbidden, not_found, not_staff, note. */
+export async function crownHero(userId: string, note = ''): Promise<void> {
+  if (note.trim().length > 120) fail('note', 'Keep the note to 120 characters.');
+  await rpc('crown_hero', { p_user_id: userId, p_note: note.trim() });
+  await refreshMeIfStaff();
+  emitChange();
+}
+
+/** clear_hero (chairs). Errors: forbidden, not_found. */
+export async function clearHero(): Promise<void> {
+  await rpc('clear_hero');
+  await refreshMeIfStaff();
+  emitChange();
+}
+
+/** grant_staff_reward (chairs). rewardId: wizard_council_hat | royal_scepter | starlit_throne | council_mvp. */
+export async function grantStaffReward(userId: string, rewardId: string): Promise<void> {
+  await rpc('grant_staff_reward', { p_user_id: userId, p_reward: rewardId });
+  emitChange();
+}
+
+/** Crowning/clearing can take hero items off the caller's own look: reload the profile. */
+async function refreshMeIfStaff() {
+  const s = await session();
+  if (s) notifyAuth(await loadProfile(s.user));
+}
+
+/** council_board() (0021, admins + chairs) → json array, already sorted (hero, chairs, admins, name). */
+export async function councilBoard(): Promise<CouncilMember[]> {
+  const list = (await rpc<AnyRow[] | null>('council_board')) ?? [];
+  const order = new Map(STAFF_BADGES.map((b, i) => [b.id, i]));
+  return list.map((r) => ({
+    userId: str(pick(r, 'user_id')),
+    displayName: str(pick(r, 'display_name')),
+    handle: str(r.handle),
+    role: r.role as Role,
+    campus: pick<CampusId>(r, 'campus'),
+    avatar: pick<AvatarId>(r, 'avatar'),
+    look: toLook(r),
+    isHero: Boolean(pick(r, 'is_hero')),
+    heroCount: num(pick(r, 'hero_count')),
+    badges: ((r.badges as AnyRow[] | null) ?? [])
+      .map((b) => ({ id: str(b.id), earned: Boolean(b.earned), progress: num(b.progress), goal: Math.max(1, num(b.goal)) }))
+      .filter((b) => order.has(b.id))
+      .sort((a, b) => order.get(a.id)! - order.get(b.id)!),
+    unlockCount: num(pick(r, 'unlock_count')),
+    legendary: Boolean(r.legendary),
+  }));
 }

@@ -4,7 +4,8 @@ import { useAuth } from '../../lib/auth';
 import { badgeById } from '../../lib/badges';
 import { COSMETICS, type CosmeticDef, type UnlockRule } from '../../lib/cosmetics';
 import { errorMessage } from '../../lib/useAsync';
-import type { CosmeticSlot, Look } from '../../types';
+import { STAFF_COSMETICS, staffRequirementText } from '../../lib/staffRewards';
+import type { CosmeticSlot, Look, StaffRewards } from '../../types';
 import { Avatar, CosmeticIcon } from '../Avatar';
 import { ErrorText, Loading, Panel, useToast } from '../ui';
 
@@ -29,7 +30,8 @@ export function requirementText(rule: UnlockRule): string {
 
 const sameLook = (a?: Look, b?: Look) => (a?.hat ?? '') === (b?.hat ?? '') && (a?.accessory ?? '') === (b?.accessory ?? '') && (a?.background ?? '') === (b?.background ?? '');
 
-export function WardrobePanel({ unlocks, error }: { unlocks: string[] | null; error?: string | null }) {
+/** `staff` (0020): the caller's staff rewards — only ever non-null for admins/chairs; adds the Council + Hero sections. */
+export function WardrobePanel({ unlocks, error, staff }: { unlocks: string[] | null; error?: string | null; staff?: StaffRewards | null }) {
   const { user, refresh } = useAuth();
   const toast = useToast();
   const [draft, setDraft] = useState<Look>(user?.look ?? {});
@@ -42,10 +44,10 @@ export function WardrobePanel({ unlocks, error }: { unlocks: string[] | null; er
 
   if (!user) return null;
   if (!unlocks) return error ? <ErrorText error={error} /> : <Loading lines={4} />;
-  const have = new Set(unlocks);
+  const have = new Set([...unlocks, ...(staff?.unlocks ?? [])]);
   const dirty = !sameLook(draft, saved);
 
-  const toggle = (c: CosmeticDef) => {
+  const toggle = (c: Pick<CosmeticDef, 'id' | 'slot'>) => {
     if (!have.has(c.id)) return;
     setErr(null);
     setDraft((d) => ({ ...d, [c.slot]: d[c.slot] === c.id ? undefined : c.id }));
@@ -70,7 +72,7 @@ export function WardrobePanel({ unlocks, error }: { unlocks: string[] | null; er
       <Panel tone="gold">
         <div className="stack" style={{ alignItems: 'center', textAlign: 'center', gap: 10 }}>
           <div style={{ border: 'var(--px) solid var(--navy-900)', background: 'var(--paper)', boxShadow: 'var(--shadow)', lineHeight: 0 }}>
-            <Avatar id={user.avatar} look={draft} campus={user.campus} size={160} />
+            <Avatar id={user.avatar} look={draft} campus={user.campus} size={160} hero={!!staff?.isHero} />
           </div>
           <div className="row wrap" style={{ justifyContent: 'center', gap: 8 }}>
             <button className="btn green" onClick={save} disabled={busy || !dirty}>{busy ? 'Saving…' : dirty ? 'Save look' : 'Saved'}</button>
@@ -107,7 +109,62 @@ export function WardrobePanel({ unlocks, error }: { unlocks: string[] | null; er
           </Panel>
         );
       })}
+
+      {staff && (
+        <>
+          <StaffSection
+            title="🏛️ Council wardrobe"
+            note="Staff only. Earned from your YAC staff work (all-time) or granted by a chair."
+            items={STAFF_COSMETICS.filter((c) => c.rule.type !== 'hero')}
+            have={have}
+            draft={draft}
+            campus={user.campus}
+            onToggle={toggle}
+          />
+          <StaffSection
+            title="🦸 Hero of the Week"
+            note={staff.isHero ? 'You’re the reigning Hero of the Week! These are yours until the next hero is crowned.' : 'Only for the reigning Hero of the Week. Chairs crown a hero at YAC meetings.'}
+            items={STAFF_COSMETICS.filter((c) => c.rule.type === 'hero')}
+            have={have}
+            draft={draft}
+            campus={user.campus}
+            onToggle={toggle}
+            gold={staff.isHero}
+          />
+        </>
+      )}
     </div>
+  );
+}
+
+function StaffSection({ title, note, items, have, draft, campus, onToggle, gold }: {
+  title: string;
+  note: string;
+  items: typeof STAFF_COSMETICS;
+  have: Set<string>;
+  draft: Look;
+  campus: Parameters<typeof CosmeticIcon>[0]['campus'];
+  onToggle: (c: Pick<CosmeticDef, 'id' | 'slot'>) => void;
+  gold?: boolean;
+}) {
+  const got = items.filter((c) => have.has(c.id)).length;
+  return (
+    <Panel title={title} tone={gold ? 'gold' : undefined} action={<span className="chip neutral">{got} / {items.length}</span>}>
+      <p style={{ margin: '0 0 8px', fontSize: 14 }}>{note}</p>
+      <div role="group" aria-label={title} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))', gap: 8 }}>
+        {items.map((c) => {
+          const locked = !have.has(c.id);
+          return (
+            <Tile key={c.id} selected={draft[c.slot] === c.id} locked={locked} onClick={() => onToggle(c)} label={c.name} hint={locked ? staffRequirementText(c.rule) : undefined}>
+              <span style={{ position: 'relative', display: 'inline-block', lineHeight: 0 }}>
+                <CosmeticIcon id={c.id} size={44} campus={campus} locked={locked} />
+                {locked && <LockGlyph />}
+              </span>
+            </Tile>
+          );
+        })}
+      </div>
+    </Panel>
   );
 }
 

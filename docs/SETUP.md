@@ -10,7 +10,7 @@ This takes about 30–45 minutes, done once. Dashboard menu names can differ sli
 ## 2. Create the database
 1. Open **SQL Editor → New query**.
 2. Paste the whole of `supabase/migrations/0001_init.sql` and click **Run**. It should finish with "Success". It is safe to run again.
-3. Then do the same for every later file in `supabase/migrations/` **in number order** (`0002_event_kinds.sql`, … through `0019_consistency_350.sql`). Each new migration only needs to be run once, but re-running is safe.
+3. Then do the same for every later file in `supabase/migrations/` **in number order** (`0002_event_kinds.sql`, … through `0021_council_board.sql`). Each new migration only needs to be run once, but re-running is safe.
    - **Already live before 0013?** Run `0013_launch_extras.sql` once (anonymous feedback, the sign-up email checkbox, and Admin → Events → **Who came**).
    - **Already live before 0014?** Run `0014_goal_350.sql` once (prize goal 650 → 350, Halfway badge 175, Sparkle Aura at 300, "close to the prize" range 75). Deploy the new app build at the same time so the app shows the same goal.
    - **Already live before 0015?** Run `0015_yak_puns.sql` once (adds a "Yak of the week" line to the weekly committee email and admin prize alerts).
@@ -18,6 +18,8 @@ This takes about 30–45 minutes, done once. Dashboard menu names can differ sli
    - **Already live before 0017?** Run `0017_consistency.sql` once (no rule changes: fixes stale column defaults, and the announcement email footer now names the “Email me announcements from YAC” setting).
    - **Already live before 0018?** Run `0018_goal_350_again.sql` once (prize goal back to 350, Halfway badge 175, Sparkle Aura at 300, "close to the prize" range 75). Deploy the new app build at the same time so the app shows the same goal. If you never ran 0017, run it first, then 0018 (0016 can be skipped).
    - **Already live before 0019?** Run `0019_consistency_350.sql` once (no rule changes: chair-limit fallbacks now 6). App build unchanged by this file.
+   - **Already live before 0020?** Run `0020_staff_rewards.sql` once (staff-only rewards: Hero of the Week, Council wardrobe + badges, Golden Yak) and deploy the new app build with it. Nothing changes for participants.
+   - **Already live before 0021?** Run `0021_council_board.sql` once (after 0020) for the staff-only Admin → Council team board, and deploy the app build with it.
 
 ## 3. Turn on real logins
 **Authentication → Sign In / Providers → Email**
@@ -102,6 +104,15 @@ Chairs can also see every admin change (points added/removed, reviews, role chan
 - **Stepping down**: Admin → **Team → Step down as chair** makes you an admin (not allowed if you're the only chair — make someone else a chair first). Or use **Hand over my chair seat** to swap places with a successor in one step (handy when all 6 seats are full). Another chair can then remove you from the team.
 - Also transfer **Supabase project ownership** (Organization → Team) and the GitHub repo access to the new chair.
 
+### Staff rewards: Hero of the Week, Council wardrobe, Golden Yak (staff only)
+Participants never see any of this (not in the Wardrobe, Badges, character picker, Rules or Help); only admins and chairs do.
+- **Crown Hero of the Week** (after each biweekly YAC meeting): Admin → **Heroes** (chairs only) → pick the admin or chair, add an optional short note (e.g. "ran the pickleball check-in table") → **Crown hero**. They get a pop-up next time they open the app, a gold glow around their avatar, and the Hero’s Crown, Hero’s Cape and Hall of Heroes background in their Wardrobe. Crowning the next hero moves those perks over (they come off the old hero automatically); there's no expiry. **Clear current hero** ends a reign without crowning anyone. Every admin sees the hero and the Hall of Heroes on Admin → **Overview**.
+- **Council wardrobe** unlocks by itself from staff work (counted all-time): Gatekeeper’s Monocle (25 reviews), Herald’s Horn (5 announcements), Event Host Top Hat (3 events you created that each got 5+ check-ins), Council Chamber (every staff member). Council badges are on Prize → **Badges** under "Council badges".
+- **Grant an item**: Admin → **Heroes → Grant a Council reward** → pick the person and Royal Scepter, Starlit Throne Room or Wizard Council Hat.
+- **Council MVP** (an extra-special accomplishment): same form, reward **Council MVP**. It unlocks the Legendary **Golden Yak** character (Me → Edit profile). Staff also unlock it by earning the Council Legend badge (Gatekeeper + Town Crier + Event Host + Hero of the Week once).
+- **Council team board**: Admin → **Council** (every admin and chair, view-only) shows each staff member's look, role, Council badges, unlocked Council items and the ★ Legendary chip, with the reigning hero first. Chairs get a "Manage in Heroes" link.
+- All crowns, clears and grants appear in Admin → **Log**. If someone goes back to participant their staff looks and Golden Yak come off (they fall back to their previous character); it all returns if they rejoin the team.
+
 ### Emergency: a chair lost access
 In Supabase **SQL Editor**, run (replace the email):
 ```sql
@@ -118,4 +129,4 @@ Make sure no more than 6 people are chairs afterwards.
 - Database tests: `bash supabase/tests/run_tests.sh` (needs local Postgres 16).
 - App tests: `npm test`. Contract between DB and app: `docs/BACKEND.md`.
 - Email sender: `supabase/functions/send-emails/index.ts` (Deno; not part of the app's TypeScript build). Deploy from the CLI with `supabase functions deploy send-emails` if you prefer.
-- Future database changes go in a new numbered file in `supabase/migrations/` (next after `0019_consistency_350.sql`, i.e. `0020_…`). Supabase grants new functions to everyone by default, so repeat the `revoke execute … from public, anon` lines for any new function.
+- Future database changes go in a new numbered file in `supabase/migrations/` (next after `0021_council_board.sql`, i.e. `0022_…`). Supabase grants new functions to everyone by default, so repeat the `revoke execute … from public, anon` lines for any new function.

@@ -7,6 +7,7 @@ import type { AvatarId, Look } from '../../types';
 import { GRIDS, PALETTE } from '../Sprite';
 import { ACCESSORY_ART, EXTRA_PALETTE, HAT_ANCHOR, HAT_ART, NECK_ANCHOR, SPARKLES, mageWithoutHat, nudge } from './art';
 import { FRAME, backgroundGrid, campusPalette } from './backgrounds';
+import { EYE_ANCHOR, SIDE_ANCHOR, STAFF_ACCESSORY_ART, STAFF_HAT_ART } from './staffArt';
 
 export { FRAME };
 
@@ -33,11 +34,26 @@ export function composeLayers(id: AvatarId, look?: Look): Layer[] {
   const bg = look?.background ? backgroundGrid(look.background) : null;
   if (bg) layers.push({ grid: bg, x: FRAME.x, y: FRAME.y });
 
-  const hat = look?.hat ? HAT_ART[look.hat] : undefined;
+  // Staff-only items (0020) are looked up after the participant ones; the server decides who may wear them.
+  const hat = look?.hat ? HAT_ART[look.hat] ?? STAFF_HAT_ART[look.hat] : undefined;
   layers.push({ grid: char === 'mage' && hat ? mageWithoutHat() : GRIDS[char], x: 0, y: 0 });
 
   if (look?.accessory === 'sparkles') {
     for (const s of SPARKLES) layers.push({ grid: s.grid, x: s.x, y: s.y, twinkle: s.delay });
+  } else if (look?.accessory && STAFF_ACCESSORY_ART[look.accessory]) {
+    const art = STAFF_ACCESSORY_ART[look.accessory];
+    const w = width(art.grid);
+    const n = nudge(char, look.accessory);
+    if (art.anchor === 'eye') {
+      const e = EYE_ANCHOR[char];
+      layers.push({ grid: art.grid, x: e.x - 2 + (n.x ?? 0), y: e.y - 2 + (n.y ?? 0) });
+    } else if (art.anchor === 'side') {
+      const e = SIDE_ANCHOR[char];
+      layers.push({ grid: art.grid, x: e.x + (n.x ?? 0), y: e.y + (n.y ?? 0) });
+    } else {
+      const a = NECK_ANCHOR[char];
+      layers.push({ grid: art.grid, x: a.x - Math.floor(w / 2) + (n.x ?? 0), y: a.y + (art.sink ?? 0) + (n.y ?? 0) });
+    }
   } else if (look?.accessory && ACCESSORY_ART[look.accessory]) {
     const art = ACCESSORY_ART[look.accessory];
     const a = NECK_ANCHOR[char];

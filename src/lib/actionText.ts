@@ -85,6 +85,12 @@ export function describeAction(a: AdminAction): string {
       return `${actor} renamed ${s(d.from) || target} to ${s(d.to) || target}`;
     case 'cycle_reset':
       return `${actor} ended the cycle${d.name ? ` “${s(d.name)}”` : ''} and reset everyone’s points`;
+    case 'hero_crowned':
+      return `${actor} crowned ${target} Hero of the Week${s(d.note) ? ` — “${s(d.note)}”` : ''}`;
+    case 'hero_cleared':
+      return d.reason === 'role_changed' ? `${possessive(target)} Hero of the Week reign ended (no longer staff)` : `${actor} cleared ${target} as Hero of the Week`;
+    case 'staff_reward_granted':
+      return d.reward === 'council_mvp' ? `${actor} named ${target} Council MVP (Golden Yak unlocked)` : `${actor} gave ${target} the ${s(d.name) || s(d.reward)}`;
     case 'report_settings_changed':
       return `${actor} changed the weekly email settings${settingsChange(d)}`;
     default:

@@ -182,6 +182,96 @@ function campus(): Grid {
   return g;
 }
 
+
+// ───────────── STAFF-ONLY backgrounds (0020) ─────────────
+
+/** Council Chamber: stone hall, two blue council banners and torches. Free for all staff. */
+function councilChamber(): Grid {
+  const g = blank('J');
+  // stone bricks
+  for (let y = 0; y < 27; y++)
+    for (let x = 0; x < FRAME.w; x++) {
+      const row = Math.floor(y / 3);
+      if (y % 3 === 2 || (x + (row % 2) * 3) % 6 === 0) g[y][x] = 'K';
+    }
+  // banners
+  for (const bx of [3, 26]) {
+    for (let y = 2; y < 20; y++) for (let x = bx; x < bx + 7; x++) g[y][x] = x === bx || x === bx + 6 ? 'k' : 'N';
+    for (let x = bx; x < bx + 7; x++) g[2][x] = 'g';
+    for (let x = bx + 1; x < bx + 6; x++) g[18][x] = 'g';
+    // swallowtail
+    set(g, bx + 1, 20, 'N'); set(g, bx + 2, 20, 'N'); set(g, bx + 4, 20, 'N'); set(g, bx + 5, 20, 'N');
+    set(g, bx + 1, 21, 'k'); set(g, bx + 5, 21, 'k'); set(g, bx + 3, 19, 'k');
+    // gold star emblem
+    stamp(g, ['..g..', '.ggg.', 'ggggg', '.g.g.'], bx + 1, 8);
+  }
+  // torches
+  for (const tx of [14, 21]) {
+    set(g, tx, 6, 'y'); set(g, tx, 7, 'O'); set(g, tx - 1, 7, 'y'); set(g, tx + 1, 7, 'y');
+    set(g, tx, 8, 'O'); set(g, tx, 9, 'k'); set(g, tx, 10, 'b'); set(g, tx, 11, 'b');
+  }
+  // checkered floor
+  for (let y = 27; y < FRAME.h; y++) for (let x = 0; x < FRAME.w; x++) g[y][x] = y === 27 ? 'k' : (Math.floor(x / 3) + Math.floor((y - 28) / 2)) % 2 ? 'c' : 'C';
+  return g;
+}
+
+/** Starlit Throne Room: a gold-and-velvet throne under a starry vault. Chair-granted. */
+function starlitThrone(): Grid {
+  const g = blank('8');
+  for (let y = 0; y < FRAME.h; y++) for (let x = 0; x < FRAME.w; x++) g[y][x] = y < 14 ? 'D' : y < 18 ? ((x + y) % 2 ? 'D' : '8') : '8';
+  const stars: [number, number][] = [[2, 2], [8, 5], [14, 1], [21, 4], [28, 2], [33, 7], [5, 11], [31, 13], [17, 8]];
+  stars.forEach(([x, y], i) => set(g, x, y, i % 2 ? 'y' : 'w'));
+  for (const [x, y] of [[11, 3], [25, 9]]) { set(g, x, y, 'w'); set(g, x - 1, y, 'L'); set(g, x + 1, y, 'L'); set(g, x, y - 1, 'L'); set(g, x, y + 1, 'L'); }
+  // throne back (gold frame, red velvet) behind the character
+  for (let y = 6; y < 31; y++)
+    for (let x = 7; x < 29; x++) {
+      const edge = x === 7 || x === 28 || y === 6;
+      const trim = x === 8 || x === 27 || y === 7;
+      g[y][x] = edge ? 'k' : trim ? 'g' : (x + y) % 5 === 0 ? 'Q' : 'r';
+    }
+  // finials
+  for (const fx of [7, 27]) stamp(g, ['.kk.', 'kygk', 'kggk', '.kk.'], fx - 1, 2);
+  stamp(g, ['..k..', '.kyk.', 'kygyk', '.kgk.'], 16, 1);
+  // arms
+  for (const ax of [3, 27]) for (let y = 22; y < 31; y++) for (let x = ax; x < ax + 6; x++) g[y][x] = y === 22 || x === ax || x === ax + 5 ? 'k' : y === 23 ? 'y' : 'g';
+  // carpet + steps
+  for (let y = 31; y < FRAME.h; y++) for (let x = 0; x < FRAME.w; x++) g[y][x] = y === 31 ? 'k' : x > 10 && x < 25 ? (y === 33 ? 'g' : 'r') : 'K';
+  return g;
+}
+
+/** Hall of Heroes: a golden aura (soft radial glow + pixel sparkles) on a deep royal night. Only while you're Hero of the Week. */
+function hallOfHeroes(): Grid {
+  const g = blank('D');
+  const cx = 17.5, cy = 16;
+  // concentric bands from the character outwards: warm gold core → amber edge → royal violet → deep navy corners.
+  // Each band dithers into the next ([radius, even-pixel color, odd-pixel color]) so the glow fades out softly.
+  const bands: [number, string, string][] = [
+    [9, 'y', 'y'], [11, 'y', 'g'], [13, 'g', 'g'], [14.5, 'g', 'G'], [16, 'G', 'G'],
+    [17.5, 'G', '8'], [19, '8', 'K'], [21.5, 'K', 'K'], [24, 'K', 'D'],
+  ];
+  for (let y = 0; y < FRAME.h; y++)
+    for (let x = 0; x < FRAME.w; x++) {
+      const d = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
+      const band = bands.find(([r]) => d < r);
+      if (band) g[y][x] = (x + y) % 2 ? band[2] : band[1];
+    }
+  // golden sparkles (4-point pixel stars) scattered around the aura
+  const BIG = ['...g...', '...y...', '..y9y..', 'gy9w9yg', '..y9y..', '...y...', '...g...'];
+  const MID = ['..g..', '..9..', 'g9w9g', '..9..', '..g..'];
+  const SMALL = ['.g.', 'gwg', '.g.'];
+  stamp(g, BIG, 0, 1);
+  stamp(g, BIG, 28, 22);
+  stamp(g, MID, 29, 3);
+  stamp(g, MID, 1, 23);
+  stamp(g, SMALL, 10, 0);
+  stamp(g, SMALL, 24, 0);
+  stamp(g, SMALL, 31, 13);
+  stamp(g, SMALL, 1, 13);
+  stamp(g, SMALL, 16, 32);
+  for (const [x, y] of [[6, 9], [30, 10], [4, 31], [33, 33], [21, 2], [13, 3], [8, 34], [26, 34]]) set(g, x, y, 'y');
+  return g;
+}
+
 const BUILDERS: Record<string, () => Grid> = {
   meadow,
   campus,
@@ -190,6 +280,10 @@ const BUILDERS: Record<string, () => Grid> = {
   castle,
   rainbow,
   treasure,
+  // staff only (0020)
+  council_chamber: councilChamber,
+  starlit_throne: starlitThrone,
+  hall_of_heroes: hallOfHeroes,
 };
 
 const cache = new Map<string, string[]>();

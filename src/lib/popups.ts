@@ -5,7 +5,8 @@
 import type { AppNotification } from '../types';
 import type { Celebration } from './celebrate';
 
-export const POPUP_KINDS = ['submission_approved', 'submission_rejected', 'points_adjusted'] as const;
+/** 'hero_crowned' / 'staff_reward' (0020) only ever reach staff (admins + chairs). */
+export const POPUP_KINDS = ['submission_approved', 'submission_rejected', 'points_adjusted', 'hero_crowned', 'staff_reward'] as const;
 export const MAX_POPUPS = 3;
 export const MAX_STORED_IDS = 300;
 export const FIRST_RUN_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -58,6 +59,10 @@ export function notificationToCelebration(n: Pick<AppNotification, 'kind' | 'tit
       }
       return { title: 'Points removed', subtitle: body ? `${pts} · ${body}` : `${pts} pts`, tone: 'notice', size: 'small' };
     }
+    case 'hero_crowned':
+      return { title: 'You’re Hero of the Week!', subtitle: body || 'Thanks for everything you do for YAC.', hint: 'Your Hero’s Crown, Cape and Hall of Heroes are in the Wardrobe until the next hero is crowned.', size: 'big' };
+    case 'staff_reward':
+      return { title: 'Council reward!', subtitle: n.title, hint: body || undefined, size: 'big' };
     default:
       return null;
   }

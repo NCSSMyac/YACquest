@@ -14,6 +14,9 @@ const KIND: Record<NotificationKind, { icon: string; color: string }> = {
   prize_qualified: { icon: '🏆', color: 'var(--gold-500)' },
   prize_update: { icon: '🎁', color: 'var(--purple)' },
   announcement: { icon: '📣', color: 'var(--blue-500)' },
+  // staff only (0020)
+  hero_crowned: { icon: '🦸', color: 'var(--gold-500)' },
+  staff_reward: { icon: '👑', color: 'var(--purple)' },
 };
 
 export default function Notifications() {

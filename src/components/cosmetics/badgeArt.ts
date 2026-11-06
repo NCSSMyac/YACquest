@@ -2,6 +2,8 @@
  * 16×16 badge emblems: a round medallion (ring + fill color) with a 10×10 symbol in the middle.
  * Chars come from the Sprite palette + EXTRA_PALETTE ('.' = transparent).
  */
+import { STAFF_BADGE_ART } from './staffArt';
+
 export interface BadgeArt {
   ring: string;
   fill: string;
@@ -274,7 +276,7 @@ export const medallion = () => MEDALLION;
 
 /** Full 16×16 grid for a badge. */
 export function badgeGrid(id: string): string[] {
-  const art = BADGE_ART[id] ?? BADGE_ART.first_checkin;
+  const art = BADGE_ART[id] ?? STAFF_BADGE_ART[id] ?? BADGE_ART.first_checkin;
   const rows = medallion().map((r) => [...r].map((c) => (c === 'R' ? art.ring : c === 'F' ? art.fill : c === 'S' ? 'w' : c)));
   art.symbol.forEach((row, dy) =>
     [...row].forEach((ch, dx) => {

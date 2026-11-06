@@ -72,6 +72,13 @@ export const {
   myUnlocks,
   equipLook,
   monthlyShoutout,
+  // staff only (0020): Hero of the Week, Council wardrobe + badges, Golden Yak
+  myStaffRewards,
+  heroBoard,
+  crownHero,
+  clearHero,
+  grantStaffReward,
+  councilBoard,
   submitFeedback,
   listFeedback,
   markFeedbackReviewed,

@@ -1922,5 +1922,274 @@ end $$;
 rollback;
 
 -- =============================================================================
+-- 29. 0020 — STAFF-ONLY rewards: Hero of the Week, Council wardrobe + badges, Golden Yak
+--     Own cast: hc (chair), ha + hb (admins), hp (participant).
+-- =============================================================================
+\set as_hc 'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-000000020c01''; set role authenticated;'
+\set as_ha 'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-000000020a01''; set role authenticated;'
+\set as_hb 'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-000000020b01''; set role authenticated;'
+\set as_hp 'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-000000020f01''; set role authenticated;'
+:as_super
+insert into t.users values
+  ('hc', '00000000-0000-0000-0000-000000020c01'), ('ha', '00000000-0000-0000-0000-000000020a01'),
+  ('hb', '00000000-0000-0000-0000-000000020b01'), ('hp', '00000000-0000-0000-0000-000000020f01');
+insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data) values
+  (t.u('hc'), 'hc20@example.edu', now(), '{"handle":"hc20","display_name":"Hero Chair","campus":"duke","avatar":"mage"}'),
+  (t.u('ha'), 'ha20@example.edu', now(), '{"handle":"ha20","display_name":"Hero Admin A","campus":"unc","avatar":"ranger"}'),
+  (t.u('hb'), 'hb20@example.edu', now(), '{"handle":"hb20","display_name":"Hero Admin B","campus":"ncsu","avatar":"knight"}'),
+  (t.u('hp'), 'hp20@example.edu', now(), '{"handle":"hp20","display_name":"Plain Player","campus":"duke","avatar":"yak"}'),
+  ('00000000-0000-0000-0000-000000020f02', 'gy20@example.edu', now(), '{"handle":"gy20","display_name":"Sneaky Gold","campus":"duke","avatar":"golden_yak"}');
+update profiles set role = 'chair' where id = t.u('hc');
+create table t.staff_items as select id from staff_cosmetics;
+grant select on t.staff_items to public;
+update profiles set role = 'admin' where id in (t.u('ha'), t.u('hb'));
+do $$ begin
+  perform t.eq((select avatar from profiles where handle = 'gy20'), 'yak', '0020: sign-up can''t pick the Golden Yak (falls back to yak)');
+  perform t.ok(exists (select 1 from pg_constraint where conname = 'profiles_avatar_check' and pg_get_constraintdef(oid) like '%golden_yak%'), '0020: avatar check accepts golden_yak');
+  perform t.eq((select count(*) from staff_cosmetics), 10::bigint, '0020: 10 staff cosmetics (7 Council + 3 hero)');
+  perform t.eq((select string_agg(id || '=' || coalesce(rule_value::text, rule_type), ',' order by sort_order) from staff_cosmetics),
+    'host_top_hat=3,gatekeeper_monocle=25,heralds_horn=5,council_chamber=staff,wizard_council_hat=grant,royal_scepter=grant,starlit_throne=grant,hero_crown=hero,hero_cape=hero,hall_of_heroes=hero',
+    '0020: staff cosmetics + rules (matches src/lib/staffRewards.ts)');
+  perform t.ok(not exists (select 1 from cosmetics c join staff_cosmetics s on s.id = c.id), '0020: staff items are not in the public cosmetics table');
+end $$;
+-- a participant: nothing staff-only, anywhere
+:as_hp
+do $$ begin
+  perform t.ok(my_staff_rewards() is null, '0020: participant my_staff_rewards() is null');
+  perform t.ok(not exists (select 1 from my_badges() b where b.id in ('gatekeeper', 'town_crier', 'event_host', 'hero_week', 'council_legend')), '0020: participant my_badges() has no Council badges');
+  perform t.ok(not exists (select 1 from unnest(my_unlocks()) u join (values ('host_top_hat'),('gatekeeper_monocle'),('heralds_horn'),('council_chamber'),('wizard_council_hat'),('royal_scepter'),('starlit_throne'),('hero_crown'),('hero_cape'),('hall_of_heroes')) v(id) on v.id = u), '0020: participant my_unlocks() has no staff items');
+  perform t.throws('select equip_look(''hero_crown'', null, null)', 'look', '0020: participant can''t equip the Hero''s Crown');
+  perform t.throws('select equip_look(null, null, ''council_chamber'')', 'look', '0020: participant can''t equip the (free-for-staff) Council Chamber');
+  perform t.throws('select update_profile(null, ''golden_yak'', null)', 'avatar', '0020: participant can''t pick the Golden Yak');
+  perform t.throws('select hero_board()', 'forbidden', '0020: participant can''t see the hero board');
+  perform t.throws(format('select crown_hero(%L, '''')', t.u('ha')), 'forbidden', '0020: participant can''t crown');
+  perform t.throws('select clear_hero()', 'forbidden', '0020: participant can''t clear');
+  perform t.throws(format('select grant_staff_reward(%L, ''royal_scepter'')', t.u('ha')), 'forbidden', '0020: participant can''t grant');
+  perform t.denied('select * from staff_grants', '0020: staff_grants not readable');
+  perform t.denied('select * from hero_reigns', '0020: hero_reigns not readable');
+  perform t.denied('select * from staff_cosmetics', '0020: staff_cosmetics not readable');
+  perform t.denied(format('select staff_stats(%L)', t.u('hp')), '0020: staff_stats internal');
+  perform t.denied(format('select staff_unlocks_for(%L)', t.u('hp')), '0020: staff_unlocks_for internal');
+  perform t.denied(format('select legendary_for(%L)', t.u('hp')), '0020: legendary_for internal');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied('select my_staff_rewards()', '0020: anon can''t call my_staff_rewards');
+  perform t.denied('select hero_board()', '0020: anon can''t call hero_board');
+  perform t.denied(format('select crown_hero(%L, '''')', gen_random_uuid()), '0020: anon can''t call crown_hero');
+end $$;
+-- an admin: Council basics, can't crown or grant
+:as_ha
+do $$ declare r json;
+begin
+  r := my_staff_rewards();
+  perform t.ok(r is not null and not (r->>'isHero')::boolean and (r->>'heroCount')::int = 0, '0020: admin gets staff rewards (not hero yet)');
+  perform t.eq((select string_agg(x->>'id', ',') from json_array_elements(r->'badges') x), 'gatekeeper,town_crier,event_host,hero_week,council_legend', '0020: Council badges in order');
+  perform t.eq((select array_agg(x) from json_array_elements_text(r->'unlocks') x), array['council_chamber'], '0020: new admin has just the Council Chamber');
+  perform t.throws('select equip_look(''hero_crown'', null, null)', 'locked', '0020: admin can''t wear the Hero''s Crown without being hero');
+  perform t.throws('select equip_look(null, ''royal_scepter'', null)', 'locked', '0020: granted item locked until granted');
+  perform t.throws('select update_profile(null, ''golden_yak'', null)', 'avatar', '0020: admin without Legend/MVP can''t pick the Golden Yak');
+  perform t.throws(format('select crown_hero(%L, '''')', t.u('ha')), 'forbidden', '0020: admin can''t crown');
+  perform t.throws('select clear_hero()', 'forbidden', '0020: admin can''t clear');
+  perform t.throws(format('select grant_staff_reward(%L, ''royal_scepter'')', t.u('ha')), 'forbidden', '0020: admin can''t grant');
+  perform t.ok((hero_board()->'current')::text = 'null', '0020: no hero yet');
+  perform equip_look(null, null, 'council_chamber');
+  perform t.pass('0020: admin can wear the Council Chamber');
+end $$;
+-- automatic unlocks at the thresholds (all-time staff work)
+:as_super
+insert into submissions (cycle_id, user_id, activity_id, image_path, status, reviewer_id, review_reason, reviewed_at)
+  select active_cycle_id(), t.u('hp'), 'repost', 'x/' || g || '.jpg', 'rejected', t.u('ha'), 'test', now() from generate_series(1, 24) g;
+insert into announcements (title, body, audience, created_by) select 'Hello ' || g, 'body', 'all', t.u('ha') from generate_series(1, 4) g;
+insert into events (title, campus, kind, location, starts_at, ends_at, activity_id, attendee_count, created_by)
+  select 'Hosted ' || g, 'duke', 'active', 'Quad', now() - interval '3 hours', now() - interval '2 hours', 'home_event', case when g = 3 then 4 else 5 end, t.u('ha')
+    from generate_series(1, 3) g;
+:as_ha
+do $$ declare r json := my_staff_rewards();
+begin
+  perform t.ok((select (x->>'progress')::int = 24 and not (x->>'earned')::boolean from json_array_elements(r->'badges') x where x->>'id' = 'gatekeeper'), '0020: Gatekeeper 24/25 not yet');
+  perform t.ok((select (x->>'progress')::int = 4 and not (x->>'earned')::boolean from json_array_elements(r->'badges') x where x->>'id' = 'town_crier'), '0020: Town Crier 4/5 not yet');
+  perform t.ok((select (x->>'progress')::int = 2 and not (x->>'earned')::boolean from json_array_elements(r->'badges') x where x->>'id' = 'event_host'), '0020: Event Host 2/3 (an event with 4 check-ins doesn''t count)');
+  perform t.ok(not exists (select 1 from json_array_elements_text(r->'unlocks') x where x in ('gatekeeper_monocle', 'heralds_horn', 'host_top_hat')), '0020: no auto unlocks below the thresholds');
+end $$;
+:as_super
+insert into submissions (cycle_id, user_id, activity_id, image_path, status, reviewer_id, review_reason, reviewed_at)
+  values (active_cycle_id(), t.u('hp'), 'repost', 'x/25.jpg', 'approved', t.u('ha'), null, now());
+insert into submissions (cycle_id, user_id, activity_id, image_path, status, reviewer_id) values (active_cycle_id(), t.u('hp'), 'repost', 'x/p.jpg', 'pending', t.u('ha'));
+insert into announcements (title, body, audience, created_by) values ('Hello 5', 'body', 'all', t.u('ha'));
+update events set attendee_count = 5 where title = 'Hosted 3' and created_by = t.u('ha');
+:as_ha
+do $$ declare r json := my_staff_rewards();
+begin
+  perform t.ok((select (x->>'progress')::int = 25 and (x->>'earned')::boolean from json_array_elements(r->'badges') x where x->>'id' = 'gatekeeper'), '0020: Gatekeeper at 25 reviews (pending ones don''t count)');
+  perform t.ok((select (x->>'earned')::boolean from json_array_elements(r->'badges') x where x->>'id' = 'town_crier'), '0020: Town Crier at 5 announcements');
+  perform t.ok((select (x->>'progress')::int = 3 and (x->>'earned')::boolean from json_array_elements(r->'badges') x where x->>'id' = 'event_host'), '0020: Event Host at 3 events with 5+ check-ins');
+  perform t.eq((select array_agg(x) from json_array_elements_text(r->'unlocks') x), array['host_top_hat', 'gatekeeper_monocle', 'heralds_horn', 'council_chamber'], '0020: auto unlocks at the thresholds');
+  perform t.ok((select (x->>'progress')::int = 3 and not (x->>'earned')::boolean from json_array_elements(r->'badges') x where x->>'id' = 'council_legend'), '0020: Council Legend 3/4 before being hero');
+  perform t.ok(not (r->>'legendary')::boolean, '0020: no Golden Yak before Council Legend');
+  perform equip_look('host_top_hat', 'gatekeeper_monocle', 'council_chamber');
+  perform t.pass('0020: admin wears earned Council items');
+end $$;
+-- the chair crowns heroes
+:as_hc
+do $$ declare b json;
+begin
+  perform t.throws(format('select crown_hero(%L, '''')', t.u('hp')), 'not_staff', '0020: participants can''t be crowned');
+  perform t.throws(format('select crown_hero(%L, %L)', t.u('ha'), repeat('x', 121)), 'note', '0020: note max 120');
+  perform t.throws('select clear_hero()', 'not_found', '0020: nothing to clear yet');
+  perform crown_hero(t.u('ha'), '  ran the pickleball check-in table ');
+  b := hero_board();
+  perform t.ok((b->'current'->>'userId')::uuid = t.u('ha') and b->'current'->>'note' = 'ran the pickleball check-in table'
+               and b->'current'->>'displayName' = 'Hero Admin A' and b->'current'->>'crownedByName' = 'Hero Chair', '0020: chair crowned ha (note trimmed)');
+  perform t.ok((select (x->>'isHero')::boolean and (x->>'heroCount')::int = 1 from json_array_elements(b->'team') x where (x->>'userId')::uuid = t.u('ha')), '0020: hero_board team row shows the hero');
+  perform t.ok(not exists (select 1 from json_array_elements(b->'team') x where (x->>'userId')::uuid = t.u('hp')), '0020: hero_board team lists staff only');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok(exists (select 1 from notifications where user_id = t.u('ha') and kind = 'hero_crowned' and title = 'You’re Hero of the Week!' and body = 'ran the pickleball check-in table'), '0020: hero notified');
+  perform t.ok(exists (select 1 from admin_actions where action = 'hero_crowned' and actor_id = t.u('hc') and target_user_id = t.u('ha') and details->>'note' = 'ran the pickleball check-in table'), '0020: crowning logged');
+end $$;
+:as_ha
+do $$ declare r json := my_staff_rewards();
+begin
+  perform t.ok((r->>'isHero')::boolean and (r->>'heroCount')::int = 1, '0020: ha is hero ×1');
+  perform t.ok((select count(*) from json_array_elements_text(r->'unlocks') x where x in ('hero_crown', 'hero_cape', 'hall_of_heroes')) = 3, '0020: hero perks unlocked while reigning');
+  perform t.ok((r->>'legendary')::boolean and (select (x->>'earned')::boolean from json_array_elements(r->'badges') x where x->>'id' = 'council_legend'), '0020: Council Legend earned → Golden Yak unlocked');
+  perform equip_look('hero_crown', 'hero_cape', 'hall_of_heroes');
+  perform t.pass('0020: hero wears the crown, cape and hall');
+  perform t.eq((update_profile(null, 'golden_yak', null)).avatar, 'golden_yak', '0020: Council Legend can pick the Golden Yak');
+  perform t.eq((select normal_avatar from profiles where id = auth.uid()), 'ranger', '0020: previous character remembered');
+end $$;
+-- crowning someone else moves the perks
+:as_hc
+select crown_hero(t.u('hb'), '') \g /dev/null
+:as_super
+do $$ begin
+  perform t.ok((select hat is null and accessory is null and background is null from profiles where id = t.u('ha')), '0020: old hero''s crown/cape/hall taken off');
+  perform t.ok(not ('hero_crown' = any (staff_unlocks_for(t.u('ha')))) and 'hero_crown' = any (staff_unlocks_for(t.u('hb'))), '0020: perks moved to the new hero');
+  perform t.eq((select count(*) from hero_reigns where ended_at is null), 1::bigint, '0020: one current hero');
+  perform t.ok(exists (select 1 from notifications where user_id = t.u('hb') and kind = 'hero_crowned' and body = 'Hero Chair crowned you at the YAC meeting. Thank you!'), '0020: default hero message');
+end $$;
+:as_hb
+select equip_look('hero_crown', null, null) \g /dev/null
+:as_hc
+select crown_hero(t.u('ha'), 'again!') \g /dev/null
+do $$ declare b json := hero_board();
+begin
+  perform t.ok((select (x->>'heroCount')::int = 2 from json_array_elements(b->'team') x where (x->>'userId')::uuid = t.u('ha')), '0020: hero count increments (×2)');
+  perform t.eq((select string_agg(x->>'displayName', ',') from json_array_elements(b->'history') x), 'Hero Admin A,Hero Admin B,Hero Admin A', '0020: Hall of Heroes newest first');
+  perform t.ok((select hat is null from profiles where id = t.u('hb')), '0020: hb''s crown taken off when ha is re-crowned');
+  perform clear_hero();
+  perform t.ok((hero_board()->'current')::text = 'null', '0020: clear_hero ends the reign');
+  perform t.throws('select clear_hero()', 'not_found', '0020: clearing twice');
+end $$;
+:as_ha
+do $$ declare r json := my_staff_rewards();
+begin
+  perform t.ok(not (r->>'isHero')::boolean and (r->>'heroCount')::int = 2, '0020: after clear: not hero, count kept');
+  perform t.ok((select (x->>'progress')::int = 2 and (x->>'earned')::boolean from json_array_elements(r->'badges') x where x->>'id' = 'hero_week'), '0020: Hero of the Week badge shows ×2');
+  perform t.throws('select equip_look(''hero_crown'', null, null)', 'locked', '0020: hero items locked again after the reign');
+  perform t.ok((r->>'legendary')::boolean, '0020: Council Legend (and the Golden Yak) is permanent');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok(exists (select 1 from admin_actions where action = 'hero_cleared' and actor_id = t.u('hc') and target_user_id = t.u('ha')), '0020: clear logged');
+end $$;
+-- Council MVP + chair grants
+:as_hc
+do $$ begin
+  perform t.throws(format('select grant_staff_reward(%L, ''council_mvp'')', t.u('hp')), 'not_staff', '0020: can''t grant to a participant');
+  perform t.throws(format('select grant_staff_reward(%L, ''sparkles'')', t.u('hb')), 'reward', '0020: unknown reward');
+  perform grant_staff_reward(t.u('hb'), 'council_mvp');
+  perform grant_staff_reward(t.u('hb'), 'royal_scepter');
+  perform t.throws(format('select grant_staff_reward(%L, ''council_mvp'')', t.u('hb')), 'already', '0020: granting twice');
+  perform t.ok((select (x->>'legendary')::boolean and (x->'grants')::jsonb @> '["council_mvp","royal_scepter"]'::jsonb from json_array_elements(hero_board()->'team') x where (x->>'userId')::uuid = t.u('hb')), '0020: hero_board shows grants + legendary');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok(exists (select 1 from admin_actions where action = 'staff_reward_granted' and target_user_id = t.u('hb') and details->>'reward' = 'council_mvp'), '0020: MVP grant logged');
+  perform t.ok(exists (select 1 from notifications where user_id = t.u('hb') and kind = 'staff_reward' and title = 'Council MVP: the Golden Yak is yours!'), '0020: MVP notified');
+end $$;
+:as_hb
+do $$ declare r json := my_staff_rewards();
+begin
+  perform t.ok((r->>'legendary')::boolean and not (select (x->>'earned')::boolean from json_array_elements(r->'badges') x where x->>'id' = 'council_legend'), '0020: MVP grant unlocks the Golden Yak without Council Legend');
+  perform t.ok('royal_scepter' = any (array(select json_array_elements_text(r->'unlocks'))), '0020: granted item unlocked');
+  perform t.eq((update_profile(null, 'golden_yak', null)).avatar, 'golden_yak', '0020: MVP can pick the Golden Yak');
+  perform equip_look(null, 'royal_scepter', 'council_chamber');
+end $$;
+:as_hc
+select crown_hero(t.u('hb'), 'MVP week') \g /dev/null
+-- staff looks never reach participants
+:as_hp
+do $$ begin
+  perform t.ok(not exists (select 1 from leaderboard(1000) l where l.avatar = 'golden_yak'
+                            or l.hat in (select id from t.staff_items) or l.accessory in (select id from t.staff_items) or l.background in (select id from t.staff_items)), '0020: leaderboard never shows staff looks');
+  perform t.ok(not exists (select 1 from leaderboard(1000) l join profiles p on p.id = l.user_id where p.role <> 'participant'), '0020: leaderboard lists participants only');
+  perform t.ok(coalesce((monthly_shoutout()->>'userId')::uuid, gen_random_uuid()) not in (t.u('ha'), t.u('hb'), t.u('hc')), '0020: shout-out never a staff member');
+  perform t.ok(not exists (select 1 from notifications n where n.kind in ('hero_crowned', 'staff_reward')), '0020: participant sees no staff notifications');
+end $$;
+-- back to participant: looks + Golden Yak off, reign ends, history kept
+:as_hc
+select set_role(t.u('hb'), 'participant') \g /dev/null
+:as_super
+do $$ begin
+  perform t.ok((select avatar = 'knight' and hat is null and accessory is null and background is null from profiles where id = t.u('hb')), '0020: demoted → Golden Yak back to knight, staff items off');
+  perform t.ok(not exists (select 1 from hero_reigns where user_id = t.u('hb') and ended_at is null), '0020: demoted hero''s reign ends');
+  perform t.ok(exists (select 1 from admin_actions where action = 'hero_cleared' and target_user_id = t.u('hb') and details->>'reason' = 'role_changed'), '0020: reign end logged');
+  perform t.eq((select count(*) from staff_grants where user_id = t.u('hb')), 2::bigint, '0020: grants kept');
+end $$;
+:as_hb
+do $$ begin
+  perform t.ok(my_staff_rewards() is null, '0020: demoted → no staff rewards');
+  perform t.throws('select equip_look(null, ''royal_scepter'', null)', 'look', '0020: demoted → can''t equip staff items');
+  perform t.throws('select update_profile(null, ''golden_yak'', null)', 'avatar', '0020: demoted → can''t pick the Golden Yak');
+end $$;
+:as_hc
+select set_role(t.u('hb'), 'admin') \g /dev/null
+:as_hb
+do $$ declare r json := my_staff_rewards();
+begin
+  perform t.ok((r->>'legendary')::boolean and (r->>'heroCount')::int = 2 and 'royal_scepter' = any (array(select json_array_elements_text(r->'unlocks'))), '0020: staff again → everything is back');
+end $$;
+-- 0021: Council team board (staff only, view-only)
+:as_hc
+select crown_hero(t.u('hb'), 'board test') \g /dev/null
+:as_hb
+select equip_look(null, 'royal_scepter', null) \g /dev/null
+:as_hp
+do $$ begin
+  perform t.throws('select council_board()', 'forbidden', '0021: participant can''t read the Council board');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied('select council_board()', '0021: anon can''t call council_board');
+end $$;
+:as_ha
+do $$ declare b json := council_board(); r json; v_first text; v_chairs_before_admins boolean;
+begin
+  perform t.ok(not exists (select 1 from json_array_elements(b) x join profiles p on p.id = (x->>'userId')::uuid where p.role = 'participant'), '0021: staff only on the board');
+  perform t.eq((b->0->>'userId')::uuid, t.u('hb'), '0021: reigning hero first');
+  perform t.ok(not exists (
+      select 1 from json_array_elements(b) with ordinality a(x, i), json_array_elements(b) with ordinality c(y, j)
+       where a.i > 1 and c.j > a.i and a.x->>'role' = 'admin' and c.y->>'role' = 'chair'), '0021: then chairs before admins');
+  select x into r from json_array_elements(b) x where (x->>'userId')::uuid = t.u('ha');
+  perform t.eq((select string_agg(y->>'id', ',') from json_array_elements(r->'badges') y), 'gatekeeper,town_crier,event_host,hero_week,council_legend', '0021: badges in order');
+  perform t.ok((select (y->>'progress')::int = 25 and (y->>'earned')::boolean from json_array_elements(r->'badges') y where y->>'id' = 'gatekeeper'), '0021: Gatekeeper 25/25');
+  perform t.ok((select (y->>'progress')::int = 2 from json_array_elements(r->'badges') y where y->>'id' = 'hero_week'), '0021: hero ×2');
+  perform t.eq((r->>'unlockCount')::int, 4, '0021: ha has 4 Council items (top hat, monocle, horn, chamber)');
+  perform t.ok((r->>'legendary')::boolean and not (r->>'isHero')::boolean and r->>'avatar' = 'golden_yak' and r->>'role' = 'admin', '0021: legendary, look and role');
+  select x into r from json_array_elements(b) x where (x->>'userId')::uuid = t.u('hb');
+  perform t.ok((r->>'isHero')::boolean and (r->>'unlockCount')::int = 5 and r->>'accessory' = 'royal_scepter', '0021: hb hero with 5 items (chamber, scepter, 3 perks) and look');
+end $$;
+
+-- tidy: nobody stays a Golden Yak (0007 re-runs would refuse it)
+:as_super
+update profiles set avatar = coalesce(normal_avatar, 'yak') where avatar = 'golden_yak';
+do $$ begin
+  perform t.eq((select count(*) from profiles where avatar = 'golden_yak'), 0::bigint, '0020: test leaves no Golden Yak behind');
+end $$;
+
+-- =============================================================================
 :as_super
 select 'PASSED: ' || current_setting('t.passed') || ' assertions' as result;

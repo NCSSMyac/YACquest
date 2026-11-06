@@ -6,6 +6,7 @@ import { Empty, ErrorText, Loading, Modal, Panel, useToast } from '../../compone
 import { useAuth } from '../../lib/auth';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 import { MAX_CHAIRS } from '../../config';
+import { Avatar } from '../../components/Avatar';
 
 type Pick = { id: string; displayName: string; handle: string };
 
@@ -45,6 +46,9 @@ export default function Team() {
   const nav = useNavigate();
   const { user, refresh } = useAuth();
   const team = useAsync(() => api.listTeam(), [], { live: true });
+  // Staff only (0020): avatars + the Hero of the Week glow.
+  const heroes = useAsync(() => api.heroBoard(), [], { live: true });
+  const lookOf = (id: string) => heroes.data?.team.find((t) => t.userId === id);
   const [removing, setRemoving] = useState<TeamMember | null>(null);
   const [adding, setAdding] = useState<Pick | null>(null);
   const [handing, setHanding] = useState<Pick | null>(null);
@@ -97,7 +101,10 @@ export default function Team() {
             {team.data.map((m) => (
               <li key={m.id} className="stack" style={{ gap: 4 }}>
                 <div className="spread">
-                  <strong>{m.displayName} <span className="muted">@{m.handle}</span>{m.id === user?.id && <span className="muted"> (you)</span>}</strong>
+                  <span className="row" style={{ gap: 8, minWidth: 0 }}>
+                    {lookOf(m.id) && <Avatar id={lookOf(m.id)!.avatar} look={lookOf(m.id)!.look} campus={lookOf(m.id)!.campus} size={36} hero={lookOf(m.id)!.isHero} title={m.displayName} />}
+                    <strong style={{ minWidth: 0 }}>{m.displayName} <span className="muted">@{m.handle}</span>{m.id === user?.id && <span className="muted"> (you)</span>}</strong>
+                  </span>
                   <span className={`chip ${m.role === 'chair' ? 't1' : 't2'}`}>{m.role === 'chair' ? 'YAC Chair' : 'Admin'}</span>
                 </div>
                 <span className="muted wrap-anywhere">{m.email}{!m.emailVerified && ' · email not confirmed'}</span>

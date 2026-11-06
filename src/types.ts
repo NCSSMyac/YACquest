@@ -11,8 +11,11 @@ import type { CampusId, Tier } from './config';
  */
 export type Role = 'participant' | 'admin' | 'chair';
 
-/** Player characters. unicorn + dragon are original designs nodding to NCSSM's mascots (not the official logos). */
-export type AvatarId = 'yak' | 'unicorn' | 'dragon' | 'knight' | 'mage' | 'ranger';
+/**
+ * Player characters. unicorn + dragon are original designs nodding to NCSSM's mascots (not the official logos).
+ * 'golden_yak' is the staff-only Legendary character (0020): never offered in pickers to participants.
+ */
+export type AvatarId = 'yak' | 'unicorn' | 'dragon' | 'knight' | 'mage' | 'ranger' | 'golden_yak';
 
 export interface User {
   id: string;
@@ -139,7 +142,11 @@ export type NotificationKind =
   | 'points_adjusted'
   | 'prize_qualified'
   | 'prize_update'
-  | 'announcement';
+  | 'announcement'
+  /** 0020, staff only: "You're Hero of the Week!" */
+  | 'hero_crowned'
+  /** 0020, staff only: a chair granted a Council wardrobe item / Council MVP. */
+  | 'staff_reward';
 
 export interface AppNotification {
   id: string;
@@ -243,7 +250,10 @@ export type AdminActionKind =
   | 'prize_fulfilled'
   | 'prize_revoked'
   | 'cycle_reset'
-  | 'report_settings_changed';
+  | 'report_settings_changed'
+  | 'hero_crowned'
+  | 'hero_cleared'
+  | 'staff_reward_granted';
 
 /** One row of the append-only admin action log (chairs only). */
 export interface AdminAction {
@@ -353,4 +363,76 @@ export interface Shoutout {
   month: string;
   /** true = that month is over and this is its winner; false = leading the current month so far. */
   final: boolean;
+}
+
+// ───────────── Staff-only rewards (0020): Hero of the Week, Council wardrobe + badges, Golden Yak ─────────────
+// Participants never receive any of this: the server returns null / forbidden for them.
+
+/** One Hero of the Week reign (newest first in lists). `endedAt` unset = the current hero. */
+export interface HeroReign {
+  id: string;
+  userId: string;
+  displayName: string;
+  campus: CampusId;
+  avatar: AvatarId;
+  look?: Look;
+  note: string;
+  crownedAt: string;
+  crownedByName: string;
+  endedAt?: string;
+}
+
+/** A staff member as shown in the Heroes area (admins + chairs). */
+export interface StaffRewardRow {
+  userId: string;
+  displayName: string;
+  handle: string;
+  role: Role;
+  campus: CampusId;
+  avatar: AvatarId;
+  look?: Look;
+  isHero: boolean;
+  heroCount: number;
+  /** Chair grants this person holds (STAFF_GRANTS ids, incl. 'council_mvp'). */
+  grants: string[];
+  legendary: boolean;
+}
+
+export interface HeroBoard {
+  current: HeroReign | null;
+  /** Every reign, newest first (includes the current one). */
+  history: HeroReign[];
+  team: StaffRewardRow[];
+}
+
+/** One card on Admin → Council (0021, staff only). */
+export interface CouncilMember {
+  userId: string;
+  displayName: string;
+  handle: string;
+  role: Role;
+  campus: CampusId;
+  avatar: AvatarId;
+  look?: Look;
+  isHero: boolean;
+  heroCount: number;
+  /** Council badges in STAFF_BADGES order. */
+  badges: BadgeProgress[];
+  /** How many Council wardrobe items they can wear right now (hero perks included while reigning). */
+  unlockCount: number;
+  legendary: boolean;
+}
+
+/** The caller's own staff rewards (null for participants). */
+export interface StaffRewards {
+  isHero: boolean;
+  heroCount: number;
+  /** Staff cosmetic ids the caller can equip right now (Council wardrobe + hero perks while reigning). */
+  unlocks: string[];
+  /** Council badges in display order (STAFF_BADGES). 'hero_week' progress = times crowned (not capped). */
+  badges: BadgeProgress[];
+  /** Golden Yak unlocked (Council Legend badge or a chair's Council MVP grant). */
+  legendary: boolean;
+  /** Chair grants held (STAFF_GRANTS ids). */
+  grants: string[];
 }

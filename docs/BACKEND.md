@@ -246,3 +246,44 @@ Actions: `points_added` / `points_removed` (ledger insert with created_by and so
 - `set_role()` and `transfer_chair()`: copies of 0011; only the fallback chair limit (used if `app_config.max_chairs` were null — it is NOT NULL, 6) changes from 5 to **6**. Same signatures and grants.
 - Old migrations made re-run safe for the goal: `0003` no longer sets `prize_goal = 650`, and `0016` (goal 300) is now a no-op, so running every migration again on a live database never hands out or revokes spots at a stale goal.
 - Final state after all migrations: `prize_goal` 350 (default 350), Halfway 175, Quest Legend 350, cosmetics Sunset 50 · Flower Crown 100 · Starry Night 200 · Gold Chain 250 · Sparkle Aura 300, `near_goal_points` 75 (default 75), `admin_overview()` `nearGoal` within 75 of the goal, manual removals down to −350, `max_chairs` 6.
+
+## 0020 — Staff-only rewards (Hero of the Week, Council wardrobe + badges, Golden Yak)
+Everything here is for **admins + chairs only**; the server filters by role, not just the UI. Participants get `null` from `my_staff_rewards()`, `forbidden` from the rest, and the plain `look` / `avatar` errors if they try to wear any of it. Nothing participants already see changes: `my_badges()`, `my_unlocks()`, `leaderboard()`, `my_rank()`, `monthly_shoutout()` are untouched and only ever list participants, so a staff look can't show up there.
+
+### New tables (RLS on, **no policies, no grants**: RPC-only, not even readable by staff directly)
+- `staff_cosmetics` (id pk, slot hat|accessory|background, name, rule_type staff|reviews|announcements|hosted|grant|hero, rule_value int, sort_order). Mirrors `STAFF_COSMETICS` in `src/lib/staffRewards.ts` (kept out of the public `cosmetics` table on purpose).
+- `hero_reigns` (id uuid pk, seq identity, user_id → profiles, note text ≤ 120, crowned_by, crowned_at, ended_at, ended_by). Unique partial index: at most one row with `ended_at is null` (the reigning hero). No auto-expiry.
+- `staff_grants` (user_id, reward_id wizard_council_hat|royal_scepter|starlit_throne|council_mvp, granted_by, granted_at; pk user_id + reward_id).
+- `profiles.normal_avatar` text: the last normal character, restored when a Golden Yak goes back to participant. `profiles.avatar` check now also accepts `golden_yak`.
+
+### Rules (staff work counts **all-time**, not per cycle)
+| Item | Slot | Unlock |
+|---|---|---|
+| Council Chamber | background | every admin/chair |
+| Gatekeeper’s Monocle | accessory | reviewed 25 submissions (`submissions.reviewer_id`, approved or rejected) |
+| Herald’s Horn | accessory | sent 5 announcements (`announcements.created_by`) |
+| Event Host Top Hat | hat | created 3 events (`events.created_by`) that each reached 5 check-ins (`attendee_count >= 5`) |
+| Wizard Council Hat · Royal Scepter · Starlit Throne Room | hat · accessory · background | chair grant only |
+| Hero’s Crown · Hero’s Cape · Hall of Heroes | hat · accessory · background | only while reigning Hero of the Week; taken off automatically when the reign ends |
+
+Council badges (`staff_badges_for(uuid)`, order = `STAFF_BADGES`): `gatekeeper` (25 reviews), `town_crier` (5 announcements), `event_host` (3 events with 5+ check-ins), `hero_week` (progress = times crowned, **not capped**, goal 1), `council_legend` (progress 0–4: the three above + crowned at least once).
+**Golden Yak** (`avatar = 'golden_yak'`): staff with `council_legend` **or** a `council_mvp` grant (`legendary_for(uuid)`).
+
+### RPCs
+- `my_staff_rewards()` → json `{isHero, heroCount, unlocks: text[], badges: [{id, earned, progress, goal}], legendary, grants: text[]}`, or **null** for participants.
+- `hero_board()` (admins + chairs) → json `{current: reign|null, history: [reign…] newest first, team: [{userId, displayName, handle, role, campus, avatar, hat, accessory, background, isHero, heroCount, grants, legendary}]}`; reign = `{id, userId, displayName, campus, avatar, hat, accessory, background, note, crownedAt, crownedByName, endedAt}`.
+- `crown_hero(p_user_id uuid, p_note text default '')` (chairs): target must be admin/chair (`not_staff`), note ≤ 120 (`note`). Ends the current reign (taking hero items off the previous hero unless it's the same person), starts a new one, notifies the hero (kind `hero_crowned`, "You’re Hero of the Week!"), logs `hero_crowned` `{note}`.
+- `clear_hero()` (chairs): ends the reign, takes hero items off, logs `hero_cleared`. `not_found` if nobody reigns.
+- `grant_staff_reward(p_user_id uuid, p_reward text)` (chairs): `reward` (unknown id), `not_staff`, `already`. Notifies (kind `staff_reward`) and logs `staff_reward_granted` `{reward, name}`. `council_mvp` = Council MVP (unlocks the Golden Yak).
+- `equip_look(…)`: copy of 0009 + staff items (staff only and unlocked → else `locked`; participants get `look`, as for any unknown item).
+- `update_profile(…)`: copy of 0010 + `golden_yak` only when `legendary_for(caller)` (else `avatar`); keeps `normal_avatar` up to date.
+- Internal (no API access): `is_staff_user`, `staff_stats`, `staff_badges_for`, `staff_unlocks_for`, `legendary_for`, `strip_staff_look`, `hero_reign_json`.
+
+### Back to participant
+Trigger `profiles_staff_rewards_role` (before update of `role`): when an admin/chair becomes a participant (only `set_role` can do that), staff items come off, a Golden Yak goes back to `normal_avatar` (or `yak`), and a current reign ends (logged `hero_cleared` with `{reason: 'role_changed'}`). Reigns, grants and work counts are kept, so everything returns if they become staff again.
+
+**Re-run note:** 0007 re-creates the avatar check without `golden_yak`. If you ever re-run 0007 after 0020, run 0020 again right after (0007 fails while someone is a Golden Yak; switch them back first).
+
+## 0021 — Council team board (staff only, view-only)
+- `council_board()` (admins + chairs; participants get `forbidden`) → json array, one row per admin/chair: `{userId, displayName, handle, role, campus, avatar, hat, accessory, background, isHero, heroCount, badges: [{id, earned, progress, goal}] (0020 Council badges, same order), unlockCount (Council items they can wear now, hero perks included while reigning), legendary}`. Sorted: reigning hero first, then chairs, then admins, then display name.
+- Shown in Admin → **Council** (all staff). Crowning and granting stay in Admin → Heroes (chairs). Nothing else changes.

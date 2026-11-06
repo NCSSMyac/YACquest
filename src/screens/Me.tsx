@@ -13,6 +13,8 @@ import { fmtDate, fmtPts } from '../lib/format';
 import { getSoundOn, playCoin, setSoundOn } from '../lib/sound';
 import { errorMessage, useAsync } from '../lib/useAsync';
 import type { AvatarId } from '../types';
+import { LEGENDARY_AVATARS } from '../lib/staffRewards';
+import { useStaffRewards } from '../lib/useStaffRewards';
 
 type Theme = 'light' | 'dark' | 'system';
 const THEME_KEY = 'yacquest-theme';
@@ -43,6 +45,9 @@ export default function Me() {
   const toast = useToast();
   const nav = useNavigate();
   const ledger = useAsync(() => api.myLedger(), [], { live: true });
+  // Staff only (0020): null for participants, so the Golden Yak never shows for them.
+  const staff = useStaffRewards().data;
+  const legendary = staff?.legendary ? LEGENDARY_AVATARS : [];
 
   const [name, setName] = useState(user?.displayName ?? '');
   const [avatar, setAvatar] = useState<AvatarId>(user?.avatar ?? 'yak');
@@ -108,7 +113,7 @@ export default function Me() {
     <div className="stack">
       <Panel>
         <div className="row">
-          <Avatar id={user.avatar} look={user.look} campus={user.campus} size={72} />
+          <Avatar id={user.avatar} look={user.look} campus={user.campus} size={72} hero={!!staff?.isHero} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <h1 style={{ margin: 0 }}>{user.displayName}</h1>
             <div className="muted">@{user.handle} · {campusName(user.campus)} · {ROLE[user.role]}</div>
@@ -138,6 +143,26 @@ export default function Me() {
               >
                 <Avatar id={id} look={{ hat: user.look?.hat, accessory: user.look?.accessory }} size={48} />
                 <div style={{ fontSize: 13 }}>{AVATAR_NAMES[id]}</div>
+              </button>
+            ))}
+            {legendary.map((id) => (
+              <button
+                type="button"
+                key={id}
+                role="radio"
+                aria-checked={avatar === id}
+                aria-label={`${AVATAR_NAMES[id]} (Legendary)`}
+                onClick={() => setAvatar(id)}
+                className="panel flat"
+                style={{ gridColumn: '1 / -1', margin: 0, padding: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', minWidth: 0,
+                  background: avatar === id ? 'var(--gold-300)' : 'linear-gradient(90deg, #fff7d6, #ffe7a0)', color: 'var(--navy-900)', borderColor: 'var(--gold-500)' }}
+              >
+                <Avatar id={id} look={{ hat: user.look?.hat, accessory: user.look?.accessory }} size={56} />
+                <span style={{ minWidth: 0 }}>
+                  <b style={{ display: 'block' }}>{AVATAR_NAMES[id]}</b>
+                  <span className="chip legendary">★ Legendary</span>
+                  <span style={{ display: 'block', fontSize: 12, marginTop: 4 }}>Staff only · Council Legend or Council MVP</span>
+                </span>
               </button>
             ))}
           </div>

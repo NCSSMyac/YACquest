@@ -26,6 +26,7 @@ export const EXTRA_PALETTE: Record<string, string> = {
   T: '#8a5a12', // dark coin shadow
   Z: '#3a2414', // cave
   W: '#5c3a1e', // cave light
+  R: '#a3282a', // deep red (Hero's Cape, staff-only art)
 };
 
 export interface Art {
@@ -171,6 +172,7 @@ export const SPARKLES: { grid: string[]; x: number; y: number; delay: number }[]
 /** Where a hat's bottom-center lands (x = center column, y = bottom row before sink). */
 export const HAT_ANCHOR: Record<AvatarId, { x: number; y: number }> = {
   yak: { x: 16, y: 5 },
+  golden_yak: { x: 16, y: 6 },
   unicorn: { x: 18, y: 4 },
   dragon: { x: 16, y: 4 },
   knight: { x: 16, y: 4 },
@@ -181,6 +183,7 @@ export const HAT_ANCHOR: Record<AvatarId, { x: number; y: number }> = {
 /** Where an accessory's top-center lands. */
 export const NECK_ANCHOR: Record<AvatarId, { x: number; y: number }> = {
   yak: { x: 16, y: 20 },
+  golden_yak: { x: 16, y: 20 },
   unicorn: { x: 20, y: 17 },
   dragon: { x: 16, y: 19 },
   knight: { x: 16, y: 18 },

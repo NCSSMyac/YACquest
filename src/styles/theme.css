@@ -420,3 +420,27 @@ input[type='radio'] { width: 20px; height: 20px; accent-color: var(--navy-800); 
 /* Admin section pills: the strip runs to the screen edge so a cut-off pill hints that it scrolls */
 .admin-nav { display: flex; gap: 8px; overflow-x: auto; margin: 0 -16px; padding: 0 16px 6px; scrollbar-width: thin; }
 .admin-nav .btn { flex: 0 0 auto; text-decoration: none; }
+
+/* ───────────── STAFF ONLY (0020): Hero of the Week glow ring around the avatar ───────────── */
+.hero-ring {
+  position: relative; display: inline-block; line-height: 0; flex: none; box-sizing: content-box;
+  border: 2px solid var(--gold-500); outline: 2px solid var(--navy-900); outline-offset: 0;
+  background: radial-gradient(circle, rgba(255, 231, 160, 0.55), rgba(242, 179, 61, 0) 72%);
+  box-shadow: 0 0 6px 2px rgba(255, 214, 94, 0.9), 0 0 14px 5px rgba(246, 185, 59, 0.45), inset 0 0 6px rgba(255, 231, 160, 0.9);
+  animation: hero-glow 2.4s ease-in-out infinite alternate;
+}
+@keyframes hero-glow {
+  to { box-shadow: 0 0 8px 3px rgba(255, 224, 120, 1), 0 0 20px 8px rgba(246, 185, 59, 0.6), inset 0 0 8px rgba(255, 240, 190, 1); }
+}
+/* Pixel sparkles sitting on the aura's edge; they twinkle in turn (static under reduced motion). */
+.hero-spark {
+  position: absolute; z-index: 1; pointer-events: none;
+  filter: drop-shadow(0 0 3px rgba(255, 214, 94, 0.95));
+  animation: hero-twinkle 2.2s steps(1) infinite;
+}
+@keyframes hero-twinkle {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  40% { opacity: 0.35; transform: scale(0.6); }
+  60% { opacity: 0.8; transform: scale(0.85); }
+}
+.chip.legendary { background: linear-gradient(90deg, #ffe7a0, #f6b93b, #ffe7a0); color: var(--navy-900); border-color: var(--navy-900); }

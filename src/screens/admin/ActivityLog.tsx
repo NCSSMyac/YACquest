@@ -17,6 +17,9 @@ const ICON: Record<string, string> = {
   prize_fulfilled: 'chip t1',
   prize_revoked: 'chip rejected',
   cycle_reset: 'chip rejected',
+  hero_crowned: 'chip t1',
+  hero_cleared: 'chip neutral',
+  staff_reward_granted: 'chip t1',
 };
 const TAG: Record<string, string> = {
   points_added: 'points',
@@ -31,6 +34,9 @@ const TAG: Record<string, string> = {
   prize_revoked: 'prize',
   cycle_reset: 'cycle',
   report_settings_changed: 'email',
+  hero_crowned: 'hero',
+  hero_cleared: 'hero',
+  staff_reward_granted: 'reward',
 };
 
 export default function ActivityLog() {

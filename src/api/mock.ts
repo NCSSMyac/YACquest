@@ -15,6 +15,7 @@ import { ACTIVITIES, ONCE_PER_CYCLE, activityById } from '../lib/activities';
 import { EVENT_KINDS, kindInfo } from '../lib/eventKinds';
 import { BADGES } from '../lib/badges';
 import { COSMETICS, cosmeticById, type UnlockRule } from '../lib/cosmetics';
+import { HERO_ITEMS, HOSTED_EVENT_MIN_CHECKINS, STAFF_BADGES, STAFF_COSMETICS, isLegendaryAvatar, staffCosmeticById, staffGrantById, type StaffRule } from '../lib/staffRewards';
 import { monthName } from '../lib/format';
 import { yakPunOfTheWeek } from '../lib/yakPuns';
 import { announcementError, claimContactError, isEmail } from '../lib/validate';
@@ -49,6 +50,11 @@ import type {
   Look,
   Shoutout,
   EventAttendee,
+  HeroBoard,
+  HeroReign,
+  StaffRewardRow,
+  StaffRewards,
+  CouncilMember,
 } from '../types';
 
 // ───────────────────────────── errors ─────────────────────────────
@@ -87,6 +93,17 @@ interface Db {
   announcements: Announcement[];
   /** General feedback (the real one is the feedback table). */
   feedback: { id: string; userId: string; category: FeedbackCategory; message: string; anonymous?: boolean; status: 'new' | 'reviewed'; reviewedBy?: string; reviewedAt?: string; createdAt: string }[];
+  // ── staff-only rewards (0020) ──
+  /** Hero of the Week reigns, oldest first (the real one is hero_reigns). endedAt unset = current. */
+  heroReigns: { id: string; userId: string; note: string; crownedAt: string; crownedBy: string; endedAt?: string }[];
+  /** Chair grants (the real one is staff_grants). */
+  staffGrants: { userId: string; rewardId: string; grantedBy: string; grantedAt: string }[];
+  /** event id → creator user id (events.created_by). */
+  eventCreators: Record<string, string>;
+  /** announcement id → sender user id (announcements.created_by). */
+  announcementSenders: Record<string, string>;
+  /** user id → last normal character, restored if a Golden Yak goes back to participant (profiles.normal_avatar). */
+  normalAvatars: Record<string, AvatarId>;
   seq: number;
 }
 
@@ -98,7 +115,7 @@ interface OutboxRow extends EmailLogRow {
 
 const DB_KEY = 'yacquest-db-v1';
 const SESSION_KEY = 'yacquest-session';
-const DB_VERSION = 8;
+const DB_VERSION = 9;
 
 let db: Db | null = null;
 
@@ -366,6 +383,9 @@ export async function updateProfile(patch: Partial<Pick<User, 'displayName' | 'a
   if (patch.displayName !== undefined && (patch.displayName.trim().length < 2 || patch.displayName.length > 24))
     fail('displayName', 'Display name: 2–24 characters.');
   if (patch.displayName !== undefined && !nameIsClean(patch.displayName)) fail('displayName', NAME_NOT_ALLOWED);
+  // SERVER RULE (update_profile, 0020): the Legendary Golden Yak only for staff who unlocked it.
+  if (patch.avatar && isLegendaryAvatar(patch.avatar) && !legendaryFor(user.id)) fail('avatar', 'Pick one of the avatars.');
+  if (patch.avatar && isLegendaryAvatar(patch.avatar) && !isLegendaryAvatar(user.avatar)) load().normalAvatars[user.id] = user.avatar;
   Object.assign(user, patch, patch.displayName ? { displayName: patch.displayName.trim() } : {});
   for (const c of load().claims) if (c.userId === user.id) c.displayName = user.displayName;
   save();
@@ -756,6 +776,7 @@ export async function createEvent(input: EventInput): Promise<YacEvent> {
   validateEvent(admin, input);
   const e: YacEvent = { ...normalizeEvent(input), title: input.title.trim(), password: input.password.trim(), id: nextId('evt'), attendeeCount: 0, activityId: kindInfo(input.kind).activityId };
   load().events.push(e);
+  load().eventCreators[e.id] = admin.id;
   logAction('event_created', undefined, { title: e.title, kind: e.kind, campus: e.campus }, admin);
   save();
   return e;
@@ -928,6 +949,11 @@ export function seed(): Db {
     actions: [],
     announcements: [],
     feedback: [],
+    heroReigns: [],
+    staffGrants: [],
+    eventCreators: {},
+    announcementSenders: {},
+    normalAvatars: {},
     seq: 1000,
   };
   db = d;
@@ -1039,12 +1065,35 @@ export function seed(): Db {
   seedAction(jacob, 'submission_approved', demo.displayName, { activityId: 'follow_ig', reason: null }, iso(-10 * D));
   seedAction(jacob, 'submission_rejected', demo.displayName, { activityId: 'repost', reason: 'Screenshot was cropped — we couldn’t see the YAC post.' }, iso(-7 * D));
   seedAction(iesha, 'points_added', demo.displayName, { amount: TIER_POINTS[2], reason: 'Win a Game or Competition: Kickoff cornhole', activityId: 'game_win' }, kickoff.endsAt);
+
+  // Staff-only rewards (0020), own rng so the rest of the seed stays stable:
+  // Iesha created the two big past events (Event Host 2/3), Jacob reviewed the demo player's proofs,
+  // and 'admin' has reviewed 18 proofs (Gatekeeper 18/25). Jacob was Hero of the Week two weeks ago.
+  {
+    const sr = rng(2020);
+    const admin = d.users.find((u) => u.handle === 'admin')!;
+    d.eventCreators[kickoff.id] = iesha.id;
+    d.eventCreators[d.events[1].id] = iesha.id;
+    for (const s of d.submissions) if (s.userId === demo.id && s.status !== 'pending') s.reviewerId = jacob.id;
+    const crowd = d.users.filter((u) => u.role === 'participant' && u.id !== demo.id);
+    for (let i = 0; i < 18; i++) {
+      const u = crowd[Math.floor(sr() * crowd.length)];
+      const created = iso(-(4 + sr() * 14) * D);
+      d.submissions.push({
+        id: nextId('sub'), userId: u.id, activityId: 'repost', imageUrl: PLACEHOLDER_IMG('REPOST', '#8a4fd8'), note: '',
+        status: 'rejected', reviewerId: admin.id, reviewReason: 'We couldn’t see the YAC post in the screenshot.', createdAt: created, reviewedAt: created,
+      });
+    }
+    d.heroReigns.push({ id: nextId('hero'), userId: jacob.id, note: 'Ran the kickoff check-in table', crownedAt: iso(-14 * D), crownedBy: iesha.id, endedAt: iso(-1 * D) });
+    seedAction(iesha, 'hero_crowned', jacob.displayName, { note: 'Ran the kickoff check-in table' }, iso(-14 * D));
+    seedAction(iesha, 'hero_cleared', jacob.displayName, {}, iso(-1 * D));
+  }
   d.actions.sort((a, b) => a.createdAt.localeCompare(b.createdAt)).forEach((a, i) => (a.id = i + 1));
   return d;
 }
 
 // Expose for tests
-export const __test = { load, pointsOf, rankedParticipants, setSession, addLedger, deliverOutbox, badgesFor, unlocksFor, shoutoutSync };
+export const __test = { load, pointsOf, rankedParticipants, setSession, addLedger, deliverOutbox, badgesFor, unlocksFor, shoutoutSync, staffStats, staffUnlocksFor, legendaryFor };
 
 // ───────────────────────────── team (chairs only) ─────────────────────────────
 
@@ -1073,6 +1122,7 @@ export async function setRole(userId: string, role: 'participant' | 'admin' | 'c
   const from = u.role;
   u.role = role;
   if (from !== role) logAction('role_changed', u, { from, to: role }, caller);
+  if (from !== 'participant' && role === 'participant') leaveStaffRewards(u, caller);
   if (role === 'chair') notify(u.id, 'announcement', 'You are now a YAC Chair', `${caller.displayName} made you a YAC Chair. You can now manage the team, prizes and settings.`);
   else notify(u.id, 'announcement', role === 'admin' ? 'You are now a YACquest admin' : 'Your admin access was removed', role === 'admin' ? 'You can now review submissions and award points.' : 'You are back to being a regular adventurer.');
   refreshPrizeRace();
@@ -1511,6 +1561,7 @@ export async function sendAnnouncement(input: AnnouncementInput): Promise<{ reci
       enqueueEmail('announcement', emails.slice(i * 90, (i + 1) * 90), `📣 YACquest: ${title}`, body, emailHtml(title, `<p>${esc(body)}</p>`), `announcement:${id}:${i}`);
   }
   const target = input.audience === 'user' ? targets[0] : undefined;
+  d.announcementSenders[id] = admin.id;
   d.announcements.unshift({
     id, title, body, audience: input.audience,
     campus: input.audience === 'campus' ? input.campus : undefined,
@@ -1734,6 +1785,14 @@ export async function equipLook(look: Look): Promise<User> {
   for (const slot of ['hat', 'accessory', 'background'] as const) {
     const id = look[slot]?.trim();
     if (!id) continue;
+    // SERVER RULE (equip_look, 0020): staff items only for staff who unlocked them; participants don't even learn they exist.
+    const staffItem = staffCosmeticById(id);
+    if (staffItem && !cosmeticById(id)) {
+      if (user.role === 'participant' || staffItem.slot !== slot) fail('look', 'That item doesn’t fit there.');
+      if (!staffUnlocksFor(user.id).includes(id)) fail('locked', `You haven’t unlocked the ${staffItem.name} yet.`);
+      next[slot] = id;
+      continue;
+    }
     const item = cosmeticById(id);
     if (!item || item.slot !== slot) fail('look', 'That item doesn’t fit there.');
     if (!unlocked.has(id)) fail('locked', `You haven’t unlocked the ${item!.name} yet.`);
@@ -1750,4 +1809,213 @@ export async function equipLook(look: Look): Promise<User> {
 export async function monthlyShoutout(): Promise<Shoutout | null> {
   await delay(100);
   return shoutoutSync();
+}
+
+// ───────────────────────────── staff-only rewards (0020) ─────────────────────────────
+// Mirrors 0020_staff_rewards.sql. Participants get nothing: myStaffRewards() → null, everything else → forbidden.
+// Staff work counts ALL-TIME (reviews, announcements, events hosted), never resets with the cycle.
+
+const isStaff = (u?: User) => !!u && (u.role === 'admin' || u.role === 'chair');
+const currentReign = () => load().heroReigns.find((r) => !r.endedAt);
+
+/** All-time staff work + hero history for any user. */
+function staffStats(userId: string) {
+  const d = load();
+  return {
+    reviews: d.submissions.filter((s) => s.reviewerId === userId && s.status !== 'pending').length,
+    announcements: Object.values(d.announcementSenders).filter((id) => id === userId).length,
+    hosted: d.events.filter((e) => d.eventCreators[e.id] === userId && e.attendeeCount >= HOSTED_EVENT_MIN_CHECKINS).length,
+    heroCount: d.heroReigns.filter((r) => r.userId === userId).length,
+    isHero: currentReign()?.userId === userId,
+  };
+}
+
+function staffBadgesFor(userId: string): BadgeProgress[] {
+  const st = staffStats(userId);
+  const raw: Record<string, [number, number]> = {
+    gatekeeper: [st.reviews, 25],
+    town_crier: [st.announcements, 5],
+    event_host: [st.hosted, 3],
+  };
+  const list = STAFF_BADGES.map((b) => {
+    if (b.id === 'hero_week') return { id: b.id, earned: st.heroCount >= 1, progress: st.heroCount, goal: 1 };
+    if (b.id === 'council_legend') {
+      const n = ['gatekeeper', 'town_crier', 'event_host'].filter((k) => raw[k][0] >= raw[k][1]).length + (st.heroCount >= 1 ? 1 : 0);
+      return { id: b.id, earned: n >= 4, progress: n, goal: 4 };
+    }
+    const [progress, goal] = raw[b.id];
+    return { id: b.id, earned: progress >= goal, progress: Math.min(progress, goal), goal };
+  });
+  return list;
+}
+
+const grantsOf = (userId: string) => load().staffGrants.filter((g) => g.userId === userId).map((g) => g.rewardId);
+
+/** Staff cosmetic ids this user may equip right now ([] for participants). */
+function staffUnlocksFor(userId: string): string[] {
+  const user = load().users.find((u) => u.id === userId);
+  if (!isStaff(user)) return [];
+  const st = staffStats(userId);
+  const grants = new Set(grantsOf(userId));
+  const ok = (id: string, r: StaffRule) =>
+    r.type === 'staff' ||
+    (r.type === 'reviews' && st.reviews >= r.min) ||
+    (r.type === 'announcements' && st.announcements >= r.min) ||
+    (r.type === 'hosted' && st.hosted >= r.min) ||
+    (r.type === 'grant' && grants.has(id)) ||
+    (r.type === 'hero' && st.isHero);
+  return STAFF_COSMETICS.filter((c) => ok(c.id, c.rule)).map((c) => c.id);
+}
+
+/** Golden Yak: staff with the Council Legend badge or a chair's Council MVP grant. */
+function legendaryFor(userId: string): boolean {
+  const user = load().users.find((u) => u.id === userId);
+  if (!isStaff(user)) return false;
+  return grantsOf(userId).includes('council_mvp') || staffBadgesFor(userId).some((b) => b.id === 'council_legend' && b.earned);
+}
+
+/** Replace a user object in place-by-identity with a fresh copy (so React state sees the change). */
+function replaceUser(user: User, patch: Partial<User>): User {
+  const d = load();
+  const i = d.users.findIndex((u) => u.id === user.id);
+  const updated = { ...d.users[i], ...patch };
+  d.users[i] = updated;
+  return updated;
+}
+
+/** Take off any staff items that are no longer allowed (role change, reign ended). */
+function stripLook(user: User, keep: (id: string) => boolean): User {
+  const look = { ...(user.look ?? {}) };
+  let changed = false;
+  for (const slot of ['hat', 'accessory', 'background'] as const) {
+    const id = look[slot];
+    if (id && staffCosmeticById(id) && !keep(id)) {
+      delete look[slot];
+      changed = true;
+    }
+  }
+  return changed ? replaceUser(user, { look: Object.keys(look).length ? look : undefined }) : user;
+}
+
+/** SERVER RULE (profiles role trigger, 0020): back to participant → staff looks + Golden Yak come off, reign ends. History is kept. */
+function leaveStaffRewards(user: User, actor?: User | null) {
+  let u = stripLook(user, () => false);
+  if (isLegendaryAvatar(u.avatar)) u = replaceUser(u, { avatar: load().normalAvatars[u.id] ?? 'yak' });
+  const reign = currentReign();
+  if (reign && reign.userId === u.id) {
+    reign.endedAt = now();
+    logAction('hero_cleared', u, { reason: 'role_changed' }, actor);
+  }
+}
+
+function endReign(reign: { userId: string; endedAt?: string }, keepUserId?: string) {
+  reign.endedAt = now();
+  if (reign.userId === keepUserId) return;
+  const u = load().users.find((x) => x.id === reign.userId);
+  if (u) stripLook(u, (id) => !HERO_ITEMS.includes(id));
+}
+
+function reignJson(r: Db['heroReigns'][number]): HeroReign {
+  const d = load();
+  const u = d.users.find((x) => x.id === r.userId);
+  return {
+    id: r.id,
+    userId: r.userId,
+    displayName: u?.displayName ?? 'Unknown',
+    campus: u?.campus ?? 'duke',
+    avatar: u?.avatar ?? 'yak',
+    look: u?.look,
+    note: r.note,
+    crownedAt: r.crownedAt,
+    crownedByName: d.users.find((x) => x.id === r.crownedBy)?.displayName ?? '',
+    endedAt: r.endedAt,
+  };
+}
+
+/** The caller's staff rewards; null for participants (they never see any of it). */
+export async function myStaffRewards(): Promise<StaffRewards | null> {
+  await delay(80);
+  const user = me();
+  if (!isStaff(user)) return null;
+  const st = staffStats(user.id);
+  return { isHero: st.isHero, heroCount: st.heroCount, unlocks: staffUnlocksFor(user.id), badges: staffBadgesFor(user.id), legendary: legendaryFor(user.id), grants: grantsOf(user.id) };
+}
+
+/** SERVER RULE (hero_board, 0020): admins + chairs. Current hero, Hall of Heroes (newest first), the team with perks. */
+export async function heroBoard(): Promise<HeroBoard> {
+  await delay();
+  requireRole('admin', 'chair');
+  const d = load();
+  const cur = currentReign();
+  const team: StaffRewardRow[] = d.users
+    .filter(isStaff)
+    .sort((a, b) => Number(b.role === 'chair') - Number(a.role === 'chair') || a.displayName.localeCompare(b.displayName))
+    .map((u) => {
+      const st = staffStats(u.id);
+      return { userId: u.id, displayName: u.displayName, handle: u.handle, role: u.role, campus: u.campus, avatar: u.avatar, look: u.look, isHero: st.isHero, heroCount: st.heroCount, grants: grantsOf(u.id), legendary: legendaryFor(u.id) };
+    });
+  return { current: cur ? reignJson(cur) : null, history: d.heroReigns.slice().reverse().map(reignJson), team };
+}
+
+/** SERVER RULE (crown_hero, 0020): chairs only; target must be an admin or chair; note ≤ 120. Perks move to the new hero. */
+export async function crownHero(userId: string, note = ''): Promise<void> {
+  await delay();
+  const chair = requireRole('chair');
+  const d = load();
+  const target = d.users.find((u) => u.id === userId);
+  if (!target) return fail('not_found', 'That person wasn’t found.');
+  if (!isStaff(target)) return fail('not_staff', 'Only admins and chairs can be Hero of the Week.');
+  const text = note.trim();
+  if (text.length > 120) fail('note', 'Keep the note to 120 characters.');
+  const cur = currentReign();
+  if (cur) endReign(cur, userId);
+  d.heroReigns.push({ id: nextId('hero'), userId, note: text, crownedAt: now(), crownedBy: chair.id });
+  notify(userId, 'hero_crowned', 'You’re Hero of the Week!', text || `${chair.displayName} crowned you at the YAC meeting. Thank you!`);
+  logAction('hero_crowned', target, { note: text || null }, chair);
+  save();
+}
+
+/** SERVER RULE (clear_hero, 0020): chairs only. Ends the current reign; hero perks come off. */
+export async function clearHero(): Promise<void> {
+  await delay();
+  const chair = requireRole('chair');
+  const cur = currentReign();
+  if (!cur) return fail('not_found', 'There’s no Hero of the Week right now.');
+  endReign(cur);
+  logAction('hero_cleared', load().users.find((u) => u.id === cur.userId), {}, chair);
+  save();
+}
+
+/** SERVER RULE (grant_staff_reward, 0020): chairs only; target must be staff; once per reward. 'council_mvp' unlocks the Golden Yak. */
+export async function grantStaffReward(userId: string, rewardId: string): Promise<void> {
+  await delay();
+  const chair = requireRole('chair');
+  const d = load();
+  const target = d.users.find((u) => u.id === userId);
+  if (!target) return fail('not_found', 'That person wasn’t found.');
+  if (!isStaff(target)) return fail('not_staff', 'Only admins and chairs can get Council rewards.');
+  const g = staffGrantById(rewardId);
+  if (!g) return fail('reward', 'Pick one of the Council rewards.');
+  if (d.staffGrants.some((x) => x.userId === userId && x.rewardId === rewardId)) return fail('already', `${target.displayName} already has the ${g.name}.`);
+  d.staffGrants.push({ userId, rewardId, grantedBy: chair.id, grantedAt: now() });
+  notify(userId, 'staff_reward', rewardId === 'council_mvp' ? 'Council MVP: the Golden Yak is yours!' : `New Council look: ${g.name}`,
+    rewardId === 'council_mvp' ? 'Pick the Legendary Golden Yak under Me → Edit profile.' : `${chair.displayName} gave you the ${g.name}. Find it in the Wardrobe.`);
+  logAction('staff_reward_granted', target, { reward: rewardId, name: g.name }, chair);
+  save();
+}
+
+/** SERVER RULE (council_board, 0021): admins + chairs, view-only. Hero first, then chairs, then admins, then name. */
+export async function councilBoard(): Promise<CouncilMember[]> {
+  await delay();
+  requireRole('admin', 'chair');
+  return load()
+    .users.filter(isStaff)
+    .map((u) => {
+      const st = staffStats(u.id);
+      return {
+        userId: u.id, displayName: u.displayName, handle: u.handle, role: u.role, campus: u.campus, avatar: u.avatar, look: u.look,
+        isHero: st.isHero, heroCount: st.heroCount, badges: staffBadgesFor(u.id), unlockCount: staffUnlocksFor(u.id).length, legendary: legendaryFor(u.id),
+      };
+    })
+    .sort((a, b) => Number(b.isHero) - Number(a.isHero) || Number(b.role === 'chair') - Number(a.role === 'chair') || a.displayName.localeCompare(b.displayName));
 }

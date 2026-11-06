@@ -15,6 +15,8 @@ import { cosmeticById } from '../lib/cosmetics';
 import { BadgesPanel } from '../components/cosmetics/BadgesPanel';
 import { WardrobePanel } from '../components/cosmetics/WardrobePanel';
 import { takeNew } from '../components/cosmetics/seen';
+import { useStaffRewards } from '../lib/useStaffRewards';
+import { staffBadgeById, staffCosmeticById } from '../lib/staffRewards';
 
 const GIFT_CARDS = ['Amazon', 'Target', 'Starbucks', 'Chick-fil-A', 'DoorDash', 'Visa'];
 const campusColor = (id: string) => CAMPUSES.find((c) => c.id === id)?.color ?? 'var(--navy-800)';
@@ -35,6 +37,8 @@ export default function Prize() {
   const celebrate = useCelebrate();
   const badges = useAsync(api.myBadges, [], { live: true });
   const unlocks = useAsync(api.myUnlocks, [], { live: true });
+  // Staff only (0020): null for participants — no API call, nothing rendered.
+  const staff = useStaffRewards().data;
 
   // One-time celebrations for badges / looks earned since this player last looked (first visit ever: none).
   const userId = user?.id;
@@ -53,6 +57,20 @@ export default function Prize() {
       celebrate({ title: 'New look unlocked!', subtitle: cosmeticById(id)?.name ?? id, cosmeticId: id, size: 'big' });
   }, [userId, unlockIds, celebrate]);
 
+  // Staff only: celebrate newly earned Council badges / looks too (separate "seen" sets).
+  const staffBadgeIds = staff?.badges.filter((b) => b.earned).map((b) => b.id).join(',');
+  const staffLookIds = staff?.unlocks.filter((id) => !['staff', 'hero'].includes(staffCosmeticById(id)?.rule.type ?? '')).join(',');
+  useEffect(() => {
+    if (!userId || staffBadgeIds === undefined) return;
+    for (const id of takeNew('staff-badges', userId, staffBadgeIds ? staffBadgeIds.split(',') : []))
+      celebrate({ title: 'Council badge unlocked!', subtitle: staffBadgeById(id)?.name ?? id, badgeId: id, hint: staffBadgeById(id)?.flavor, size: 'big' });
+  }, [userId, staffBadgeIds, celebrate]);
+  useEffect(() => {
+    if (!userId || staffLookIds === undefined) return;
+    for (const id of takeNew('staff-looks', userId, staffLookIds ? staffLookIds.split(',') : []))
+      celebrate({ title: 'New Council look!', subtitle: staffCosmeticById(id)?.name ?? id, size: 'big' });
+  }, [userId, staffLookIds, celebrate]);
+
   const select = (id: HubTab) => setParams(id === 'treasure' ? {} : { tab: id }, { replace: true });
   const title = tab === 'badges' ? 'Badge Book' : tab === 'wardrobe' ? 'Wardrobe' : 'Treasure Vault';
 
@@ -68,8 +86,8 @@ export default function Prize() {
       </div>
       <div id="hub-panel" role="tabpanel" aria-labelledby={`hub-tab-${tab}`}>
         {tab === 'treasure' && <Treasure />}
-        {tab === 'badges' && <BadgesPanel badges={badges.data} error={badges.error} />}
-        {tab === 'wardrobe' && <WardrobePanel unlocks={unlocks.data} error={unlocks.error} />}
+        {tab === 'badges' && <BadgesPanel badges={badges.data} error={badges.error} staffBadges={staff?.badges} />}
+        {tab === 'wardrobe' && <WardrobePanel unlocks={unlocks.data} error={unlocks.error} staff={staff} />}
       </div>
     </div>
   );

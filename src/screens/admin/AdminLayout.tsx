@@ -10,12 +10,13 @@ export default function AdminLayout() {
   const count = pending?.length ?? 0;
   const links: { to: string; label: string; end?: boolean; badge?: number }[] = [
     { to: '/admin', label: 'Overview', end: true },
+    { to: '/admin/council', label: 'Council' },
     { to: '/admin/review', label: 'Review', badge: count },
     { to: '/admin/players', label: 'Players' },
     { to: '/admin/events', label: 'Events' },
     { to: '/admin/announce', label: 'Announce' },
     { to: '/admin/feedback', label: 'Feedback' },
-    ...(isChair ? [{ to: '/admin/prizes', label: 'Prizes' }, { to: '/admin/team', label: 'Team' }, { to: '/admin/log', label: 'Log' }, { to: '/admin/system', label: 'System' }] : []),
+    ...(isChair ? [{ to: '/admin/prizes', label: 'Prizes' }, { to: '/admin/team', label: 'Team' }, { to: '/admin/heroes', label: 'Heroes' }, { to: '/admin/log', label: 'Log' }, { to: '/admin/system', label: 'System' }] : []),
   ];
   return (
     <div className="stack">

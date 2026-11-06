@@ -2,7 +2,7 @@
  * Per-player "already celebrated" sets for badges and wardrobe unlocks (localStorage, best effort).
  * First load ever (no key yet) marks everything as seen without celebrating, so existing players aren't spammed.
  */
-export type SeenKind = 'badges' | 'looks';
+export type SeenKind = 'badges' | 'looks' | 'staff-badges' | 'staff-looks';
 
 const key = (kind: SeenKind, userId: string) => `yacquest-seen-${kind}:${userId}`;
 

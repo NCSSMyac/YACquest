@@ -13,11 +13,14 @@ import { activityById } from '../lib/activities';
 import { fmtCycleDate, fmtDate, fmtPts, timeAgo } from '../lib/format';
 import { useAsync } from '../lib/useAsync';
 import { randomYakPun, yakPunOfTheDay } from '../lib/yakPuns';
+import { useStaffRewards } from '../lib/useStaffRewards';
 
 export default function Home() {
   const toast = useToast();
   const { data, loading, error } = useAsync(() => api.getDashboard(), [], { live: true });
   const celebrate = useCelebrate();
+  // Staff only (0020): the reigning Hero of the Week gets a gold glow. Always null for participants.
+  const isHero = !!useStaffRewards().data?.isHero;
   const userId = data?.user.id;
   const points = data?.points;
 
@@ -56,9 +59,10 @@ export default function Home() {
   return (
     <div className="stack">
       <div className="row">
-        <Avatar id={d.user.avatar} look={d.user.look} campus={d.user.campus} size={56} />
+        <Avatar id={d.user.avatar} look={d.user.look} campus={d.user.campus} size={56} hero={isHero} />
         <div>
           <h1 style={{ margin: 0 }}>Hi, {d.user.displayName}!</h1>
+          {isHero && <span className="chip t1" style={{ margin: '2px 0' }}>🦸 Hero of the Week</span>}
           <div className="muted">{campusName(d.user.campus)} adventurer</div>
           <div className="muted" style={{ fontSize: 13, fontStyle: 'italic' }}>🐂 Yak of the day: {yakPunOfTheDay()}</div>
         </div>

@@ -39,6 +39,13 @@ export const PALETTE: Record<string, string> = {
   y: '#ffe7a0',
   r: '#e0533f',
   o: '#8a5a2b',
+  // Golden Yak (staff only)
+  d: '#5a3304', // deep amber outline
+  a: '#c27a0c', // amber shadow
+  j: '#f2b02c', // gold
+  l: '#ffd65e', // light gold
+  t: '#fff0b0', // pale gold (snout)
+  z: '#7a3fc0', // royal purple collar
 };
 
 // Human characters use fantasy skin tones (mint, pink, lilac) so nobody's real skin color is the default.
@@ -247,7 +254,45 @@ export const GRIDS: Record<AvatarId, string[]> = {
     '....keeeeeooooeeeeooooeeeeek....',
     '.....kkkkkkkkkkkkkkkkkkkkkk.....',
   ],
+  // STAFF ONLY (0020): the Legendary Golden Yak is filled in below from the yak grid (see goldenYak()).
+  golden_yak: [],
 };
+
+/**
+ * STAFF ONLY (0020): the Legendary Golden Yak. It is the regular yak pixel-for-pixel (same silhouette,
+ * horns, fringe, snout, legs) recolored gold, with a little shading, shine and a gem on a royal collar.
+ * Never offered to participants (see AVATAR_IDS vs LEGENDARY_AVATARS in src/lib/staffRewards.ts).
+ */
+function goldenYak(yak: string[]): string[] {
+  const EYES = new Set(['10,13', '11,13', '20,13', '21,13', '10,14', '11,14', '20,14', '21,14', '10,15', '11,15', '20,15', '21,15']);
+  const MAP: Record<string, string> = { k: 'd', B: 'j', F: 'l', f: 't', g: 'z' };
+  const rows = yak.map((row, y) =>
+    [...row].map((ch, x) => {
+      if (ch === 'k' && EYES.has(`${x},${y}`)) return 'k'; // eyes stay dark so the face reads
+      if (ch === 'b') return y >= 28 ? 'a' : 'k'; // hooves amber, nostrils dark
+      return MAP[ch] ?? ch;
+    }),
+  );
+  const put = (pts: [number, number][], ch: string) => pts.forEach(([x, y]) => (rows[y][x] = ch));
+  // metallic shading: pale rim light on the left edge of the head and body, amber shadow on the right
+  for (let y = 9; y <= 27; y++) {
+    const r = rows[y];
+    const first = r.findIndex((c) => c === 'j' || c === 'l');
+    let last = -1;
+    r.forEach((c, x) => (c === 'j' || c === 'l') && (last = x));
+    if (first < 0) continue;
+    if (r[first] === 'j') r[first] = 'l';
+    if (y >= 11 && r[last] !== 't') r[last] = 'a';
+  }
+  // shine glints (top-left lit)
+  put([[10, 8], [9, 9], [6, 21]], 't');
+  put([[10, 7], [8, 10], [5, 21], [6, 20]], 'w');
+  // gem tag on the royal collar (where the yak's bell tag hangs)
+  put([[16, 23], [15, 24], [16, 24]], 'N');
+  put([[15, 23]], 'w');
+  return rows.map((r) => r.join(''));
+}
+GRIDS.golden_yak = goldenYak(GRIDS.yak);
 
 export const AVATAR_NAMES: Record<AvatarId, string> = {
   yak: 'Yak',
@@ -256,9 +301,11 @@ export const AVATAR_NAMES: Record<AvatarId, string> = {
   knight: 'Knight',
   mage: 'Mage',
   ranger: 'Ranger',
+  golden_yak: 'Golden Yak',
 };
 
-export const AVATAR_IDS = Object.keys(GRIDS) as AvatarId[];
+/** Characters anyone can pick (sign-up, Me). The staff-only Golden Yak is NOT in this list. */
+export const AVATAR_IDS: AvatarId[] = ['yak', 'unicorn', 'dragon', 'knight', 'mage', 'ranger'];
 
 export function Sprite({ id, size = 48, className, title }: { id: AvatarId | 'chest' | 'trophy'; size?: number; className?: string; title?: string }) {
   const grid = id === 'chest' ? CHEST : id === 'trophy' ? TROPHY : GRIDS[id] ?? GRIDS.yak;

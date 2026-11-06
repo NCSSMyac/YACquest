@@ -30,6 +30,8 @@ import Team from './screens/admin/Team';
 import Announce from './screens/admin/Announce';
 import Feedback from './screens/admin/Feedback';
 import ActivityLog from './screens/admin/ActivityLog';
+import Heroes from './screens/admin/Heroes';
+import Council from './screens/admin/Council';
 
 function RequireAuth() {
   const { user, ready } = useAuth();
@@ -147,6 +149,7 @@ export default function App() {
                 <Route path="admin" element={<RequireStaff />}>
                   <Route element={<AdminLayout />}>
                     <Route index element={<AdminHome />} />
+                    <Route path="council" element={<Council />} />
                     <Route path="review" element={<Review />} />
                     <Route path="announce" element={<Announce />} />
                     <Route path="feedback" element={<Feedback />} />
@@ -156,6 +159,7 @@ export default function App() {
                       <Route path="prizes" element={<Prizes />} />
                       <Route path="system" element={<System />} />
                       <Route path="team" element={<Team />} />
+                      <Route path="heroes" element={<Heroes />} />
                       <Route path="log" element={<ActivityLog />} />
                     </Route>
                   </Route>
