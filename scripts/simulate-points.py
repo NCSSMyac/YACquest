@@ -43,7 +43,7 @@ print(f"\n35/20/5, goal {GOAL}: ~{r['half']:.0f} people past halfway ({GOAL // 2
       f"5th best ~{r['fifth']:.0f}, perfect participant {perfect(P)}")
 
 print("\nGoal sweep (35/20/5): goal | reach (median) | P(fewer than 4 winners)")
-for g in range(300, 451, 25):
+for g in range(275, 426, 25):
     reach = []
     for _ in range(150):
         s = (person(random.betavariate(1.1, 4.5), P) for _ in range(300))

@@ -4,7 +4,7 @@
 --   media every other week, so the goal drops from 650 to 350. Tier points stay 35/20/5,
 --   still 4 spots × $75. Simulation (scripts/simulate-points.py): ~3 of 300 reach 350.
 --
---   • app_config.prize_goal = 350 (0003 sets 650 on every re-run; this file runs after it),
+--   • app_config.prize_goal = 350 (0001 created it at 650; since 0019, 0003 no longer resets it),
 --     then refresh_prize_race() so anyone already past 350 gets a spot right away.
 --   • badges_for(): copy of 0012 — only the 'halfway' goal changes: was a hard-coded 325,
 --     now half the prize goal rounded up (175). 'legend' already used prize_goal.

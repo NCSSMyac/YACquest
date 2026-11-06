@@ -1,10 +1,13 @@
-import { INSTAGRAM_HANDLE } from '../config';
+import { CAPS, INSTAGRAM_HANDLE } from '../config';
 import type { Activity } from '../types';
 
 /**
  * Catalog of ways to earn points, from the YAC proposal (section 4).
- * Point values come from TIER_POINTS in config.ts, not from here.
+ * Point values come from TIER_POINTS in config.ts, and limit labels from CAPS, not from here.
  */
+/** Shared by every Tier 3 screenshot quest: the weekly cap counts all digital kinds together. */
+const DIGITAL_LIMIT = `Digital: ${CAPS.digitalPerWeek} per week`;
+
 export const ACTIVITIES: Activity[] = [
   // Tier 1 — High-Impact Engagement
   {
@@ -21,7 +24,7 @@ export const ACTIVITIES: Activity[] = [
     title: 'Bring a New Young Alum',
     description: 'A friend signs up with your friend code and checks in at their first YAC event. You BOTH get these points, automatically.',
     method: 'referral',
-    limitLabel: 'Up to 3 friends',
+    limitLabel: `Up to ${CAPS.referralsPerCycle} friends`,
   },
   {
     id: 'cross_campus_event',
@@ -36,7 +39,7 @@ export const ACTIVITIES: Activity[] = [
     title: 'Upload Event Photos',
     description: 'Share a photo from a YAC event you attended. A YAC admin reviews it.',
     method: 'photo',
-    limitLabel: '1 per event, 4 per cycle',
+    limitLabel: `${CAPS.photosPerEvent} per event, ${CAPS.photosPerCycle} per cycle`,
   },
 
   // Tier 2 — Active Participation
@@ -60,7 +63,7 @@ export const ACTIVITIES: Activity[] = [
     title: 'Tag YAC in a Post',
     description: `Tag ${INSTAGRAM_HANDLE} in a relevant social post or shoutout. Upload a screenshot.`,
     method: 'screenshot',
-    limitLabel: '2 per month',
+    limitLabel: `${CAPS.socialTagPerMonth} per month`,
   },
 
   // Tier 3 — Digital & Community Connection
@@ -77,7 +80,7 @@ export const ACTIVITIES: Activity[] = [
     title: 'Complete a Feedback Survey',
     description: 'Fill out an alumni or student feedback survey and screenshot the confirmation page.',
     method: 'screenshot',
-    limitLabel: 'Digital: 1 per week',
+    limitLabel: DIGITAL_LIMIT,
   },
   {
     id: 'follow_ig',
@@ -93,7 +96,7 @@ export const ACTIVITIES: Activity[] = [
     title: 'Repost a YAC Post',
     description: `Repost a ${INSTAGRAM_HANDLE} event, announcement or poster to your story or feed.`,
     method: 'screenshot',
-    limitLabel: 'Digital: 1 per week',
+    limitLabel: DIGITAL_LIMIT,
   },
   {
     id: 'poll',
@@ -101,7 +104,7 @@ export const ACTIVITIES: Activity[] = [
     title: 'Vote in a Community Poll',
     description: 'Answer a YAC digital community poll.',
     method: 'screenshot',
-    limitLabel: 'Digital: 1 per week',
+    limitLabel: DIGITAL_LIMIT,
   },
   {
     id: 'story_game',
@@ -109,7 +112,7 @@ export const ACTIVITIES: Activity[] = [
     title: 'Play an Insta Story Game',
     description: `Play a game or quiz on the ${INSTAGRAM_HANDLE} Instagram story.`,
     method: 'screenshot',
-    limitLabel: 'Digital: 1 per week',
+    limitLabel: DIGITAL_LIMIT,
   },
 ];
 

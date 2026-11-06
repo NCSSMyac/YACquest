@@ -86,8 +86,8 @@ export default function Team() {
           </div>
         )}
         <ul className="list" style={{ margin: 0 }}>
-          <li><b>Chair</b>: can do everything: team, prizes, emails and reset. Up to {MAX_CHAIRS} chairs.</li>
-          <li><b>Admin</b>: a day-to-day helper. Reviews submissions, awards points, runs events.</li>
+          <li><b>Chair</b>: can do everything: team, prizes, the action log and system settings (weekly email, reset). Up to {MAX_CHAIRS} chairs.</li>
+          <li><b>Admin</b>: a day-to-day helper. Reviews submissions, awards points, runs events and sends announcements (including email to everyone).</li>
         </ul>
       </Panel>
 

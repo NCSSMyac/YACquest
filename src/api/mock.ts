@@ -10,12 +10,13 @@
  * else has to change. Rules marked "SERVER RULE" must also be enforced by the backend —
  * the front end checks are only for friendly error messages.
  */
-import { CAPS, CAMPUSES, CYCLE, MAX_CHAIRS, PRIZE, TIER_POINTS, type CampusId } from '../config';
+import { ADMIN_NEAR_GOAL_POINTS, CAPS, CAMPUSES, CYCLE, MAX_CHAIRS, PRIZE, TIER_POINTS, type CampusId } from '../config';
 import { ACTIVITIES, ONCE_PER_CYCLE, activityById } from '../lib/activities';
 import { EVENT_KINDS, kindInfo } from '../lib/eventKinds';
 import { BADGES } from '../lib/badges';
 import { COSMETICS, cosmeticById, type UnlockRule } from '../lib/cosmetics';
 import { monthName } from '../lib/format';
+import { yakPunOfTheWeek } from '../lib/yakPuns';
 import { announcementError, claimContactError, isEmail } from '../lib/validate';
 import type {
   Activity,
@@ -828,7 +829,7 @@ export async function adminOverview(): Promise<AdminOverview> {
     pendingReviews: d.submissions.filter((s) => s.status === 'pending' && inScope.has(s.userId)).length,
     newSignupsThisWeek: d.users.filter((u) => inScope.has(u.id) && new Date(u.createdAt).getTime() >= wk).length,
     prize: prizeStatusSync(),
-    nearGoal: rankedParticipants().filter((r) => !claimed.has(r.userId) && r.points >= PRIZE.goal - 75).slice(0, 10),
+    nearGoal: rankedParticipants().filter((r) => !claimed.has(r.userId) && r.points >= PRIZE.goal - ADMIN_NEAR_GOAL_POINTS).slice(0, 10),
   };
 }
 
@@ -1237,7 +1238,7 @@ function prizeAlert(kind: 'prize_qualified' | 'prize_info', c: PrizeClaim) {
       `${c.displayName} (${campus}) just reached ${PRIZE.goal} points and won spot #${c.spot} of ${PRIZE.count} — a ${PRIZE.name}.`,
       'We’re waiting for them to send their delivery info. You’ll get another email when they do.',
     ];
-    enqueueEmail(kind, to, subject, lines.join('\n\n'), emailHtml(subject, lines.map((l) => `<p>${esc(l)}</p>`).join('')), `prize_qualified:${c.userId}:${c.spot}:${c.qualifiedAt}`);
+    enqueueEmail(kind, to, subject, [...lines, yakLineText()].join('\n\n'), emailHtml(subject, lines.map((l) => `<p>${esc(l)}</p>`).join('') + yakLineHtml()), `prize_qualified:${c.userId}:${c.spot}:${c.qualifiedAt}`);
   } else {
     const k = c.contact!;
     const subject = `URGENT 🎁 YACquest winner info: ${c.displayName} (spot #${c.spot})`;
@@ -1251,12 +1252,20 @@ function prizeAlert(kind: 'prize_qualified' | 'prize_info', c: PrizeClaim) {
       ['Reference', c.reference ?? '—'],
       ['Campus', campus],
     ];
-    const text = [`${c.displayName} sent their delivery info for spot #${c.spot} (${PRIZE.name}).`, '', ...rows.map(([a, b]) => `${a}: ${b}`)].join('\n');
+    const text = [`${c.displayName} sent their delivery info for spot #${c.spot} (${PRIZE.name}).`, '', ...rows.map(([a, b]) => `${a}: ${b}`), '', yakLineText()].join('\n');
     const html = emailHtml(subject, `<p>${esc(c.displayName)} sent their delivery info for spot #${c.spot} (${esc(PRIZE.name)}).</p><table cellpadding="6" style="border-collapse:collapse">${rows
       .map(([a, b]) => `<tr><td style="font-weight:bold;vertical-align:top">${esc(a)}</td><td style="white-space:pre-wrap">${esc(b)}</td></tr>`)
-      .join('')}</table>`);
+      .join('')}</table>${yakLineHtml()}`);
     enqueueEmail(kind, to, subject, text, html, `prize_info:${c.userId}:${c.spot}:${JSON.stringify(k)}`);
   }
+}
+
+/** SERVER RULE (0015): "Yak of the week" footer line in the weekly report and prize alerts. */
+function yakLineText() {
+  return `🐂 Yak of the week: ${yakPunOfTheWeek()}`;
+}
+function yakLineHtml() {
+  return `<p style="margin:12px 0 0;color:#5b6475;font-size:13px;font-style:italic">${esc(yakLineText())}</p>`;
 }
 
 function emailHtml(title: string, body: string) {
@@ -1341,6 +1350,8 @@ function buildWeeklyReport(): Omit<WeeklyReport, 'recipients'> {
     `- ${active} active participants, ${pts} points awarded, ${signups} new sign-ups`,
     `- ${pending} submissions waiting for review`,
     `- ${daysLeft} days left in the cycle`,
+    '',
+    yakLineText(), // 0015
   ].join('\n');
 
   const h2 = (t: string) => `<h2 style="font-size:16px;color:#0b2a5b;margin:18px 0 6px;border-bottom:2px solid #f2b33d">${esc(t)}</h2>`;
@@ -1363,7 +1374,8 @@ function buildWeeklyReport(): Omit<WeeklyReport, 'recipients'> {
         ? recentFeedback.map((f) => `<div style="border-left:4px solid #f2b33d;padding:6px 10px;margin:0 0 8px;background:#fffaf0"><div style="font-size:12px;color:#4a5672"><b>${esc(fbLabel[f.cat])}</b> · ${esc(f.who)}</div><div style="white-space:pre-wrap">${esc(f.msg)}</div></div>`).join('')
         : '<p style="margin:0;color:#4a5672">No new feedback this week.</p>') +
       h2('This week') +
-      `<ul style="padding-left:18px;margin:0">${li(`${active} active participants · ${pts} points awarded · ${signups} new sign-ups`)}${li(`${pending} submissions waiting for review`)}${li(`${daysLeft} days left in the cycle`)}</ul>`,
+      `<ul style="padding-left:18px;margin:0">${li(`${active} active participants · ${pts} points awarded · ${signups} new sign-ups`)}${li(`${pending} submissions waiting for review`)}${li(`${daysLeft} days left in the cycle`)}</ul>` +
+      yakLineHtml(),
   );
   return { subject, text, html };
 }
@@ -1474,7 +1486,7 @@ export async function adminActionLog(opts: { before?: number; limit?: number } =
 
 // ───────────────────────────── announcements (admins) ─────────────────────────────
 
-/** SERVER RULE (send_announcement in 0006): admins send; only chairs may EMAIL everyone; 20 per sender per day. */
+/** SERVER RULE (send_announcement, 0012): admins and chairs send and may email any audience, including everyone; 20 per sender per day. */
 export async function sendAnnouncement(input: AnnouncementInput): Promise<{ recipients: number; emailed: number }> {
   await delay();
   const admin = requireRole('admin', 'chair');

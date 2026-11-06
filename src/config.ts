@@ -5,22 +5,26 @@
  * - ~300 participants across Duke, UNC and NC State.
  * - Points start with the first event (Nov 8, 2026) and the cycle ends May 1, 2027.
  * - This year YAC runs only ~6 more events (4 home-campus, 2 cross-campus) and posts on social
- *   media every other week (~12 digital chances), so the goal was lowered from 650 to 350.
- * - Goal: the prize is still HARD. In simulation (scripts/simulate-points.py) about 3 of 300 reach 350,
- *   the first one around early April; the 5th best ends near 325, so usually a spot or two stays open;
- *   ~40 people get past halfway (175); the median ends near 65.
+ *   media every other week (~12 digital chances), so the goal was lowered from 650 to 350 (briefly 300, now back to 350).
+ * - Goal: the prize is HARD. In simulation (scripts/simulate-points.py, GOAL = 350) about 3 of 300 reach 350
+ *   (mean ~3.1–3.2, median 3), the first one around early April (~83% of the season); the 5th best ends near
+ *   325, so usually a spot or two stays open (fewer than 4 winners in ~63% of runs); ~43 people get past
+ *   halfway (175); the median ends near 64.
  *   A "perfect" participant who does everything tops out near 800.
  * - Every automatic award is a tier value below. Manual admin additions are capped at TIER_POINTS[1].
- *   The database has its own copy in app_config (supabase/migrations/0003…, goal set in 0014) — change both together.
+ *   The database has its own copy in app_config (supabase/migrations/0003…, goal set in 0018) — change both together.
  *
- * Mid-year check (around Feb 1): if almost nobody is past 150, lower PRIZE.goal.
+ * Mid-year check (around Feb 1): if almost nobody is past halfway (175), lower PRIZE.goal.
  */
 
 export type Tier = 1 | 2 | 3;
 
 export const CYCLE = {
   name: '2026–27 Pilot',
+  /** When the database cycle opens (cycles.starts_at). Points earned from here count. Not shown to players. */
   start: '2026-10-15T00:00:00-04:00',
+  /** The start date players see (posters, Rules, Sign-up, Help): the first event, Nov 8, 2026. Display only. */
+  displayStart: '2026-11-08T00:00:00-05:00',
   end: '2027-05-01T23:59:59-04:00',
 } as const;
 
@@ -77,6 +81,13 @@ export const UPLOAD = {
   jpegQuality: 0.8,
   accept: ['image/jpeg', 'image/png', 'image/webp', 'image/heic'],
 } as const;
+
+/**
+ * Admin → Overview "Close to the goal": unclaimed participants within this many points of PRIZE.goal
+ * (admin_overview() in the database uses the same 75). The weekly email has its own chair-editable
+ * range, report_settings.near_goal_points (default 75).
+ */
+export const ADMIN_NEAR_GOAL_POINTS = 75;
 
 /** Polling interval for the live "prizes left" counter. */
 export const PRIZE_POLL_MS = 15_000;

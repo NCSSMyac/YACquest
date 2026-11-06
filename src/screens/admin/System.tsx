@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import * as api from '../../api';
 import { CYCLE } from '../../config';
 import { Empty, ErrorText, Loading, Modal, Panel, useToast } from '../../components/ui';
-import { fmtDate, fmtDateTime, timeAgo } from '../../lib/format';
+import { fmtCycleDate, fmtCycleRange, fmtDate, fmtDateTime, timeAgo } from '../../lib/format';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 import { DAY_NAMES, hourLabel, isEmail } from '../../lib/validate';
 import type { EmailLogRow, ReportSettings } from '../../types';
@@ -64,7 +64,8 @@ export default function System() {
 
       <Panel title="Current cycle">
         <p><strong>{CYCLE.name}</strong></p>
-        <p className="muted">{fmtDate(CYCLE.start)} – {fmtDate(CYCLE.end)}</p>
+        <p className="muted">Quest runs {fmtCycleRange(CYCLE.displayStart, CYCLE.end)} (as shown to players; the first event is the start).</p>
+        <p className="muted" style={{ fontSize: 13 }}>The database cycle opened {fmtCycleDate(CYCLE.start)}, so points earned before the first event still count.</p>
       </Panel>
 
       <Panel title="Past cycles">

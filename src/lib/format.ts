@@ -5,7 +5,7 @@ export const fmtLongDate = (iso: string) => toDate(iso).toLocaleDateString(undef
 /** The quest runs on Eastern time: "May 1, 2027" for CYCLE dates wherever the viewer is. */
 export const fmtCycleDate = (iso: string) =>
   toDate(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' }).replace(/ /g, '\u00a0'); // never wrap mid-date
-/** "Oct 15, 2026 – May 1, 2027" */
+/** "Nov 8, 2026 – May 1, 2027" */
 export const fmtCycleRange = (start: string, end: string) => `${fmtCycleDate(start)} – ${fmtCycleDate(end)}`;
 export const fmtDateTime = (iso: string) =>
   new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });

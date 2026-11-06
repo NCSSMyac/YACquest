@@ -10,9 +10,14 @@ This takes about 30–45 minutes, done once. Dashboard menu names can differ sli
 ## 2. Create the database
 1. Open **SQL Editor → New query**.
 2. Paste the whole of `supabase/migrations/0001_init.sql` and click **Run**. It should finish with "Success". It is safe to run again.
-3. Then do the same for every later file in `supabase/migrations/` **in number order** (`0002_event_kinds.sql`, … through `0014_goal_350.sql`). Each new migration only needs to be run once, but re-running is safe.
+3. Then do the same for every later file in `supabase/migrations/` **in number order** (`0002_event_kinds.sql`, … through `0019_consistency_350.sql`). Each new migration only needs to be run once, but re-running is safe.
    - **Already live before 0013?** Run `0013_launch_extras.sql` once (anonymous feedback, the sign-up email checkbox, and Admin → Events → **Who came**).
    - **Already live before 0014?** Run `0014_goal_350.sql` once (prize goal 650 → 350, Halfway badge 175, Sparkle Aura at 300, "close to the prize" range 75). Deploy the new app build at the same time so the app shows the same goal.
+   - **Already live before 0015?** Run `0015_yak_puns.sql` once (adds a "Yak of the week" line to the weekly committee email and admin prize alerts).
+   - `0016_goal_300.sql` is superseded by 0018 and now does nothing; you can skip it.
+   - **Already live before 0017?** Run `0017_consistency.sql` once (no rule changes: fixes stale column defaults, and the announcement email footer now names the “Email me announcements from YAC” setting).
+   - **Already live before 0018?** Run `0018_goal_350_again.sql` once (prize goal back to 350, Halfway badge 175, Sparkle Aura at 300, "close to the prize" range 75). Deploy the new app build at the same time so the app shows the same goal. If you never ran 0017, run it first, then 0018 (0016 can be skipped).
+   - **Already live before 0019?** Run `0019_consistency_350.sql` once (no rule changes: chair-limit fallbacks now 6). App build unchanged by this file.
 
 ## 3. Turn on real logins
 **Authentication → Sign In / Providers → Email**
@@ -91,9 +96,10 @@ YACquest emails the YAC team a **weekly report** (spots left, who's close to the
 Chairs can also see every admin change (points added/removed, reviews, role changes, events, prizes) under Admin → **Log**.
 
 ## Roles, and handing over the chair
-- **Admin**: review screenshots, award/adjust points, run events. Given and removed by a chair (only to accounts with a confirmed email).
-- **Chair**: everything. There can be up to **5** (`MAX_CHAIRS` in `src/config.ts`, `app_config.max_chairs` in the database). Any chair can make an admin (or a participant with a confirmed email) a chair from Admin → **Team**. A chair can't remove another chair.
-- **Stepping down**: Admin → **Team → Step down as chair** makes you an admin (not allowed if you're the only chair — make someone else a chair first). Or use **Hand over my chair seat** to swap places with a successor in one step (handy when all 5 seats are full). Another chair can then remove you from the team.
+- **Admin**: review screenshots, award/adjust points (at most +35 per entry), run events, send announcements (including email to everyone). Everything except prizes, Team, the action Log and System settings. Given and removed by a chair (only to accounts with a confirmed email).
+- **Chair**: everything. There can be up to **6** (`MAX_CHAIRS` in `src/config.ts`, `app_config.max_chairs` in the database). Any chair can make an admin (or a participant with a confirmed email) a chair from Admin → **Team**. A chair can't remove another chair.
+- Admins and chairs can't win prizes and don't appear on leaderboards.
+- **Stepping down**: Admin → **Team → Step down as chair** makes you an admin (not allowed if you're the only chair — make someone else a chair first). Or use **Hand over my chair seat** to swap places with a successor in one step (handy when all 6 seats are full). Another chair can then remove you from the team.
 - Also transfer **Supabase project ownership** (Organization → Team) and the GitHub repo access to the new chair.
 
 ### Emergency: a chair lost access
@@ -101,7 +107,7 @@ In Supabase **SQL Editor**, run (replace the email):
 ```sql
 update public.profiles set role = 'chair' where email = 'new.chair@ncssm.edu';
 ```
-Make sure no more than 5 people are chairs afterwards.
+Make sure no more than 6 people are chairs afterwards.
 
 ## Good to know
 - **Free plan limits**: 500 MB database, 1 GB file storage, 50k monthly users — far more than YACquest needs. Free projects pause after 7 days with **no activity**; any login wakes it.
@@ -112,4 +118,4 @@ Make sure no more than 5 people are chairs afterwards.
 - Database tests: `bash supabase/tests/run_tests.sh` (needs local Postgres 16).
 - App tests: `npm test`. Contract between DB and app: `docs/BACKEND.md`.
 - Email sender: `supabase/functions/send-emails/index.ts` (Deno; not part of the app's TypeScript build). Deploy from the CLI with `supabase functions deploy send-emails` if you prefer.
-- Future database changes go in a new numbered file in `supabase/migrations/` (next after `0014_goal_350.sql`, i.e. `0015_…`). Supabase grants new functions to everyone by default, so repeat the `revoke execute … from public, anon` lines for any new function.
+- Future database changes go in a new numbered file in `supabase/migrations/` (next after `0019_consistency_350.sql`, i.e. `0020_…`). Supabase grants new functions to everyone by default, so repeat the `revoke execute … from public, anon` lines for any new function.

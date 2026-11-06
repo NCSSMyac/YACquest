@@ -73,6 +73,7 @@ describe('treasure map', () => {
     expect(nextCheckpoint(20)?.label).toBe('Trailhead');
     expect(nextCheckpoint(100)?.label).toBe('Halfway');
     expect(nextCheckpoint(300)?.points).toBe(350);
+    expect(nextCheckpoint(300)?.label).toBe('the treasure');
     expect(nextCheckpoint(400)).toBeUndefined();
     expect(CHECKPOINTS.map((c) => c.points)).toEqual([50, 100, 175, 250]);
     expect(CHECKPOINTS.every((c) => c.points < PRIZE.goal)).toBe(true);

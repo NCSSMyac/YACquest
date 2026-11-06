@@ -116,9 +116,12 @@ end $$;
 do $$ begin
   perform t.eq((select prize_count from app_config), 4, '0004: 4 prize spots');
   perform t.eq((select prize_value_usd from app_config), 75, '0004: $75 prizes');
-  perform t.eq((select prize_goal from app_config), 350, '0014: goal 350 after all migrations');
-  perform t.eq((select rule_value from cosmetics where id = 'sparkles'), '300', '0014: Sparkle Aura at 300 points');
-  perform t.eq((select near_goal_points from report_settings), 75, '0014: close-to-the-prize range 75');
+  perform t.eq((select prize_goal from app_config), 350, '0018: goal 350 after all migrations (0016/0017 run before 0018)');
+  perform t.eq((select column_default from information_schema.columns where table_name = 'app_config' and column_name = 'prize_goal'), '350', '0018: prize_goal column default 350');
+  perform t.eq((select rule_value from cosmetics where id = 'sparkles'), '300', '0018: Sparkle Aura at 300 points');
+  perform t.eq((select near_goal_points from report_settings), 75, '0018: close-to-the-prize range 75');
+  perform t.eq((select column_default from information_schema.columns where table_name = 'report_settings' and column_name = 'near_goal_points'), '75', '0018: near_goal_points column default 75');
+  perform t.ok(position('), 350) as prize_goal' in pg_get_functiondef('public.badges_for(uuid)'::regprocedure)) > 0, '0018: badges_for fallback goal 350');
   perform t.ok(to_regclass('public.sync_status') is null, '0004: sync_status table dropped');
   perform t.eq((select count(*) from report_settings), 1::bigint, 'report_settings seeded with one row');
   perform t.ok(not exists (select 1 from pg_proc where proname = 'submit_claim_info' and pronargs = 4), 'old 4-arg submit_claim_info dropped');
@@ -649,7 +652,7 @@ do $$ begin
   perform t.throws('select list_team()', 'forbidden', 'former chair lost chair powers');
 end $$;
 :as_super
--- a bootstrap email signing up again can't go past max_chairs (set to 2 here; 0011 default is 5)
+-- a bootstrap email signing up again can't go past max_chairs (set to 2 here; the real value is 6)
 update app_config set max_chairs = 2 where id = 1;
 delete from auth.users where id = t.u('chair2');
 insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data)
@@ -665,7 +668,7 @@ do $$ begin
   perform t.eq((select role from profiles where id = t.u('chair2')), 'participant', 'bootstrap email does not go past max_chairs (2)');
   perform t.eq((select count(*) from profiles where role = 'chair'), 2::bigint, 'chairs capped at max_chairs');
 end $$;
-update app_config set max_chairs = 5 where id = 1;
+update app_config set max_chairs = 6 where id = 1;
 
 -- =============================================================================
 -- 12. RESET CYCLE + ARCHIVES
@@ -1599,7 +1602,7 @@ do $$ begin
 end $$;
 
 -- =============================================================================
--- 0011 — UP TO 5 CHAIRS
+-- 0011 — CHAIR LIMIT (max_chairs; tested here with 5, real value 6)
 -- =============================================================================
 \set as_seat3 'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000110c3''; set role authenticated;'
 :as_super
@@ -1617,8 +1620,9 @@ select t.u(n), n || '@example.edu', case when n = 'seatx' then null else now() e
 -- start from exactly one chair: chair1
 update profiles set role = 'admin' where role = 'chair' and id <> t.u('chair1');
 update profiles set role = 'chair' where id = t.u('chair1');
+update app_config set max_chairs = 5 where id = 1;   -- a smaller limit for this test (the real value is 6)
 do $$ begin
-  perform t.eq((select max_chairs from app_config), 5, '0011: max_chairs defaults to 5');
+  perform t.eq((select max_chairs from app_config), 5, '0011: max_chairs set to 5 for this test');
   perform t.eq((select count(*) from profiles where role = 'chair'), 1::bigint, '0011: setup has one chair');
 end $$;
 :as_chair1
@@ -1690,7 +1694,7 @@ do $$ begin
   insert into auth.users (email, email_confirmed_at, raw_user_meta_data)
   values ('boot.two@example.edu', now(), '{"handle":"boottwo","display_name":"Boot Two","campus":"unc"}');
   perform t.eq((select role from profiles where email = 'boot.two@example.edu'), 'chair', 'bootstrap: chair when under max_chairs (6)');
-  update app_config set max_chairs = 5 where id = 1;
+  update app_config set max_chairs = 6 where id = 1;   -- back to the real value
   delete from chair_bootstrap where email in ('boot.one@example.edu', 'boot.two@example.edu');
 end $$;
 
@@ -1780,7 +1784,7 @@ do $$ begin
 end $$;
 
 -- =============================================================================
--- 25. 0014 — prize goal 350: halfway 175, reaching 350 claims a spot
+-- 25. 0014/0016/0018 — prize goal 350: halfway 175, reaching 350 claims a spot
 --     (fresh cycle, real config values; everything rolled back afterwards)
 -- =============================================================================
 :as_super
@@ -1793,14 +1797,19 @@ do $$
 declare ps json;
 begin
   perform t.eq((select count(*) from prize_claims where cycle_id = active_cycle_id()), 0::bigint, 'goal 350: fresh cycle has no claims');
-  insert into ledger (cycle_id, user_id, amount, source, reason) values (active_cycle_id(), t.u('alice'), 175, 'manual', 'goal 350 test');
+  insert into ledger (cycle_id, user_id, amount, source, reason) values (active_cycle_id(), t.u('alice'), 174, 'manual', 'goal 350 test');
+  perform t.ok((select not earned and progress = 174 and goal = 175 from badges_for(t.u('alice')) where id = 'halfway'), 'goal 350: halfway not earned at 174');
+  insert into ledger (cycle_id, user_id, amount, source, reason) values (active_cycle_id(), t.u('alice'), 1, 'manual', 'goal 350 test');
   perform t.ok((select earned and progress = 175 and goal = 175 from badges_for(t.u('alice')) where id = 'halfway'), 'goal 350: halfway earned at 175');
   perform t.ok((select not earned and progress = 175 and goal = 350 from badges_for(t.u('alice')) where id = 'legend'), 'goal 350: legend 175 of 350');
-  insert into ledger (cycle_id, user_id, amount, source, reason) values (active_cycle_id(), t.u('alice'), 170, 'manual', 'goal 350 test');
-  perform t.eq((select points from profiles where id = t.u('alice')), 345, 'goal 350: alice at 345');
-  perform t.eq((select count(*) from prize_claims where cycle_id = active_cycle_id()), 0::bigint, 'goal 350: 345 does not qualify');
-  perform t.ok('sparkles' = any (unlocks_for(t.u('alice'))), 'goal 350: Sparkle Aura unlocked at 300+');
-  insert into ledger (cycle_id, user_id, amount, source, reason) values (active_cycle_id(), t.u('alice'), 5, 'manual', 'goal 350 test');
+  insert into ledger (cycle_id, user_id, amount, source, reason) values (active_cycle_id(), t.u('alice'), 124, 'manual', 'goal 350 test');
+  perform t.ok(not ('sparkles' = any (unlocks_for(t.u('alice')))), 'goal 350: Sparkle Aura still locked at 299');
+  insert into ledger (cycle_id, user_id, amount, source, reason) values (active_cycle_id(), t.u('alice'), 1, 'manual', 'goal 350 test');
+  perform t.ok('sparkles' = any (unlocks_for(t.u('alice'))), 'goal 350: Sparkle Aura unlocked at 300');
+  insert into ledger (cycle_id, user_id, amount, source, reason) values (active_cycle_id(), t.u('alice'), 49, 'manual', 'goal 350 test');
+  perform t.eq((select points from profiles where id = t.u('alice')), 349, 'goal 350: alice at 349');
+  perform t.eq((select count(*) from prize_claims where cycle_id = active_cycle_id()), 0::bigint, 'goal 350: 349 does not qualify');
+  insert into ledger (cycle_id, user_id, amount, source, reason) values (active_cycle_id(), t.u('alice'), 1, 'manual', 'goal 350 test');
   ps := prize_status();
   perform t.eq((ps->>'goal')::int, 350, 'goal 350: prize_status goal');
   perform t.eq((ps->>'remaining')::int, 3, 'goal 350: 3 of 4 spots left');
@@ -1820,6 +1829,96 @@ do $$ begin
                'goal 350: admin nearGoal = within 75, unclaimed (carol 275 yes; erin 270 and winner alice no)');
 end $$;
 :as_super
+rollback;
+
+-- =============================================================================
+-- 26. 0015 — yak puns: weekly report + prize alerts get a "Yak of the week" line
+-- =============================================================================
+:as_super
+do $$ declare rep json := public.build_weekly_report(); v_pun text := public.yak_pun_of_the_week();
+begin
+  perform t.eq((select count(distinct public.yak_pun(i)) from generate_series(0, 39) i), 40::bigint, 'yak: 40 distinct puns');
+  perform t.eq(public.yak_pun(0), 'Yak to the future!', 'yak: seed 0 is the first pun');
+  perform t.eq(public.yak_pun(40), public.yak_pun(0), 'yak: seed wraps around');
+  perform t.eq(public.yak_pun(-5), public.yak_pun(5), 'yak: negative seed uses |seed|');
+  perform t.eq(public.yak_pun(null), public.yak_pun(0), 'yak: null seed is seed 0');
+  perform t.eq(public.yak_pun(202645), 'That was yak-tually amazing.', 'yak: 202645 mod 40 = 5 (same as yakPun() in the app)');
+  perform t.eq(v_pun, public.yak_pun(to_char(now() at time zone 'America/New_York', 'IYYYIW')::int), 'yak: pun of the week seeded by ISO week');
+  perform t.ok(exists (select 1 from generate_series(0, 39) i where public.yak_pun(i) = v_pun), 'yak: pun of the week is from the list');
+  perform t.ok(rep->>'text' like '%' || E'\n\n🐂 Yak of the week: ' || v_pun || E'\n', 'yak: weekly text ends with the pun line');
+  perform t.ok(rep->>'html' like '%🐂 Yak of the week: ' || public.html_escape(v_pun) || '</p>%', 'yak: weekly html has the pun line');
+  perform t.ok(rep->>'text' like '%PENDING REVIEWS:%', 'yak: weekly text otherwise unchanged (pending reviews still there)');
+  perform t.ok(not exists (select 1 from email_outbox where kind in ('prize_qualified', 'prize_info')
+                            and (body_text not like '%🐂 Yak of the week: %' or body_html not like '%🐂 Yak of the week: %'))
+               and exists (select 1 from email_outbox where kind in ('prize_qualified', 'prize_info')),
+               'yak: every admin prize alert has the pun line');
+  perform t.ok(not exists (select 1 from email_outbox where kind = 'announcement' and body_text like '%Yak of the week%'),
+               'yak: announcement emails unchanged');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied('select yak_pun(1)', 'yak: anon cannot call yak_pun');
+  perform t.denied('select yak_pun_of_the_week()', 'yak: anon cannot call yak_pun_of_the_week');
+end $$;
+:as_bob
+do $$ begin
+  perform t.denied('select yak_pun(1)', 'yak: authenticated cannot call internal yak_pun');
+end $$;
+
+-- =============================================================================
+-- 27. 0017 — consistency: column defaults, announcement email footer names the setting
+-- =============================================================================
+:as_super
+do $$ begin
+  perform t.eq((select column_default from information_schema.columns
+                 where table_schema = 'public' and table_name = 'app_config' and column_name = 'tier1_points'), '35', '0017: tier1_points default 35');
+  perform t.eq((select column_default from information_schema.columns
+                 where table_schema = 'public' and table_name = 'app_config' and column_name = 'max_chairs'), '6', '0017: max_chairs default 6');
+  perform t.ok(exists (select 1 from email_outbox where kind = 'announcement'), '0017: announcement emails exist to check');
+  perform t.ok(not exists (select 1 from email_outbox where kind = 'announcement'
+                            and (body_text not like '%turn off “Email me announcements from YAC” in the app under Me → Settings.'
+                                 or body_html not like '%turn off “Email me announcements from YAC” in the app under Me → Settings.%')),
+               '0017: announcement emails name the “Email me announcements from YAC” setting');
+  perform t.ok(not exists (select 1 from email_outbox where kind = 'announcement' and body_text like '%Change email updates%'),
+               '0017: old “Change email updates” footer is gone');
+end $$;
+
+-- =============================================================================
+-- 28. 0019 — consistency pass for the 350 goal: final state + re-run safety
+-- =============================================================================
+:as_super
+do $$ begin
+  perform t.eq((select string_agg(id || '=' || rule_value, ',' order by rule_value::int) from cosmetics where rule_type = 'points'),
+               'sunset=50,flower_crown=100,night_sky=200,gold_chain=250,sparkles=300', '0019: point cosmetics 50/100/200/250/300 (matches src/lib/cosmetics.ts)');
+  perform t.eq((select max_chairs from app_config), 6, '0019: max_chairs 6');
+  perform t.ok(position('coalesce(max_chairs, 6)' in pg_get_functiondef('public.set_role(uuid, text)'::regprocedure)) > 0
+               and position(', 5)' in pg_get_functiondef('public.set_role(uuid, text)'::regprocedure)) = 0, '0019: set_role chair fallback 6');
+  perform t.ok(position('coalesce(v_max, 6)' in pg_get_functiondef('public.transfer_chair(uuid)'::regprocedure)) > 0
+               and position(', 5)' in pg_get_functiondef('public.transfer_chair(uuid)'::regprocedure)) = 0, '0019: transfer_chair chair fallback 6');
+  perform t.ok(position('cfg.prize_goal - 75' in pg_get_functiondef('public.admin_overview()'::regprocedure)) > 0, '0019: admin nearGoal within 75 (ADMIN_NEAR_GOAL_POINTS)');
+  perform t.ok(position('p_amount < -cfg.prize_goal' in pg_get_functiondef('public.adjust_points(uuid, integer, text)'::regprocedure)) > 0, '0019: manual removals down to -prize_goal');
+  perform t.ok(not exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                            where n.nspname = 'public' and p.prokind = 'f' and pg_get_functiondef(p.oid) ~ '\m(650|325)\M'),
+               '0019: no public function mentions 650 or 325');
+  perform t.eq((select count(*) from pg_proc where proname in ('set_role', 'transfer_chair') and has_function_privilege('anon', oid, 'execute')), 0::bigint, '0019: anon cannot run set_role / transfer_chair');
+end $$;
+
+-- Re-running 0003 and 0016 on a live database must not touch the goal or the race.
+begin;
+update app_config set prize_goal = 350, prize_count = 4, prize_value_usd = 75, tier1_points = 35, tier2_points = 20, tier3_points = 5;
+update report_settings set near_goal_points = 75;
+update cycles set is_active = false where is_active;
+insert into cycles (name, starts_at, ends_at, is_active) values ('Rerun test cycle', now() - interval '10 days', now() + interval '100 days', true);
+update profiles set points = 0 where points <> 0;
+insert into ledger (cycle_id, user_id, amount, source, reason) values (active_cycle_id(), t.u('carol'), 320, 'manual', 'rerun test');
+\ir ../migrations/0003_points_and_referrals.sql
+\ir ../migrations/0016_goal_300.sql
+do $$ begin
+  perform t.eq((select prize_goal from app_config), 350, '0019: re-running 0003 + 0016 keeps the goal at 350');
+  perform t.eq((select rule_value from cosmetics where id = 'sparkles'), '300', '0019: re-running 0016 keeps Sparkle Aura at 300');
+  perform t.eq((select near_goal_points from report_settings), 75, '0019: re-running 0016 keeps the close-to-the-prize range at 75');
+  perform t.eq((select count(*) from prize_claims where cycle_id = active_cycle_id()), 0::bigint, '0019: re-running 0016 gives nobody at 320 a spot');
+end $$;
 rollback;
 
 -- =============================================================================

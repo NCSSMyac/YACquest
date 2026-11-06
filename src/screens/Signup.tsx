@@ -78,7 +78,7 @@ export default function Signup() {
       <form className="stack" onSubmit={review} noValidate>
         <div className="center">
           <h1 style={{ fontFamily: 'var(--font-pixel)', color: 'var(--gold-500)', textShadow: '2px 2px 0 var(--navy-900)', marginBottom: 4 }}>New player</h1>
-          <p className="muted" style={{ margin: 0 }}>This year’s quest runs {fmtCycleRange(CYCLE.start, CYCLE.end)}.</p>
+          <p className="muted" style={{ margin: 0 }}>This year’s quest runs {fmtCycleRange(CYCLE.displayStart, CYCLE.end)}.</p>
         </div>
         <PendingCheckInBanner />
         <Panel title="Your account">

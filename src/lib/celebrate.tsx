@@ -175,6 +175,7 @@ function Big({ c, onDone }: { c: Item; onDone: () => void }) {
         {(c.subtitle || badge) && <p className="cel-big-sub">{c.subtitle ?? badge?.name}</p>}
         {badge?.flavor && <p className="cel-big-flavor">{badge.flavor}</p>}
         {cosmetic && <p className="cel-big-flavor">New look unlocked: <b>{cosmetic.name}</b></p>}
+        {c.hint && <p className="cel-big-flavor">{c.hint}</p>}
         {c.points ? <p className="cel-big-pts"><span className="coin" aria-hidden /> +{c.points} pts</p> : null}
         <button ref={btn} type="button" className="btn" onClick={onDone}>Nice!</button>
       </div>

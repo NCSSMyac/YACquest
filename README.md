@@ -2,7 +2,7 @@
 
 The year-round engagement app for the **NCSSM Young Alumni Council (YAC)**: part fast-food rewards app, part ClassDojo, styled like an old-school pixel treasure quest.
 
-Alumni at **Duke, UNC-Chapel Hill and NC State** earn points for showing up and staying connected. The **first 4 people to reach 350 points** each win a **$75 gift card** ($300 of the $350 budget). The cycle ends **May 1, 2027**.
+Alumni at **Duke, UNC-Chapel Hill and NC State** earn points for showing up and staying connected. The **first 4 people to reach 350 points** each win a **$75 gift card** ($300 of the $350 budget). The quest runs **Nov 8, 2026 – May 1, 2027** (the first event is Nov 8).
 
 > **Status:** front end in progress. Data comes from a **mock API in the browser** (`src/api.ts`) seeded with ~300 fake participants. The backend team replaces that one file with real requests.
 
@@ -16,8 +16,8 @@ npm run dev        # http://localhost:5173
 | Log in as | Role | What you can do |
 |---|---|---|
 | `yak001` | Participant (Duke) | Check in, submit quests, race for the prize |
-| `admin` | Admin ("YAC Helper") | Review screenshots, award points, run events, **for all campuses** |
-| `iesha`, `jacob` | YAC Chair (up to 5 — `MAX_CHAIRS` in src/config.ts) | Everything an admin does, plus prizes and fulfillment, Team (grant/remove admin, make chair, step down, hand over chair seat), admin activity log, weekly email settings and delivery log, CSV export, cycle reset |
+| `admin` | Admin ("YAC Helper") | Review screenshots, award points, run events, send announcements (including email to everyone), **for all campuses** |
+| `iesha`, `jacob` | YAC Chair (up to 6 — `MAX_CHAIRS` in src/config.ts) | Everything an admin does, plus prizes and fulfillment, Team (grant/remove admin, make chair, step down, hand over chair seat), admin activity log, weekly email settings and delivery log, CSV export, cycle reset |
 
 Any password works in the demo. Live demo events have passwords `BLUEDEVIL` (Duke), `PANEL` (UNC), `WOLFPACK` (NC State), `TRIANGLE` (all campuses). Admins can see passwords under **Admin → Events**. **Me → Reset demo data** starts over (demo mode only).
 
@@ -52,7 +52,7 @@ scripts/simulate-points.py ← rerun the points model if YAC changes plans
 
 **Participants:** sign up (campus, character, friend code, rules accepted before account creation) · log in / forgot password · dashboard (points, progress to the prize, overall and campus rank, days left, recent activity, friend code) · Quest Board (event check-in with password, screenshot/photo quests with in-browser image shrinking, submission status) · Treasure Vault (live "N of 4 left" counter, spot grid, Winners' Circle, winner form (name, email, phone, mailing address, card preference) with reference number) · leaderboards (top 10, top 3 per campus, per-capita Campus Cup) · notifications · rules · profile, theme, prize suggestions.
 
-**Admins (all campuses):** overview · review queue (approve / reject with reason) · player search, quick "+20 game win", manual adjustments with required reason · create/edit events and passwords.
+**Admins (all campuses):** overview · review queue (approve / reject with reason) · player search, quick "+20 game win", manual adjustments with required reason (+35 at most per entry) · create/edit events and passwords · announcements to everyone, a campus or one person (in the app and optionally by email).
 
 **Chair:** everything above · team management (grant/remove admin, hand over the chair seat) · revoked prize spots refill automatically when points are removed · prize claims (with phone and mailing address) and fulfillment · prize suggestions · **weekly committee email** (day/time/recipients, test email, send now, delivery log with retry) · **prize alert emails** when someone wins and when a winner sends their info · **admin activity log** (every points change, review, role change, event edit) · ledger CSV export · end-of-cycle reset with archive.
 

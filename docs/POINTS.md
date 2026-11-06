@@ -15,7 +15,7 @@
 
 ## This year: 6 events, posts every other week → goal 350
 
-The goal was 650 when YAC planned ~17 events. YAC will now run only **about 6 more events** (4 home-campus, 2 cross-campus) and post on social media **every other week** (~12 digital chances), so the goal is **350**. Tier points, the 4 spots and the $75 value did not change.
+The goal was 650 when YAC planned ~17 events. YAC will now run only **about 6 more events** (4 home-campus, 2 cross-campus) and post on social media **every other week** (~12 digital chances), so the goal dropped to **350** (0014). It was briefly lowered to 300 (0016), but YAC decided to keep the prize harder, so it is **350** again (0018). Tier points, the 4 spots and the $75 value did not change.
 
 ## What the simulation says (`python3 scripts/simulate-points.py`)
 
@@ -25,33 +25,37 @@ The model has 300 people, Nov 8 to May 1, with `OPP = home 4, panel 0, cross 2, 
 |---|---|---|
 | 40 / 20 / 5 | ~4 | ~345 |
 | **35 / 20 / 5** ✅ | **~3** | **~325** |
-| 40 / 15 / 5 | ~2–3 | ~315 |
+| 40 / 15 / 5 | ~3 | ~315 |
 
 Goal sweep with 35/20/5 (the script prints this):
 
 | Goal | People who reach it | Chance fewer than 4 win |
 |---|---|---|
-| 300 | ~7 | 8% |
-| 325 | ~5 | 31% |
+| 275 | ~11 | 1% |
+| 300 | ~7 | 6% |
+| 325 | ~5 | 20% |
 | **350** ✅ | **~3** | **63%** |
-| 375 | ~2 | 84% |
+| 375 | ~2 | 87% |
 | 400 | ~1 | 95% |
-| 450 | ~0 | 100% |
+| 425 | ~0.6 | 100% |
 
-At 350: about 40 people get past halfway (175), the median participant ends near 65, the first winner arrives around early April, and usually a spot or two stays open (that money is saved). Doing literally everything earns about **800** (805 in the model).
+At 350: about 3 people reach it (mean ~3.1–3.2, median 3), so usually a spot or two stays open and the leftover budget is saved (fewer than 4 winners in ~63% of runs). About 43 people get past halfway (175), the median participant ends near 64, and the first winner arrives around early April (the best player hits 350 at ~83% of the season). Doing literally everything earns about **800** (805 in the model).
+
+## Treasure map checkpoints
+Trailhead **50** · Camp **100** · Halfway **175** (half the goal) · Summit **250** (¾ of the goal, rounded down to a multiple of 25) · Treasure **350**. Halfway and Summit are computed from `PRIZE.goal` in `src/components/TreasureMap.tsx`. Point unlocks in the Wardrobe: Starry Night 200 · Gold Chain 250 · Sparkle Aura 300.
 
 ## Ways to reach 350
-Limits used: photos 1 per event and 4 per year · tags 2 per month · digital 1 per week · up to 3 friends (you **and** each friend get 35) · annual fund once. Events: home-campus 20, cross-campus 35.
+Limits used: photos 1 per event and 4 per year · tags 2 per month · digital 1 per week (~12 chances, incl. the one-time IG follow) · up to 3 friends (you **and** each friend get 35 when the friend attends) · annual fund once · game wins 20 (at events). Events: home-campus 20, cross-campus 35.
 
 | Player | How | Points |
 |---|---|---|
 | **Event regular** | all 6 events (4 home 80 + 2 cross 70 = 150) + 4 event photos (140) + annual fund (35) + brings 1 friend (35) | **360** |
 | **Connector** | 5 events (3 home 60 + 2 cross 70 = 130) + brings 3 friends (105) + annual fund (35) + 4 tagged posts (80) | **350** |
-| **Steady** | 4 events (2 home 40 + 2 cross 70 = 110) + 3 event photos (105) + 3 tagged posts (60) + 10 digital actions incl. the IG follow (50) + signed up with a friend's code (35) | **360** |
+| **Steady** | 4 events (2 home 40 + 2 cross 70 = 110) + 3 event photos (105) + 3 tagged posts (60) + 10 digital actions incl. the IG follow (50) + signed up with a friend's code (35, once they attend) | **360** |
 
-Nobody gets there from events alone (all 6 = 150): every path needs photos, friends, the annual fund or steady posting too.
+Nobody gets there from events alone (all 6 = 150, short of halfway at 175): every path needs photos, friends, the annual fund or steady posting too.
 
 ## Check-ins during the year
-- **Feb 1:** if almost nobody is past 150, lower the goal again and announce it. The goal, number of spots and gift card value live in `src/config.ts` (`PRIZE`) **and** the database (`app_config.prize_goal`, `prize_count`, `prize_value_usd`; see `supabase/migrations/0014_goal_350.sql` for how to change it).
+- **Feb 1:** if almost nobody is past halfway (175), lower the goal and announce it. The goal, number of spots and gift card value live in `src/config.ts` (`PRIZE`) **and** the database (`app_config.prize_goal`, `prize_count`, `prize_value_usd`; to change it, copy the goal section of `supabase/migrations/0018_goal_350_again.sql` into a new migration).
 - If YAC plans more or fewer events, edit `OPP` (and `GOAL`) in the script and rerun it.
 - **Revoked prizes:** if points are removed and a winner drops below 350, their spot goes to the next person who qualified.

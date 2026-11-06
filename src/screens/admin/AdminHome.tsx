@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import * as api from '../../api';
 import { useAuth } from '../../lib/auth';
-import { PRIZE, campusName } from '../../config';
+import { ADMIN_NEAR_GOAL_POINTS, PRIZE, campusName } from '../../config';
 import { Empty, ErrorText, Loading, Panel, ProgressBar } from '../../components/ui';
 import { fmtDate } from '../../lib/format';
 import { useAsync } from '../../lib/useAsync';
@@ -49,8 +49,9 @@ export default function AdminHome() {
       </Panel>
 
       <Panel title="Close to the goal">
+        <p className="muted" style={{ margin: '0 0 8px' }}>Within {ADMIN_NEAR_GOAL_POINTS} points of {d.prize.goal} and no spot yet.</p>
         {d.nearGoal.length === 0 ? (
-          <Empty>Nobody within range yet.</Empty>
+          <Empty>Nobody that close yet.</Empty>
         ) : (
           <ul className="list">
             {d.nearGoal.map((r) => (

@@ -1,6 +1,6 @@
 /**
  * Unlockable looks: hats, accessories (jewelry) and backgrounds. Cosmetic only.
- * The server (cosmetics table + my_unlocks() + equip_look() in 0009_quest_extras.sql; Sparkle Aura moved to 300 in 0014) mirrors
+ * The server (cosmetics table + my_unlocks() + equip_look() in 0009_quest_extras.sql; Sparkle Aura at 300 since 0014, re-set in 0018) mirrors
  * these ids and rules and is the real gatekeeper; keep both in sync.
  */
 import type { CosmeticSlot } from '../types';

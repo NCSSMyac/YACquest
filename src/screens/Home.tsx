@@ -12,6 +12,7 @@ import { getLastSeenPoints, setLastSeenPoints, takeCelebratedPoints, useCelebrat
 import { activityById } from '../lib/activities';
 import { fmtCycleDate, fmtDate, fmtPts, timeAgo } from '../lib/format';
 import { useAsync } from '../lib/useAsync';
+import { randomYakPun, yakPunOfTheDay } from '../lib/yakPuns';
 
 export default function Home() {
   const toast = useToast();
@@ -31,8 +32,8 @@ export default function Home() {
     for (const c of checkpointsCrossed(prev, points)) {
       celebrate(
         c.label === 'Treasure'
-          ? { title: 'Treasure found!', subtitle: `You reached ${c.points} points!`, size: 'big' }
-          : { title: 'Checkpoint reached!', subtitle: `${c.label} · ${c.points} points`, size: 'big' },
+          ? { title: 'Treasure found!', subtitle: `You reached ${c.points} points!`, hint: randomYakPun(), size: 'big' }
+          : { title: 'Checkpoint reached!', subtitle: `${c.label} · ${c.points} points`, hint: randomYakPun(), size: 'big' },
       );
     }
   }, [userId, points, celebrate]);
@@ -59,6 +60,7 @@ export default function Home() {
         <div>
           <h1 style={{ margin: 0 }}>Hi, {d.user.displayName}!</h1>
           <div className="muted">{campusName(d.user.campus)} adventurer</div>
+          <div className="muted" style={{ fontSize: 13, fontStyle: 'italic' }}>🐂 Yak of the day: {yakPunOfTheDay()}</div>
         </div>
       </div>
 

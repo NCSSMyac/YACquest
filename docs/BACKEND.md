@@ -13,17 +13,17 @@ The database SQL (`supabase/migrations/*.sql`) and the front end's live API (`sr
 | role | who | can |
 |---|---|---|
 | `participant` | anyone who signs up | earn points, submit proof, claim prize |
-| `admin` | helpers granted by a chair | review submissions, award/adjust points, create/edit events, see event passwords, search players, see suggestions, overview — **all campuses** |
-| `chair` | the 2 YAC chairs | everything admins can + grant/remove admin, hand over chair seat, prize claims & fulfillment, export, sync, cycle reset |
+| `admin` | helpers granted by a chair | review submissions, award/adjust points, create/edit events, see event passwords, search players, see suggestions, overview, send announcements (incl. email to everyone, since 0012) — **all campuses** |
+| `chair` | the YAC chairs (up to `app_config.max_chairs` = 6, since 0011) | everything admins can + team (admins/chairs), prize claims & fulfillment, admin action log, system settings (weekly committee email, export, cycle reset) |
 
 - **Bootstrap:** table `chair_bootstrap(email)` seeded with `iesha.landis.yac@ncssm.edu`, `jacob.rodriguez.yac@ncssm.edu`. When an auth user is created with one of those emails, their profile starts as `chair`. (They still must confirm the email before they can log in.)
-- **Max 2 chairs.** `set_role` can't create chairs. A chair passes their seat with `transfer_chair(target)` → target becomes `chair`, caller becomes `admin`, in one transaction. A chair cannot demote the other chair. Emergency recovery: run SQL in the Supabase dashboard (see SETUP.md).
+- **Max 2 chairs in 0001; up to 6 since 0011** (`app_config.max_chairs`; `set_role` can make chairs, see 0011). In 0001 `set_role` couldn't create chairs. A chair passes their seat with `transfer_chair(target)` → target becomes `chair`, caller becomes `admin`, in one transaction. A chair cannot demote the other chair. Emergency recovery: run SQL in the Supabase dashboard (see SETUP.md).
 - Only accounts with a **confirmed email** (`auth.users.email_confirmed_at is not null`) can be made admin or chair (`not_verified`).
 - Helper SQL functions: `is_admin()` (admin or chair), `is_chair()`, both `stable security definer` reading `profiles.role` for `auth.uid()`.
 
 ## Tables (public schema)
-- `app_config` (id int pk check id=1, prize_goal int 650 **(350 since 0014)**, prize_count int 5, prize_value_usd int 50, fulfill_by date '2027-05-15', tier1_points 40, tier2_points 20, tier3_points 5, digital_per_week 1, social_tag_per_month 2, referrals_per_cycle 3, photos_per_event 1, photos_per_cycle 4)
-- `cycles` (id uuid, name text, starts_at, ends_at, is_active bool, archived_at) — exactly one active. Seed: '2026–27 Pilot', 2026-10-15 → 2027-05-01 23:59:59 America/New_York. Helper `active_cycle_id()`.
+- `app_config` (id int pk check id=1, prize_goal int 650 **(350 since 0014; 0016 briefly set 300, now a no-op; 350 since 0018)**, prize_count int 5 **(4 since 0004)**, prize_value_usd int 50 **(75 since 0004)**, fulfill_by date '2027-05-15', tier1_points 40 **(35 since 0003; column default 35 since 0017)**, tier2_points 20, tier3_points 5, digital_per_week 1, social_tag_per_month 2, referrals_per_cycle 3, photos_per_event 1, photos_per_cycle 4, max_chairs **(6, since 0011)**)
+- `cycles` (id uuid, name text, starts_at, ends_at, is_active bool, archived_at) — exactly one active. Seed: '2026–27 Pilot', 2026-10-15 → 2027-05-01 23:59:59 America/New_York. (The app *shows* the quest as Nov 8, 2026 – May 1, 2027, the first event — `CYCLE.displayStart` in src/config.ts, display only; the database start stays Oct 15.) Helper `active_cycle_id()`.
 - `chair_bootstrap` (email citext pk)
 - `activities` (id text pk, tier int 1–3, title text, method text check in ('event_password','screenshot','photo','lead_award','referral')) — seeded with the 13 ids in `src/lib/activities.ts`.
 - `profiles` (id uuid pk → auth.users on delete cascade, handle citext unique 3–20 `[a-zA-Z0-9_.]`, display_name text 2–24, email citext, campus text check in ('duke','unc','ncsu'), role text default 'participant', avatar text check in ('yak','knight','mage','ranger'), friend_code text unique like 'YAC-XXXX', referred_by uuid → profiles, email_opt_in bool default true, points int default 0 **(current cycle total, maintained by ledger trigger)**, created_at)
@@ -73,7 +73,7 @@ Participant (authenticated):
 
 Admin (`is_admin()` else `forbidden`):
 - `review_submission(p_id uuid, p_decision text, p_reason text)` — pending only (`already_reviewed`); reject needs reason (`reason`); approve → ledger tier points (source 'submission', ref_id submission id) + notification; reject → notification with reason.
-- `adjust_points(p_user_id uuid, p_amount int, p_reason text)` — integer, ≠0, |x| ≤ 500 (`amount`); reason ≥3 chars (`reason`); ledger source 'manual' + notification.
+- `adjust_points(p_user_id uuid, p_amount int, p_reason text)` — integer, ≠0, |x| ≤ 500 in 0001; **since 0003: at most +tier1_points (35) per entry, removals down to −prize_goal (−350)** (`amount`); reason ≥3 chars (`reason`); ledger source 'manual' + notification.
 - `award_activity(p_user_id uuid, p_activity_id text, p_note text)` — ledger tier points, source 'manual', reason "<title>: <note>" + notification.
 - `search_users(p_query text, p_limit int default 20) → table(id, handle, display_name, email, campus, role, points)`
 - `admin_list_events() → table(events.* + password text)` newest first
@@ -84,8 +84,8 @@ Admin (`is_admin()` else `forbidden`):
 
 Chair (`is_chair()` else `forbidden`):
 - `list_team() → table(id, display_name, handle, email, role, email_verified boolean)` — admins + chairs
-- `set_role(p_user_id uuid, p_role text)` — p_role in ('participant','admin') only; target must not be a chair (`forbidden`); for 'admin' target email must be confirmed (`not_verified`); notify target.
-- `transfer_chair(p_user_id uuid)` — target ≠ caller, email confirmed; chairs count stays ≤ 2: target → chair, caller → admin; notify both.
+- `set_role(p_user_id uuid, p_role text)` — p_role in ('participant','admin') only (0011 adds 'chair'); target must not be a chair (`forbidden`); for 'admin' target email must be confirmed (`not_verified`); notify target.
+- `transfer_chair(p_user_id uuid)` — target ≠ caller, email confirmed; chairs count stays ≤ max_chairs (2 in 0001, 6 since 0011): target → chair, caller → admin; notify both.
 - `list_claims() → setof prize_claims` (all statuses, spot asc then revoked last)
 - `mark_fulfilled(p_spot int)` — active claim in active cycle + notify.
 - `reset_cycle(p_confirm text, p_name text, p_ends_at timestamptz)` — p_confirm = 'RESET' (`confirm`); archive current cycle (is_active false, archived_at now()), create new active cycle, set all profiles.points = 0, notify all participants. Ledger/claims/submissions stay (they belong to the old cycle_id).
@@ -104,7 +104,7 @@ Email + password; **Confirm email ON**; min password length 8; PKCE flow. Redire
 **Config:** `app_config.prize_count = 4`, `prize_value_usd = 75`. Drop table `sync_status` (Google Sheets sync is cancelled).
 
 ### New tables (RLS on; **chairs read**, nobody writes directly; writes via RPCs/triggers)
-- `report_settings` (id int pk check id=1, weekly_enabled bool default true, weekly_day int 0–6 default 1 (0=Sunday, America/New_York), weekly_hour int 0–23 default 9, near_goal_points int default 150 **(75 since 0014)**, recipients text[] default '{}' (extra emails), include_chairs bool default true, include_admins bool default true, prize_alerts_enabled bool default true, updated_at, updated_by uuid). Seed one row.
+- `report_settings` (id int pk check id=1, weekly_enabled bool default true, weekly_day int 0–6 default 1 (0=Sunday, America/New_York), weekly_hour int 0–23 default 9, near_goal_points int default 150 **(75 since 0014; 0016 briefly set 50, now a no-op; 75 since 0018)**, recipients text[] default '{}' (extra emails), include_chairs bool default true, include_admins bool default true, prize_alerts_enabled bool default true, updated_at, updated_by uuid). Seed one row.
 - `email_outbox` (id uuid, kind text check in ('weekly_report','prize_qualified','prize_info','test'), to_emails text[] not null, subject text, body_text text, body_html text, dedupe_key text unique not null, status text check in ('pending','sending','sent','failed') default 'pending', attempts int default 0, last_error text, created_at, sent_at). **dedupe_key prevents duplicate reports/alerts.**
 - `admin_actions` (id bigint identity, actor_id uuid null, actor_name text, action text, target_user_id uuid null, target_name text, details jsonb default '{}', created_at default now()). Append-only.
 
@@ -161,7 +161,7 @@ Actions: `points_added` / `points_removed` (ledger insert with created_by and so
 
 ---
 
-## 0009 — Quest extras (badges, wardrobe, weekly shout-out)
+## 0009 — Quest extras (badges, wardrobe, shout-out — weekly here, monthly since 0012)
 - `profiles` + `hat`, `accessory`, `background` (nullable). Table `cosmetics(id, slot, name, rule_type, rule_value, sort_order)` mirrors `src/lib/cosmetics.ts`.
 - `my_badges() → table(id, earned, progress, goal)` (current cycle, order of `src/lib/badges.ts`). Badges never award points.
 - `my_unlocks() → text[]`; `equip_look(p_hat, p_accessory, p_background) → json {hat, accessory, background}` ('' clears; errors `locked`, `look`).
@@ -175,7 +175,7 @@ Actions: `points_added` / `points_removed` (ledger insert with created_by and so
 
 ---
 
-## 0011 — Up to 5 chairs
+## 0011 — More chairs (`max_chairs`; 6 for 2026–27)
 - `app_config.max_chairs int default 5 (set to 6 for 2026–27)` (`MAX_CHAIRS` in src/config.ts).
 - `set_role(p_user_id, p_role)` now accepts 'participant' | 'admin' | **'chair'** (caller must be a chair). Making a chair: target email must be confirmed (`not_verified`) and current chairs < max_chairs (`chair_limit`: "YAC already has 6 chairs."). A chair still can't demote another chair (`forbidden`).
 - `step_down_chair() → void`: caller (a chair) becomes 'admin'; refused if they're the only chair (`last_chair`: "You're the only chair — make someone else a chair first."). Notifies the caller; logged as role_changed.
@@ -211,3 +211,38 @@ Actions: `points_added` / `points_removed` (ledger insert with created_by and so
 - `admin_overview()`: copy of 0001; `nearGoal` = within **75** of the goal (was 100).
 - `report_settings.near_goal_points` default **75** (was 150); the existing row is moved from 150 to 75 (a different value chosen by a chair is kept).
 - Manual removals in `adjust_points` are capped at the goal, so now at −350.
+
+## 0015 — Yak puns
+- `yak_pun(p_seed int) → text` — internal (no API grant). One pun from a fixed list of 40: `list[|seed| mod 40]` (null seed = 0). The list is a copy of `src/lib/yakPuns.ts`, same order; `src/__tests__/yakPuns.test.ts` parses the migration and fails if they drift, so change both together.
+- `yak_pun_of_the_week() → text` — internal. Seed = America/New_York ISO week as `YYYYWW` (`to_char(…, 'IYYYIW')`, e.g. 202645), same as `yakPunOfTheWeek()` in the app.
+- `build_weekly_report()`: copy of 0013 plus a footer line **🐂 Yak of the week: …** (text and HTML).
+- `on_prize_claim_alert()`: copy of 0004 plus the same line in both admin prize alerts (`prize_qualified`, `prize_info`). Dedupe keys unchanged. Participant announcement emails are not changed.
+- App only (no DB): Home shows **🐂 Yak of the day** under the greeting (same pun for everyone each NY date, `yakPunOfTheDay()`), the login tagline shows it too, and treasure-map checkpoint pop-ups add a random pun.
+
+## 0016 — Prize goal 300 (superseded by 0018; a no-op since the 0019 pass)
+**Now does nothing.** Its statements were removed because 0018 undoes all of them and re-running them on a live database handed a prize spot to anyone at 300–349 (which 0018 then revoked). What it originally did:
+- `app_config.prize_goal` = **300** (column default too); 0016 runs after 0003 (650) and 0014 (350), so running every migration in order ends at 300. 0015 does not touch the goal. Then `refresh_prize_race(active_cycle_id())` (inside a `do` block, so the SQL Editor shows no result box) gives anyone already at 300+ a spot in the order they crossed. Tier points (35/20/5), 4 spots and $75 unchanged.
+- `halfway` badge: no function change — `badges_for()` from 0014 already uses half the goal rounded up, now **150**. `legend` = 300.
+- `cosmetics`: Sparkle Aura (`sparkles`) unlocks at **275** points (was 300 = the goal). Same in `src/lib/cosmetics.ts`.
+- `report_settings.near_goal_points` default **50** (was 75); the existing row is moved from 75 to 50 (a different value chosen by a chair is kept). `admin_overview()` `nearGoal` stays within **75** of the goal.
+- Manual removals in `adjust_points` are capped at the goal, so now at −300.
+
+## 0017 — Consistency pass (no rule changes)
+- `app_config` column defaults: `tier1_points` **35** (was 40) and `max_chairs` **6** (was 5). The existing row already had these values.
+- `badges_for()`: copy of 0014; only the fallback goal used when `app_config` has no row changes from 350 to **300**.
+- `handle_new_user()`: copy of 0013; only the chair-bootstrap fallback (if `max_chairs` were null) changes from 5 to **6**.
+- `send_announcement()`: copy of 0012; only the email footer changes, to name the real setting: "To stop announcement emails, turn off “Email me announcements from YAC” in the app under Me → Settings."
+- App only (no DB): `CYCLE.displayStart` (Nov 8, 2026, the first event) is the start date shown in Rules, Sign-up, Help and Admin → System. `CYCLE.start` and `cycles.starts_at` stay Oct 15, 2026.
+
+## 0018 — Prize goal back to 350
+- `app_config.prize_goal` = **350** (column default too); running every migration in order ends at **350** (0014 also sets 350; since the 0019 pass 0003 no longer sets 650 and 0016 is a no-op). Then `refresh_prize_race(active_cycle_id())` (inside a `do` block) gives anyone already at 350+ a spot in the order they crossed, **and revokes** any open claim (qualified / info submitted, not fulfilled) whose holder is below 350, with a "Your prize spot was released" notification. Tier points (35/20/5), 4 spots and $75 unchanged.
+- `badges_for()`: copy of 0017; only the fallback goal used when `app_config` has no row changes from 300 to **350**. `halfway` = half the goal rounded up = **175**, `legend` = 350.
+- `cosmetics`: Sparkle Aura (`sparkles`) back to **300** points (was 275). Same in `src/lib/cosmetics.ts`.
+- `report_settings.near_goal_points` default **75** (was 50); the existing row is moved from 50 to 75 (a different value chosen by a chair is kept). `admin_overview()` `nearGoal` stays within **75** of the goal.
+- Manual removals in `adjust_points` are capped at the goal, so now at −350 again.
+- App: `PRIZE.goal` = 350; treasure-map checkpoints Trailhead 50 · Camp 100 · Halfway 175 · Summit 250 · Treasure 350.
+
+## 0019 — Consistency pass for the 350 goal (no rule changes)
+- `set_role()` and `transfer_chair()`: copies of 0011; only the fallback chair limit (used if `app_config.max_chairs` were null — it is NOT NULL, 6) changes from 5 to **6**. Same signatures and grants.
+- Old migrations made re-run safe for the goal: `0003` no longer sets `prize_goal = 650`, and `0016` (goal 300) is now a no-op, so running every migration again on a live database never hands out or revokes spots at a stale goal.
+- Final state after all migrations: `prize_goal` 350 (default 350), Halfway 175, Quest Legend 350, cosmetics Sunset 50 · Flower Crown 100 · Starry Night 200 · Gold Chain 250 · Sparkle Aura 300, `near_goal_points` 75 (default 75), `admin_overview()` `nearGoal` within 75 of the goal, manual removals down to −350, `max_chairs` 6.

@@ -10,7 +10,7 @@ export function RulesContent() {
   return (
     <div className="stack" style={{ fontSize: 16 }}>
       <p style={{ margin: 0 }}>
-        🗓️ <b>This year’s quest runs {fmtCycleRange(CYCLE.start, CYCLE.end)}.</b>
+        🗓️ <b>This year’s quest runs {fmtCycleRange(CYCLE.displayStart, CYCLE.end)}.</b>
       </p>
       <section>
         <h3>How points work</h3>
@@ -66,7 +66,7 @@ export function RulesContent() {
       <section>
         <h3>The cycle</h3>
         <p>
-          The {CYCLE.name} cycle runs from {fmtCycleDate(CYCLE.start)} to {fmtCycleDate(CYCLE.end)}. At the end, everyone’s points reset to 0 and the history is archived.
+          The {CYCLE.name} cycle runs from {fmtCycleDate(CYCLE.displayStart)} to {fmtCycleDate(CYCLE.end)}. At the end, everyone’s points reset to 0 and the history is archived.
         </p>
       </section>
       <section>

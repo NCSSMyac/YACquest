@@ -131,7 +131,7 @@ export default function Announce() {
               <small className="muted">
                 {audience === 'user'
                   ? 'Goes to their account email.'
-                  : 'Only to people who left email updates on. Gmail allows about 500 emails a day, so save email for important news.'}
+                  : 'Only to people who left “Email me announcements from YAC” on. Gmail allows about 500 emails a day, so save email for important news.'}
               </small>
             </span>
           </label>

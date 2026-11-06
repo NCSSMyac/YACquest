@@ -16,7 +16,8 @@ export const CHECKPOINTS: Checkpoint[] = [
   { points: 50, label: 'Trailhead' },
   { points: 100, label: 'Camp' },
   { points: Math.ceil(PRIZE.goal / 2), label: 'Halfway' },
-  { points: 250, label: 'Summit' },
+  // About ¾ of the goal, rounded down to a multiple of 25 (350 → 250).
+  { points: Math.floor((PRIZE.goal * 0.75) / 25) * 25, label: 'Summit' },
 ];
 
 /** Checkpoints (plus the treasure itself) passed when going from `prev` to `now` points. */

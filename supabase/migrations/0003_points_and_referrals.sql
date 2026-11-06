@@ -11,7 +11,9 @@
 -- Run AFTER 0002. Safe to run more than once.
 -- ═══════════════════════════════════════════════════════════════════════════
 
-update public.app_config set tier1_points = 35, tier2_points = 20, tier3_points = 5, prize_goal = 650 where id = 1;
+-- The goal is no longer set here (it was 650 at the time). 0018 sets the current goal (350);
+-- leaving it out means re-running this file never puts a stale goal back, even briefly.
+update public.app_config set tier1_points = 35, tier2_points = 20, tier3_points = 5 where id = 1;
 
 insert into public.activities (id, tier, title, method)
 values ('joined_with_code', 1, 'Joined With a Friend Code', 'referral')

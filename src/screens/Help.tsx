@@ -60,7 +60,7 @@ export default function Help() {
     },
     {
       q: 'When does the year end?',
-      a: `This school year’s quest runs ${fmtCycleRange(CYCLE.start, CYCLE.end)}. Points reset to 0 for the next school year.`,
+      a: `This school year’s quest runs ${fmtCycleRange(CYCLE.displayStart, CYCLE.end)}. Points reset to 0 for the next school year.`,
     },
   ];
 

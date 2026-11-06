@@ -20,7 +20,7 @@ Never push straight to `main`. Turn on branch protection: **Settings → Branche
 
 ## House rules
 - Screens get data **only** through `src/api.ts`.
-- Point values, caps and dates come from `src/config.ts`. Never type a number like `40` or `650` into a screen.
+- Point values, caps and dates come from `src/config.ts`. Never type a number like `35` or `350` into a screen.
 - Use the theme classes (`panel`, `btn`, `chip`, `stack`, …) and components in `src/components/ui.tsx` before adding new CSS.
 - Check every screen at 360px wide and in dark mode.
 - Copy should be friendly and short. The yak is encouraging, never snarky.
