@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as api from '../../api';
 import type { AdminUserRow, TeamMember } from '../../api';
-import { Empty, ErrorText, Loading, Modal, Panel, useToast } from '../../components/ui';
+import { Empty, ErrorText, Loading, Modal, useToast } from '../../components/ui';
+import { Accordion, Card } from '../../components/Blocks';
 import { useAuth } from '../../lib/auth';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 import { MAX_CHAIRS } from '../../config';
@@ -82,7 +83,7 @@ export default function Team() {
 
   return (
     <div className="stack">
-      <Panel title="Roles">
+      <Accordion glyph="shield" title="Roles" summary={team.data ? `YACquest Chairs: ${chairs} of ${MAX_CHAIRS} · Admins: ${admins}` : 'Who can do what'}>
         {team.data && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
             <span className="chip t1">YACquest Chairs: {chairs} of {MAX_CHAIRS}</span>
@@ -93,9 +94,9 @@ export default function Team() {
           <li><b>YACquest Chair</b>: can do everything: team, prizes, the action log and system settings (weekly email, reset). Up to {MAX_CHAIRS} YACquest Chairs.</li>
           <li><b>Admin</b>: a day-to-day helper. Reviews submissions, awards points, runs events and sends announcements (including email to everyone).</li>
         </ul>
-      </Panel>
+      </Accordion>
 
-      <Panel title="Current team">
+      <Card glyph="people" title="Current team" action={team.data ? <span className="chip neutral">{team.data.length}</span> : undefined}>
         {team.loading && !team.data ? <Loading /> : team.error ? <ErrorText error={team.error} /> : !team.data?.length ? <Empty>No team yet.</Empty> : (
           <ul className="list">
             {team.data.map((m) => (
@@ -119,9 +120,9 @@ export default function Team() {
             ))}
           </ul>
         )}
-      </Panel>
+      </Card>
 
-      <Panel title="Add someone">
+      <Card glyph="userplus" title="Add someone">
         <PersonSearch
           label="Find a participant"
           exclude={(u) => u.role !== 'participant'}
@@ -131,17 +132,16 @@ export default function Team() {
           ]}
         />
         {chairsFull && <p className="muted" style={{ fontSize: 13, marginBottom: 0 }}>{fullHint}</p>}
-      </Panel>
+      </Card>
 
-      <Panel title="Step down as YACquest Chair" tone="flat">
+      <Accordion glyph="crown" title="My YACquest Chair seat" summary="Step down, or hand your seat to someone">
+        <div className="dash-sub" style={{ marginTop: 0 }}>Step down as YACquest Chair</div>
         <p className="muted">You become an admin. Another YACquest Chair can then remove you from the team.{chairs <= 1 && ' You’re the only YACquest Chair, so make someone else a YACquest Chair first.'}</p>
-        <button className="btn red" disabled={chairs <= 1} onClick={() => { setErr(null); setSteppingDown(true); }}>Step down as YACquest Chair</button>
-      </Panel>
-
-      <Panel title="Hand over my YACquest Chair seat" tone="flat">
+        <button className="btn red small" disabled={chairs <= 1} onClick={() => { setErr(null); setSteppingDown(true); }}>Step down as YACquest Chair</button>
+        <div className="dash-sub">Hand over my YACquest Chair seat</div>
         <p className="muted">Swap places in one step: the person you pick becomes a YACquest Chair and you become an admin. Useful when all YACquest Chair seats are taken.</p>
         <PersonSearch label="Who takes your seat?" exclude={(u) => u.id === user?.id || u.role === 'chair'} actions={[{ label: 'Select', onPick: (u) => { setErr(null); setTyped(''); setHanding(u); } }]} />
-      </Panel>
+      </Accordion>
 
       <Modal open={!!removing} onClose={() => setRemoving(null)} title="Remove admin?">
         <div className="stack">

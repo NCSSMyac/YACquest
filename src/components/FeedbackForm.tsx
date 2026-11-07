@@ -2,7 +2,8 @@ import { useState, type FormEvent } from 'react';
 import * as api from '../api';
 import { errorMessage } from '../lib/useAsync';
 import type { FeedbackCategory } from '../types';
-import { ErrorText, Panel, useToast } from './ui';
+import { ErrorText, useToast } from './ui';
+import { Accordion } from './Blocks';
 
 export const FEEDBACK_LABELS: Record<FeedbackCategory | 'prize', string> = {
   idea: 'Idea',
@@ -39,7 +40,7 @@ export function FeedbackForm() {
   }
 
   return (
-    <Panel title="💬 Send feedback">
+    <Accordion glyph="chat" title="Send feedback" summary="Ideas, bugs or event wishes: the YAC team reads every one">
       <form className="stack" onSubmit={send}>
         <label className="field">
           <span>What kind?</span>
@@ -61,6 +62,6 @@ export function FeedbackForm() {
         <ErrorText error={err} />
         <button className="btn blue" disabled={busy}>{busy ? 'Sending…' : 'Send feedback'}</button>
       </form>
-    </Panel>
+    </Accordion>
   );
 }

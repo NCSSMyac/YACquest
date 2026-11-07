@@ -6,7 +6,8 @@ import { fmtDate } from '../lib/format';
 import { CLAIM_LIMITS, claimContactError } from '../lib/validate';
 import { errorMessage, useAsync } from '../lib/useAsync';
 import { Sprite } from '../components/Sprite';
-import { Empty, ErrorText, Loading, Panel, ProgressBar, useToast } from '../components/ui';
+import { ErrorText, Loading, Panel, ProgressBar, useToast } from '../components/ui';
+import { Accordion, Card } from '../components/Blocks';
 import type { BadgeProgress, PrizeClaim } from '../types';
 import { useAuth } from '../lib/auth';
 import { useCelebrate } from '../lib/celebrate';
@@ -129,50 +130,51 @@ function Treasure() {
     <div className="stack">
       <Panel tone="gold">
         <div className="stack" style={{ alignItems: 'center', textAlign: 'center' }}>
-          <Sprite id="chest" size={96} className="bob" />
+          <Sprite id="chest" size={72} className="bob" />
           <div className="pixel" style={{ fontSize: 22 }} aria-live="polite">{s.remaining} / {s.total} LEFT</div>
           <p style={{ margin: 0 }}>The first {s.total} adventurers to reach {s.goal} points each win a {PRIZE.name}.</p>
           <QuestCardButton />
         </div>
       </Panel>
 
-      <Panel title="Prize spots">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))', gap: 8 }}>
+      <Card glyph="trophy" title="Prize spots" action={<span className="chip neutral">{s.total - s.remaining} / {s.total} won</span>}>
+        <div className="spots">
           {Array.from({ length: s.total }, (_, i) => {
             const c = s.claims.find((x) => x.spot === i + 1);
             return (
-              <div key={i} className="panel flat" style={{ padding: 8, textAlign: 'center', borderColor: c ? campusColor(c.campus) : undefined }} aria-label={c ? `Spot ${i + 1}: ${c.displayName}` : `Spot ${i + 1} open`}>
-                <div className="pixel" style={{ fontSize: 18 }}>{c ? `#${i + 1}` : '?'}</div>
+              <div key={i} style={{ borderColor: c ? campusColor(c.campus) : undefined }} aria-label={c ? `Spot ${i + 1}: ${c.displayName}, ${campusName(c.campus)}` : `Spot ${i + 1} open`}>
+                <div className="spot-num">#{i + 1}</div>
                 {c ? (
                   <>
-                    <strong style={{ display: 'block', wordBreak: 'break-word' }}>{c.displayName}</strong>
-                    <span className="muted">{campusName(c.campus)}</span>
+                    <span className="spot-name">{c.displayName}</span>
+                    <span className="spot-sub">{campusName(c.campus)}</span>
                   </>
                 ) : (
-                  <span className="muted">Open slot</span>
+                  <span className="spot-sub">Open</span>
                 )}
               </div>
             );
           })}
         </div>
-      </Panel>
-
-      <Panel title="Winners’ Circle">
+        {/* Winners' Circle: the same winners in the order they won, once there are any. */}
         {s.claims.length === 0 ? (
-          <Empty>No winners yet. Will you be first?</Empty>
+          <p className="muted" style={{ margin: '8px 0 0', fontSize: 14 }}>No winners yet. Will you be first?</p>
         ) : (
-          <ol className="list">
-            {s.claims.map((c) => (
-              <li key={c.spot} className="spread">
-                <span><span className="pixel" style={{ fontSize: 14 }}>#{c.spot}</span> <strong>{c.displayName}</strong></span>
-                <span className="chip neutral">{campusName(c.campus)}</span>
-              </li>
-            ))}
-          </ol>
+          <>
+            <div className="dash-sub">Winners’ Circle</div>
+            <ol className="mini-list">
+              {s.claims.map((c) => (
+                <li key={c.spot}>
+                  <span className="mini-main"><span className="mini-title">#{c.spot} {c.displayName}</span></span>
+                  <span className="chip neutral">{campusName(c.campus)}</span>
+                </li>
+              ))}
+            </ol>
+          </>
         )}
-      </Panel>
+      </Card>
 
-      <Panel title="Your quest">
+      <Card glyph="star" title="Your quest">
         <ProgressBar value={Math.min(points, s.goal)} max={s.goal} label={`${points} / ${s.goal}`} />
         <div style={{ marginTop: 12 }}>
           {claim?.status === 'qualified' ? (
@@ -195,7 +197,7 @@ function Treasure() {
           )}
         </div>
         <p className="muted" style={{ margin: '12px 0 0', fontSize: 13 }}>Prizes must be earned legitimately: if points are later removed and you drop below {PRIZE.goal}, your prize spot is revoked and goes to the next person who qualified.</p>
-      </Panel>
+      </Card>
 
       <Suggest />
     </div>
@@ -333,7 +335,7 @@ function Suggest() {
     }
   }
   return (
-    <Panel title="Suggest a prize idea" tone="flat">
+    <Accordion glyph="gift" title="Suggest a prize idea" summary="What loot would you love?">
       <form className="stack" onSubmit={send}>
         <label className="field">
           <span>What loot would you love?</span>
@@ -342,6 +344,6 @@ function Suggest() {
         <ErrorText error={err} />
         <button className="btn small" disabled={busy || !idea.trim()}>Send idea</button>
       </form>
-    </Panel>
+    </Accordion>
   );
 }

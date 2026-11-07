@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import * as api from '../api';
 import { isStaff, useAuth } from '../lib/auth';
 import { BellIcon, ChestIcon, HomeIcon, ShieldIcon, SwordIcon, TrophyIcon, UserIcon } from './Icons';
@@ -23,10 +23,12 @@ function Shell() {
   // An RSVP'd event today counts as one more thing on the bell.
   const today = useTodayEvent();
   const count = unread + (today ? 1 : 0);
+  // The admin dashboard spreads into two columns on wide screens; every other page keeps the phone-width column.
+  const wide = useLocation().pathname.replace(/\/+$/, '') === '/admin';
   const label = `Notifications${unread ? `, ${unread} unread` : ''}${today ? `, event today: ${today.title}` : ''}`;
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${wide ? ' wide' : ''}`}>
       {user && <NotificationPopups />}
       <header className="topbar">
         <Link to="/" className="brand" aria-label="YACquest home">

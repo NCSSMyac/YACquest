@@ -17,6 +17,9 @@ import { CheckInConfirm, type CheckInPass } from '../components/CheckInConfirm';
 import { StarterTips } from '../components/StarterTips';
 import { isNewAdventurer } from '../lib/starterTips';
 import type { Activity } from '../types';
+import { Accordion, Card, ShowMore } from '../components/Blocks';
+import type { GlyphName } from '../components/PixelGlyph';
+import { limitToInclude, nextLimit } from '../lib/listing';
 
 type Ev = Awaited<ReturnType<typeof api.listEvents>>[number];
 type TabId = 'events' | 'quests' | 'subs';
@@ -26,12 +29,16 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'subs', label: 'My proofs' },
 ];
 const TIER_TITLES: Record<Tier, string> = { 1: 'Tier 1 · High-Impact', 2: 'Tier 2 · Active', 3: 'Tier 3 · Digital' };
+const TIER_GLYPH: Record<Tier, GlyphName> = { 1: 'star', 2: 'bolt', 3: 'chat' };
 const OPEN_BEFORE_MIN = 30;
+const EVENTS_STEP = 4;
 
 export default function Earn() {
-  const [tab, setTab] = useState<TabId>('events');
-  // `#/earn?event=<id>` (Home's "Today" chip): jump to that event's card.
-  const [params] = useSearchParams();
+  // `#/earn?tab=quests|proofs` deep-links a tab; `#/earn?event=<id>` (Home's "Today" chip) jumps to that event's card.
+  const [params, setParams] = useSearchParams();
+  const raw = params.get('tab');
+  const tab: TabId = raw === 'quests' ? 'quests' : raw === 'proofs' ? 'subs' : 'events';
+  const setTab = (id: TabId) => setParams(id === 'events' ? {} : { tab: id === 'subs' ? 'proofs' : id }, { replace: true });
   const focusId = params.get('event') ?? undefined;
   const dash = useAsync(() => api.getDashboard(), [], { live: true });
   const isNew = isNewAdventurer(dash.data);
@@ -39,7 +46,7 @@ export default function Earn() {
     <div className="stack">
       <h1 className="pixel" style={{ margin: 0 }}>Quest Board</h1>
       {isNew && <StarterTips title="🧭 New here? Start with these" />}
-      <div className="tabs" role="tablist" aria-label="Quest board sections">
+      <div className="tabs sticky" role="tablist" aria-label="Quest board sections">
         {TABS.map((t) => (
           <button key={t.id} role="tab" id={`earn-tab-${t.id}`} aria-selected={tab === t.id} aria-controls="earn-panel" onClick={() => setTab(t.id)}>
             {t.label}
@@ -60,6 +67,11 @@ function Events({ focusId }: { focusId?: string }) {
   const up = useAsync(() => api.listEvents('upcoming'), [], { live: true });
   const past = useAsync(() => api.listEvents('past'), [], { live: true });
   const [showPast, setShowPast] = useState(false);
+  const [pastLimit, setPastLimit] = useState(10);
+  // Live and soonest events first; the rest behind "Show more" (always far enough to include a deep-linked event).
+  const focusIndex = focusId && up.data ? up.data.findIndex((e) => e.id === focusId) : -1;
+  const [limit, setLimit] = useState(EVENTS_STEP);
+  const shownLimit = Math.max(limit, limitToInclude(focusIndex, EVENTS_STEP));
   const [pass, setPass] = useState<CheckInPass | null>(null);
   const { user } = useAuth();
   const scrolled = useRef(false);
@@ -84,33 +96,34 @@ function Events({ focusId }: { focusId?: string }) {
       {up.loading && !up.data ? <Loading lines={3} /> : null}
       <ErrorText error={up.error} />
       {up.data && up.data.length === 0 && <Empty>No upcoming events yet. Check back soon, adventurer!</Empty>}
-      {up.data?.map((e) => (
+      {up.data?.slice(0, shownLimit).map((e) => (
         <EventCard key={e.id} e={e} now={now} focused={e.id === focusId} onDone={(pts) => {
           // Full-screen confirmation (with coins) instead of the small pop.
           setPass({ eventTitle: e.title, points: pts, checkedInAt: new Date() });
           if (user) noteCelebratedPoints(user.id, pts);
         }} />
       ))}
+      {up.data && <ShowMore shown={Math.min(shownLimit, up.data.length)} total={up.data.length} step={EVENTS_STEP} noun={['event', 'events']} onMore={() => setLimit(nextLimit(shownLimit, EVENTS_STEP, up.data?.length ?? 0))} />}
       {pass && <CheckInConfirm pass={pass} onDone={() => setPass(null)} />}
       <button className="btn ghost small" aria-expanded={showPast} onClick={() => setShowPast((s) => !s)}>
-        {showPast ? '▼' : '▶'} Past events
+        {showPast ? '▼' : '▶'} Past events{past.data ? ` (${past.data.length})` : ''}
       </button>
       {showPast && (
         <Panel tone="flat">
           {past.loading && !past.data ? <Loading /> : null}
           {past.data && past.data.length === 0 && <Empty>No past events.</Empty>}
-          <ul className="list">
-            {past.data?.map((e) => (
-              <li key={e.id} className="spread">
-                <span>
-                  <strong>{e.title}</strong>
-                  <br />
-                  <span className="muted">{fmtDate(e.startsAt)} · {e.campus === 'all' ? 'All campuses' : campusName(e.campus)}</span>
+          <ul className="mini-list">
+            {past.data?.slice(0, pastLimit).map((e) => (
+              <li key={e.id}>
+                <span className="mini-main">
+                  <span className="mini-title">{e.title}</span>
+                  <span className="mini-meta">{fmtDate(e.startsAt)} · {e.campus === 'all' ? 'All campuses' : campusName(e.campus)}</span>
                 </span>
                 {e.checkedIn ? <span className="chip approved">Went ✓</span> : <span className="chip neutral">Missed</span>}
               </li>
             ))}
           </ul>
+          {past.data && <ShowMore shown={Math.min(pastLimit, past.data.length)} total={past.data.length} step={10} onMore={() => setPastLimit((l) => nextLimit(l, 10, past.data?.length ?? 0))} />}
         </Panel>
       )}
     </>
@@ -145,16 +158,16 @@ function EventCard({ e, now, focused, onDone }: { e: Ev; now: number; focused?: 
   return (
     <div id={`event-${e.id}`} className={focused ? 'event-focus' : undefined}>
     <Panel tone={live && !e.checkedIn ? 'gold' : undefined}>
-      <div className="stack">
-        <div className="spread">
-          <strong style={{ fontSize: 18 }}>{e.title}</strong>
+      <div className="stack" style={{ gap: 10 }}>
+        <div className="spread" style={{ alignItems: 'flex-start' }}>
+          <strong style={{ fontSize: 18, lineHeight: 1.25, minWidth: 0 }}>{e.title}</strong>
           {live && !e.checkedIn && <span className="chip t1 blink">● LIVE</span>}
         </div>
-        <div className="row" style={{ flexWrap: 'wrap' }}>
+        <div className="row" style={{ flexWrap: 'wrap', gap: 6, marginTop: -4 }}>
           <TierChip tier={tier} />
           <span className="chip neutral">{e.campus === 'all' ? 'All campuses' : campusName(e.campus)}</span>
         </div>
-        <div className="muted">📍 {e.location}<br />🕒 {fmtDateTime(e.startsAt)}</div>
+        <div className="ev-meta"><span>🕒 {fmtDateTime(e.startsAt)}</span><span>📍 {e.location}</span></div>
         {/* 0022: RSVP until the event starts; Add to calendar sits on the same line. */}
         {!e.checkedIn && now < start ? (
           <RsvpRow e={e} calendar={<AddToCalendar e={e} />} />
@@ -164,16 +177,18 @@ function EventCard({ e, now, focused, onDone }: { e: Ev; now: number; focused?: 
         {e.checkedIn ? (
           <span className="chip approved" style={{ alignSelf: 'flex-start' }}>Checked in ✓</span>
         ) : live ? (
-          <form className="stack" onSubmit={submit}>
-            <label className="field">
-              <span>Event password</span>
-              <input className="input" placeholder="Announced at the event" value={pw} onChange={(x) => setPw(x.target.value)} autoComplete="off" autoCapitalize="off" required />
+          <form className="stack" style={{ gap: 6 }} onSubmit={submit}>
+            <label className="field" htmlFor={`pw-${e.id}`}>
+              <span>Event password <small className="muted" style={{ fontFamily: 'var(--font-body)', letterSpacing: 0, fontSize: 12 }}>· announced at the event</small></span>
             </label>
+            <div className="row" style={{ gap: 8 }}>
+              <input id={`pw-${e.id}`} className="input" style={{ flex: 1, minWidth: 0 }} placeholder="Password" value={pw} onChange={(x) => setPw(x.target.value)} autoComplete="off" autoCapitalize="off" required />
+              <button className="btn green" style={{ flex: 'none' }} disabled={busy || !pw.trim()}>{busy ? '…' : 'Check in'}</button>
+            </div>
             <ErrorText error={err} />
-            <button className="btn green" disabled={busy || !pw.trim()}>{busy ? 'Checking…' : 'Check in'}</button>
           </form>
         ) : (
-          <p className="muted" style={{ margin: 0 }}>Opens {OPEN_BEFORE_MIN} min before start</p>
+          <p className="muted" style={{ margin: 0, fontSize: 14 }}>Check-in opens {OPEN_BEFORE_MIN} min before start</p>
         )}
       </div>
     </Panel>
@@ -233,14 +248,17 @@ function Quests({ goEvents }: { goEvents: () => void }) {
   const [proof, setProof] = useState<Activity | null>(null);
   return (
     <>
-      {([1, 2, 3] as Tier[]).map((t) => (
-        <section key={t} className="stack" aria-label={TIER_TITLES[t]}>
-          <h2 className="pixel" style={{ fontSize: 16, margin: '8px 0 0' }}>{TIER_TITLES[t]} · +{TIER_POINTS[t]} each</h2>
-          {ACTIVITIES.filter((a) => a.tier === t).map((a) => (
-            <QuestCard key={a.id} a={a} goEvents={goEvents} onProof={() => setProof(a)} />
-          ))}
-        </section>
-      ))}
+      <p className="muted" style={{ margin: 0, fontSize: 14 }}>Tap a quest to see how it works and send proof.</p>
+      {([1, 2, 3] as Tier[]).map((t) => {
+        const list = ACTIVITIES.filter((a) => a.tier === t);
+        return (
+          <Card key={t} glyph={TIER_GLYPH[t]} title={TIER_TITLES[t]} label={TIER_TITLES[t]} action={<span className={`chip t${t}`}>+{TIER_POINTS[t]} each</span>}>
+            {list.map((a) => (
+              <QuestRow key={a.id} a={a} goEvents={goEvents} onProof={() => setProof(a)} />
+            ))}
+          </Card>
+        );
+      })}
       {proof && <ProofModal activity={proof} onClose={() => setProof(null)} />}
     </>
   );
@@ -249,7 +267,7 @@ function Quests({ goEvents }: { goEvents: () => void }) {
 /** Quests that happen on Instagram get a direct link. */
 const INSTAGRAM_QUESTS = new Set(['follow_ig', 'repost', 'story_game', 'social_tag']);
 
-function QuestCard({ a, goEvents, onProof }: { a: Activity; goEvents: () => void; onProof: () => void }) {
+function QuestRow({ a, goEvents, onProof }: { a: Activity; goEvents: () => void; onProof: () => void }) {
   const { user } = useAuth();
   const toast = useToast();
   async function copy() {
@@ -261,30 +279,29 @@ function QuestCard({ a, goEvents, onProof }: { a: Activity; goEvents: () => void
     }
   }
   return (
-    <Panel>
-      <div className="stack">
-        <div className="spread">
-          <strong style={{ fontSize: 17 }}>{a.title}</strong>
-          {/* The section heading already names the tier; the chip just shows the points. */}
-          <span className={`chip t${a.tier}`} aria-label={`${TIER_POINTS[a.tier]} points`}>+{TIER_POINTS[a.tier]}</span>
+    <Accordion
+      flat
+      className="quest-row"
+      title={a.title}
+      summary={a.limitLabel}
+      // The card heading already names the tier; the chip just shows the points.
+      right={<span className={`chip t${a.tier}`} aria-label={`${TIER_POINTS[a.tier]} points`}>+{TIER_POINTS[a.tier]}</span>}
+    >
+      <p>{a.description}</p>
+      {INSTAGRAM_QUESTS.has(a.id) && (
+        <a href={INSTAGRAM_URL} target="_blank" rel="noreferrer">
+          Open {INSTAGRAM_HANDLE} ↗
+        </a>
+      )}
+      {(a.method === 'screenshot' || a.method === 'photo') && <button className="btn small" onClick={onProof}>Submit proof</button>}
+      {a.method === 'event_password' && <button className="btn blue small" onClick={goEvents}>See events</button>}
+      {a.method === 'referral' && (
+        <div className="row" style={{ flexWrap: 'wrap' }}>
+          <span className="pixel" style={{ fontSize: 16 }} aria-label="Your friend code">{user?.friendCode}</span>
+          <button className="btn ghost small" onClick={copy}>Copy</button>
         </div>
-        <p style={{ margin: 0 }}>{a.description}</p>
-        {a.limitLabel && <span className="chip neutral" style={{ alignSelf: 'flex-start' }}>{a.limitLabel}</span>}
-        {INSTAGRAM_QUESTS.has(a.id) && (
-          <a href={INSTAGRAM_URL} target="_blank" rel="noreferrer" style={{ alignSelf: 'flex-start' }}>
-            Open {INSTAGRAM_HANDLE} ↗
-          </a>
-        )}
-        {(a.method === 'screenshot' || a.method === 'photo') && <button className="btn small" onClick={onProof}>Submit proof</button>}
-        {a.method === 'event_password' && <button className="btn blue small" onClick={goEvents}>See events</button>}
-        {a.method === 'referral' && (
-          <div className="row" style={{ flexWrap: 'wrap' }}>
-            <span className="pixel" style={{ fontSize: 16 }} aria-label="Your friend code">{user?.friendCode}</span>
-            <button className="btn ghost small" onClick={copy}>Copy</button>
-          </div>
-        )}
-      </div>
-    </Panel>
+      )}
+    </Accordion>
   );
 }
 

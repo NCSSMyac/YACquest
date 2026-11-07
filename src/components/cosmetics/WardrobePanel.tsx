@@ -28,6 +28,8 @@ export function requirementText(rule: UnlockRule): string {
   }
 }
 
+type Cat = CosmeticSlot | 'council' | 'hero';
+
 const sameLook = (a?: Look, b?: Look) => (a?.hat ?? '') === (b?.hat ?? '') && (a?.accessory ?? '') === (b?.accessory ?? '') && (a?.background ?? '') === (b?.background ?? '');
 
 /** `staff` (0020): the caller's staff rewards — only ever non-null for admins/chairs; adds the Council + Hero sections. */
@@ -37,6 +39,7 @@ export function WardrobePanel({ unlocks, error, staff }: { unlocks: string[] | n
   const [draft, setDraft] = useState<Look>(user?.look ?? {});
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [cat, setCat] = useState<Cat>('hat');
   const saved = user?.look;
   useEffect(() => {
     setDraft(saved ?? {});
@@ -67,34 +70,57 @@ export function WardrobePanel({ unlocks, error, staff }: { unlocks: string[] | n
     }
   }
 
+  const council = STAFF_COSMETICS.filter((c) => c.rule.type !== 'hero');
+  const heroItems = STAFF_COSMETICS.filter((c) => c.rule.type === 'hero');
+  const cats: { id: Cat; label: string; got: number; total: number }[] = [
+    ...SECTIONS.map((sec) => {
+      const items = COSMETICS.filter((c) => c.slot === sec.slot);
+      return { id: sec.slot as Cat, label: sec.title, got: items.filter((c) => have.has(c.id)).length, total: items.length };
+    }),
+    ...(staff
+      ? [
+          { id: 'council' as Cat, label: '🏛️ Council', got: council.filter((c) => have.has(c.id)).length, total: council.length },
+          { id: 'hero' as Cat, label: '🦸 Hero', got: heroItems.filter((c) => have.has(c.id)).length, total: heroItems.length },
+        ]
+      : []),
+  ];
+  const current = cats.some((c) => c.id === cat) ? cat : 'hat';
+  const section = SECTIONS.find((sec) => sec.slot === current);
+
   return (
     <div className="stack">
-      <Panel tone="gold">
-        <div className="stack" style={{ alignItems: 'center', textAlign: 'center', gap: 10 }}>
-          <div style={{ border: 'var(--px) solid var(--navy-900)', background: 'var(--paper)', boxShadow: 'var(--shadow)', lineHeight: 0 }}>
-            <Avatar id={user.avatar} look={draft} campus={user.campus} size={160} hero={!!staff?.isHero} />
+      <Panel tone="gold" className="adm-item">
+        <div className="row" style={{ alignItems: 'center', gap: 14 }}>
+          <div style={{ border: 'var(--px) solid var(--navy-900)', background: 'var(--paper)', boxShadow: 'var(--shadow)', lineHeight: 0, flex: 'none' }}>
+            <Avatar id={user.avatar} look={draft} campus={user.campus} size={112} hero={!!staff?.isHero} />
           </div>
-          <div className="row wrap" style={{ justifyContent: 'center', gap: 8 }}>
+          <div className="stack" style={{ gap: 8, minWidth: 0, flex: 1 }}>
+            <span style={{ fontSize: 14 }}>Tap an item to try it on. Tap it again to take it off.</span>
             <button className="btn green" onClick={save} disabled={busy || !dirty}>{busy ? 'Saving…' : dirty ? 'Save look' : 'Saved'}</button>
             {dirty && (
               <button className="btn ghost small" onClick={() => setDraft(saved ?? {})} disabled={busy}>Undo</button>
             )}
           </div>
-          <ErrorText error={err} />
-          <span style={{ fontSize: 14 }}>Tap an item to try it on. Tap it again to take it off.</span>
         </div>
+        <ErrorText error={err} />
       </Panel>
 
-      {SECTIONS.map((s) => {
-        const items = COSMETICS.filter((c) => c.slot === s.slot);
-        const got = items.filter((c) => have.has(c.id)).length;
-        return (
-          <Panel key={s.slot} title={s.title} action={<span className="chip neutral">{got} / {items.length}</span>}>
-            <div role="radiogroup" aria-label={s.title} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))', gap: 8 }}>
-              <Tile selected={!draft[s.slot]} onClick={() => setDraft((d) => ({ ...d, [s.slot]: undefined }))} label="None">
+      <div className="chip-tabs" role="tablist" aria-label="Wardrobe categories">
+        {cats.map((c) => (
+          <button key={c.id} type="button" role="tab" id={`wd-tab-${c.id}`} aria-selected={current === c.id} aria-controls="wd-panel" onClick={() => setCat(c.id)}>
+            {c.label} <span className="count">{c.got}/{c.total}</span>
+          </button>
+        ))}
+      </div>
+
+      <div id="wd-panel" role="tabpanel" aria-labelledby={`wd-tab-${current}`}>
+        {section && (
+          <Panel>
+            <div role="radiogroup" aria-label={section.title} className="tile-grid">
+              <Tile selected={!draft[section.slot]} onClick={() => setDraft((d) => ({ ...d, [section.slot]: undefined }))} label="None">
                 <div style={{ width: 44, height: 44, display: 'grid', placeItems: 'center', fontSize: 26, fontWeight: 800, color: 'var(--text-soft)' }} aria-hidden>∅</div>
               </Tile>
-              {items.map((c) => {
+              {COSMETICS.filter((c) => c.slot === section.slot).map((c) => {
                 const locked = !have.has(c.id);
                 return (
                   <Tile key={c.id} selected={draft[c.slot] === c.id} locked={locked} onClick={() => toggle(c)} label={c.name} hint={locked ? requirementText(c.rule) : undefined}>
@@ -107,32 +133,31 @@ export function WardrobePanel({ unlocks, error, staff }: { unlocks: string[] | n
               })}
             </div>
           </Panel>
-        );
-      })}
-
-      {staff && (
-        <>
+        )}
+        {staff && current === 'council' && (
           <StaffSection
             title="🏛️ Council wardrobe"
             note="Staff only. Earned from your YAC staff work (all-time) or granted by a YACquest Chair."
-            items={STAFF_COSMETICS.filter((c) => c.rule.type !== 'hero')}
+            items={council}
             have={have}
             draft={draft}
             campus={user.campus}
             onToggle={toggle}
           />
+        )}
+        {staff && current === 'hero' && (
           <StaffSection
             title="🦸 Hero of the Week"
             note={staff.isHero ? 'You’re the reigning Hero of the Week! These are yours until the next hero is crowned.' : 'Only for the reigning Hero of the Week. YACquest Chairs crown a hero at YAC meetings.'}
-            items={STAFF_COSMETICS.filter((c) => c.rule.type === 'hero')}
+            items={heroItems}
             have={have}
             draft={draft}
             campus={user.campus}
             onToggle={toggle}
             gold={staff.isHero}
           />
-        </>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -151,7 +176,7 @@ function StaffSection({ title, note, items, have, draft, campus, onToggle, gold 
   return (
     <Panel title={title} tone={gold ? 'gold' : undefined} action={<span className="chip neutral">{got} / {items.length}</span>}>
       <p style={{ margin: '0 0 8px', fontSize: 14 }}>{note}</p>
-      <div role="group" aria-label={title} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))', gap: 8 }}>
+      <div role="group" aria-label={title} className="tile-grid">
         {items.map((c) => {
           const locked = !have.has(c.id);
           return (

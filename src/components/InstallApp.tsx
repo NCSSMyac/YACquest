@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Modal, Panel } from './ui';
+import { Modal } from './ui';
+import { Accordion } from './Blocks';
 
 /** Chrome/Android fire this before showing their own install prompt. */
 interface InstallPromptEvent extends Event {
@@ -77,14 +78,14 @@ function InstallSteps({ canPrompt, install }: { canPrompt: boolean; install: () 
   );
 }
 
-/** "Get the app" panel (Me page). Hidden once installed. */
+/** "Get the app" section (Me page), collapsed to one row. Hidden once installed. */
 export function InstallApp() {
   const { canPrompt, installed, install } = useInstall();
   if (installed) return null;
   return (
-    <Panel title="📲 Get the app">
+    <Accordion icon="📲" title="Get the app" summary="Add YACquest to your home screen">
       <InstallSteps canPrompt={canPrompt} install={install} />
-    </Panel>
+    </Accordion>
   );
 }
 

@@ -19,13 +19,13 @@ export function BadgesPanel({ badges, error, staffBadges }: { badges: BadgeProgr
 
   return (
     <div className="stack">
-      <Panel tone="navy">
+      <Panel tone="navy" className="adm-item">
         <div className="spread">
           <div>
-            <div className="pixel" style={{ fontSize: 22, color: 'var(--gold-300)' }} aria-live="polite">{count} / {BADGES.length} collected</div>
-            <span style={{ fontSize: 14, color: 'var(--blue-300)' }}>Just for fun: badges unlock new looks in the Wardrobe.</span>
+            <div className="pixel" style={{ fontSize: 20, color: 'var(--gold-300)' }} aria-live="polite">{count} / {BADGES.length} collected</div>
+            <span style={{ fontSize: 13, color: 'var(--blue-300)' }}>Tap a badge for details. Badges unlock new looks in the Wardrobe.</span>
           </div>
-          <BadgeIcon id="legend" earned={count === BADGES.length} size={48} title="" />
+          <BadgeIcon id="legend" earned={count === BADGES.length} size={40} title="" />
         </div>
       </Panel>
 
@@ -63,7 +63,7 @@ export function BadgesPanel({ badges, error, staffBadges }: { badges: BadgeProgr
 
 function BadgeGrid({ badges, onOpen }: { badges: BadgeProgress[]; onOpen: (b: BadgeProgress) => void }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(92px, 1fr))', gap: 10 }}>
+    <div className="badge-grid">
       {badges.map((b) => {
         const d = defOf(b.id);
         return (
@@ -75,7 +75,7 @@ function BadgeGrid({ badges, onOpen }: { badges: BadgeProgress[]; onOpen: (b: Ba
             aria-label={`${d?.name ?? b.id}: ${b.earned ? 'collected' : `locked, ${b.progress} of ${b.goal}`}`}
             style={{
               margin: 0,
-              padding: '10px 4px 8px',
+              padding: '8px 2px 6px',
               cursor: 'pointer',
               textAlign: 'center',
               color: 'var(--text)',
@@ -85,11 +85,11 @@ function BadgeGrid({ badges, onOpen }: { badges: BadgeProgress[]; onOpen: (b: Ba
               boxShadow: b.earned ? '0 0 0 2px var(--navy-900), 0 4px 0 var(--navy-900)' : undefined,
             }}
           >
-            <BadgeIcon id={b.id} earned={b.earned} size={56} className={b.earned ? 'bob' : undefined} title="" />
-            <div style={{ fontSize: 12, fontWeight: 800, lineHeight: 1.2, marginTop: 4, opacity: b.earned ? 1 : 0.65 }}>{d?.name ?? b.id}</div>
+            <BadgeIcon id={b.id} earned={b.earned} size={44} className={b.earned ? 'bob' : undefined} title="" />
+            <div style={{ fontSize: 11, fontWeight: 800, lineHeight: 1.15, marginTop: 3, opacity: b.earned ? 1 : 0.7, overflowWrap: 'anywhere' }}>{d?.name ?? b.id}</div>
             {heroTimes(b) && <div className="pixel" style={{ fontSize: 13, color: 'var(--text)' }}>{heroTimes(b)}</div>}
             {!b.earned && b.goal > 1 && (
-              <div className="muted" style={{ fontSize: 11 }}>{b.progress}/{b.goal}</div>
+              <div className="muted" style={{ fontSize: 10 }}>{b.progress}/{b.goal}</div>
             )}
           </button>
         );

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import * as api from '../../api';
 import { PRIZE, campusName } from '../../config';
 import { Empty, ErrorText, Loading, Modal, Panel, useToast } from '../../components/ui';
+import { ShowMore, useShowMore } from '../../components/Blocks';
 import { fmtDate, fmtLongDate, timeAgo } from '../../lib/format';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 
@@ -9,6 +10,7 @@ export default function Prizes() {
   const toast = useToast();
   const claims = useAsync(() => api.listClaims(), [], { live: true });
   const sugg = useAsync(() => api.listSuggestions(), []);
+  const suggMore = useShowMore(10);
   const [confirm, setConfirm] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const target = claims.data?.find((c) => c.spot === confirm && c.status !== 'revoked');
@@ -74,11 +76,12 @@ export default function Prizes() {
       <Panel title="Prize suggestions">
         {sugg.loading && !sugg.data ? <Loading /> : !sugg.data?.length ? <Empty>No suggestions yet.</Empty> : (
           <ul className="list">
-            {sugg.data.map((s) => (
+            {sugg.data.slice(0, suggMore.limit).map((s) => (
               <li key={s.id}>“{s.idea}” <span className="muted">— {s.displayName}, {timeAgo(s.createdAt)}</span></li>
             ))}
           </ul>
         )}
+        {sugg.data && <ShowMore shown={Math.min(suggMore.limit, sugg.data.length)} total={sugg.data.length} step={10} onMore={() => suggMore.more(sugg.data?.length ?? 0)} />}
       </Panel>
 
       <Modal open={confirm != null} onClose={() => setConfirm(null)} title="Mark as fulfilled?">

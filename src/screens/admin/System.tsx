@@ -2,7 +2,8 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import * as api from '../../api';
 import { CYCLE } from '../../config';
-import { Empty, ErrorText, Loading, Modal, Panel, useToast } from '../../components/ui';
+import { Empty, ErrorText, Loading, Modal, useToast } from '../../components/ui';
+import { Accordion, Card, ShowMore, useShowMore } from '../../components/Blocks';
 import { fmtCycleDate, fmtCycleRange, fmtDate, fmtDateTime, timeAgo } from '../../lib/format';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 import { DAY_NAMES, hourLabel, isEmail } from '../../lib/validate';
@@ -57,19 +58,17 @@ export default function System() {
       <WeeklyEmail />
       <EmailLog />
 
-      <Panel title="Export">
-        <p className="muted">Full points ledger as CSV, for audits and the year-end archive.</p>
-        <button className="btn" disabled={exporting} onClick={exportCsv}>{exporting ? 'Preparing…' : 'Export ledger CSV'}</button>
-      </Panel>
+      <Card glyph="coin" title="Export">
+        <p className="muted" style={{ marginTop: 0 }}>Full points ledger as CSV, for audits and the year-end archive.</p>
+        <button className="btn small" disabled={exporting} onClick={exportCsv}>{exporting ? 'Preparing…' : 'Export ledger CSV'}</button>
+      </Card>
 
-      <Panel title="Current cycle">
-        <p><strong>{CYCLE.name}</strong></p>
-        <p className="muted">Quest runs {fmtCycleRange(CYCLE.displayStart, CYCLE.end)} (as shown to players; the first event is the start).</p>
-        <p className="muted" style={{ fontSize: 13 }}>The database cycle opened {fmtCycleDate(CYCLE.start)}, so points earned before the first event still count.</p>
-      </Panel>
-
-      <Panel title="Past cycles">
-        {arch.loading && !arch.data ? <Loading /> : !arch.data?.length ? <Empty>No archived cycles yet.</Empty> : (
+      <Card glyph="calendar" title="Cycles">
+        <p style={{ margin: 0 }}><strong>{CYCLE.name}</strong> <span className="chip approved">Current</span></p>
+        <p className="muted" style={{ margin: '4px 0 0' }}>Quest runs {fmtCycleRange(CYCLE.displayStart, CYCLE.end)} (as shown to players; the first event is the start).</p>
+        <p className="muted" style={{ fontSize: 13, margin: '4px 0 0' }}>The database cycle opened {fmtCycleDate(CYCLE.start)}, so points earned before the first event still count.</p>
+        <div className="dash-sub">Past cycles</div>
+        {arch.loading && !arch.data ? <Loading /> : !arch.data?.length ? <p className="muted" style={{ margin: 0, fontSize: 14 }}>No archived cycles yet.</p> : (
           <ul className="list">
             {arch.data.map((a, i) => (
               <li key={i}>
@@ -78,12 +77,12 @@ export default function System() {
             ))}
           </ul>
         )}
-      </Panel>
+      </Card>
 
-      <Panel title="Danger zone">
-        <p>Ending the cycle archives all history and zeroes everyone’s points. This can’t be undone.</p>
+      <Accordion glyph="bolt" title="Danger zone" summary="End the cycle and reset everyone’s points">
+        <p style={{ marginTop: 0 }}>Ending the cycle archives all history and zeroes everyone’s points. This can’t be undone.</p>
         <button className="btn red" onClick={() => { setResetOpen(true); setErr(null); setConfirmText(''); }}>End cycle &amp; reset points</button>
-      </Panel>
+      </Accordion>
 
       <Modal open={resetOpen} onClose={() => setResetOpen(false)} title="End cycle & reset?">
         <div className="stack">
@@ -120,8 +119,10 @@ function WeeklyEmail() {
     if (settings.data) setForm(settings.data);
   }, [settings.data]);
 
-  if (settings.loading && !form) return <Panel title="Weekly committee email"><Loading lines={3} /></Panel>;
-  if (!form) return <Panel title="Weekly committee email"><ErrorText error={settings.error ?? 'Could not load settings.'} /></Panel>;
+  if (settings.loading && !form) return <Card glyph="mail" title="Weekly committee email"><Loading lines={3} /></Card>;
+  if (!form) return <Card glyph="mail" title="Weekly committee email"><ErrorText error={settings.error ?? 'Could not load settings.'} /></Card>;
+  const live = settings.data ?? form;
+  const when = live.weeklyEnabled ? `On · ${DAY_NAMES[live.weeklyDay]}s at ${hourLabel(live.weeklyHour)} Eastern` : 'Automatic email is off';
 
   const dirty = JSON.stringify({ ...form, updatedAt: undefined }) !== JSON.stringify({ ...settings.data, updatedAt: undefined });
   const patch = (p: Partial<ReportSettings>) => setForm((f) => (f ? { ...f, ...p } : f));
@@ -169,7 +170,7 @@ function WeeklyEmail() {
   }
 
   return (
-    <Panel title="Weekly committee email">
+    <Accordion glyph="mail" title="Weekly committee email" summary={when}>
       <form className="stack" onSubmit={save}>
         <p className="muted" style={{ margin: 0 }}>
           A summary for the YAC team: spots left, who’s close to the prize, top 5, Campus Cup and this week’s numbers. Times are Eastern.
@@ -272,7 +273,7 @@ function WeeklyEmail() {
           </div>
         </div>
       </Modal>
-    </Panel>
+    </Accordion>
   );
 }
 
@@ -293,6 +294,8 @@ function EmailLog() {
   const toast = useToast();
   const log = useAsync(() => api.emailLog(50), [], { live: true });
   const [retrying, setRetrying] = useState<string | null>(null);
+  const logMore = useShowMore(10, 5);
+  const failed = log.data?.filter((r) => r.status === 'failed').length ?? 0;
 
   async function retry(id: string) {
     setRetrying(id);
@@ -308,7 +311,11 @@ function EmailLog() {
   }
 
   return (
-    <Panel title="Email delivery log" action={<button className="btn small ghost" onClick={() => void log.reload()}>Refresh</button>}>
+    <Accordion glyph="scroll" title="Email delivery log" summary={log.data ? `${log.data.length} recent ${log.data.length === 1 ? 'email' : 'emails'}${failed ? ` · ${failed} failed` : ''}` : 'Sent and queued emails'} right={failed ? <span className="chip rejected">{failed} failed</span> : undefined}>
+      <div className="spread" style={{ marginBottom: 8 }}>
+        <span />
+        <button className="btn small ghost" onClick={() => void log.reload()}>Refresh</button>
+      </div>
       <p className="muted" style={{ marginTop: 0, fontSize: 14 }}>Emails go out within about 10 minutes. Failed ones are retried automatically up to 5 times.</p>
       {log.loading && !log.data ? <Loading /> : log.error ? <ErrorText error={log.error} /> : !log.data?.length ? <Empty>No emails yet. Try “Send test email to me”.</Empty> : (
         <div style={{ overflowX: 'auto' }}>
@@ -322,7 +329,7 @@ function EmailLog() {
               </tr>
             </thead>
             <tbody>
-              {log.data.map((r) => (
+              {log.data.slice(0, logMore.limit).map((r) => (
                 <tr key={r.id} style={{ borderTop: '2px dashed var(--rule)', verticalAlign: 'top' }}>
                   <td style={td}>
                     <strong style={{ display: 'block' }}>{r.subject || '(no subject)'}</strong>
@@ -346,9 +353,10 @@ function EmailLog() {
               ))}
             </tbody>
           </table>
+          <ShowMore shown={Math.min(logMore.limit, log.data.length)} total={log.data.length} step={10} onMore={() => logMore.more(log.data?.length ?? 0)} />
         </div>
       )}
-    </Panel>
+    </Accordion>
   );
 }
 

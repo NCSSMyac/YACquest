@@ -3,9 +3,12 @@ import * as api from '../../api';
 import { CAMPUSES, TIER_POINTS, campusName, type CampusId } from '../../config';
 import { EVENT_KINDS, kindInfo, kindPoints, kindTier } from '../../lib/eventKinds';
 import { Empty, ErrorText, Loading, Modal, Panel, useToast } from '../../components/ui';
+import { ShowMore } from '../../components/Blocks';
+import { nextLimit } from '../../lib/listing';
 import { useAuth } from '../../lib/auth';
 import { fmtDateTime } from '../../lib/format';
 import { checkInUrl } from '../../lib/pendingCheckin';
+import { eventPhase } from '../../lib/adminDashboard';
 import { duplicateForm, editForm, toLocalInput as toLocal, type EventForm as Form } from '../../lib/duplicateEvent';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 import type { AdminEventRsvpCounts, EventAttendee, EventRsvp, YacEvent } from '../../types';
@@ -15,12 +18,8 @@ type AdminEvent = YacEvent & AdminEventRsvpCounts;
 const WORDS = ['YAK', 'MOO', 'HORN', 'QUEST', 'GOLD', 'SHAGGY', 'FJORD', 'RIDGE'];
 const genPassword = () => `${WORDS[Math.floor(Math.random() * WORDS.length)]}-${1000 + Math.floor(Math.random() * 9000)}`;
 
-function phase(e: YacEvent): 'LIVE' | 'Upcoming' | 'Past' {
-  const now = Date.now();
-  const s = new Date(e.startsAt).getTime();
-  const end = new Date(e.endsAt).getTime() + e.checkInGraceMinutes * 60000;
-  return now < s ? 'Upcoming' : now <= end ? 'LIVE' : 'Past';
-}
+const phase = (e: YacEvent) => eventPhase(e);
+const EVENTS_STEP = 6;
 
 export default function Events() {
   const { user } = useAuth();
@@ -35,6 +34,7 @@ export default function Events() {
   const [whoGoing, setWhoGoing] = useState<AdminEvent | null>(null);
   const [qrFor, setQrFor] = useState<YacEvent | null>(null);
   const [dupOf, setDupOf] = useState<string | null>(null);
+  const [limit, setLimit] = useState(EVENTS_STEP);
 
   // Upcoming + live: soonest first. Past (kept forever): newest first.
   const current = (list.data ?? []).filter((e) => phase(e) !== 'Past').sort((a, b) => a.startsAt.localeCompare(b.startsAt));
@@ -97,39 +97,39 @@ export default function Events() {
     <div className="stack">
       <button className="btn" onClick={() => open('new')}>+ New event</button>
       <div className="tabs" role="tablist" aria-label="Which events">
-        <button role="tab" aria-selected={tab === 'current'} onClick={() => setTab('current')}>Upcoming ({current.length})</button>
-        <button role="tab" aria-selected={tab === 'past'} onClick={() => setTab('past')}>Past ({past.length})</button>
+        <button role="tab" aria-selected={tab === 'current'} onClick={() => { setTab('current'); setLimit(EVENTS_STEP); }}>Upcoming ({current.length})</button>
+        <button role="tab" aria-selected={tab === 'past'} onClick={() => { setTab('past'); setLimit(EVENTS_STEP); }}>Past ({past.length})</button>
       </div>
       {list.loading && !list.data ? <Loading lines={3} /> : list.error ? <ErrorText error={list.error} /> : !shown.length ? <Empty>{tab === 'past' ? 'No past events yet.' : 'No upcoming events. Make one!'}</Empty> : (
-        shown.map((e) => {
-          const p = phase(e);
-          return (
-            <Panel key={e.id}>
-              <div className="spread">
-                <strong>{e.title}</strong>
-                <span className={`chip ${p === 'LIVE' ? 'approved' : p === 'Upcoming' ? 'pending' : 'neutral'}`}>{p}</span>
-              </div>
-              <p className="muted">
-                🕒 {fmtDateTime(e.startsAt)} – {fmtDateTime(e.endsAt)}
-                <br />📍 {e.location} · {e.campus === 'all' ? 'All campuses' : campusName(e.campus)}
-                <br />Tier {kindTier(e.kind)} · {kindInfo(e.kind).label} (+{kindPoints(e.kind)})
-              </p>
-              <p>Password: <strong style={{ fontFamily: 'monospace', fontSize: 18 }}>{e.password}</strong></p>
-              <p style={{ marginTop: -6 }}>
-                <b>{e.goingCount}</b> going · <b>{e.attendeeCount}</b> came
-                {p === 'Past' && e.goingCount > 0 && <span className="muted"> · {e.goingCount - e.rsvpCame} RSVP’d but didn’t come</span>}
-              </p>
-              <div className="btn-row">
-                <button className="btn small blue" onClick={() => setWhoGoing(e)}>Who’s going ({e.goingCount})</button>
-                <button className="btn small" onClick={() => setWhoCame(e)}>Who came ({e.attendeeCount})</button>
-                <button className="btn small navy" onClick={() => setQrFor(e)}>QR code</button>
-                <button className="btn small blue" onClick={() => open(e)}>Edit</button>
-                <button className="btn small ghost" onClick={() => open(e, true)} aria-label={`Duplicate ${e.title} one week later`}>Duplicate</button>
-                <button className="btn small red" onClick={() => del(e)}>Delete</button>
-              </div>
-            </Panel>
-          );
-        })
+        <>
+          {shown.slice(0, limit).map((e) => {
+            const p = phase(e);
+            return (
+              <Panel key={e.id} className="adm-item">
+                <div className="spread" style={{ alignItems: 'flex-start' }}>
+                  <strong style={{ fontSize: 17, minWidth: 0, overflowWrap: 'anywhere' }}>{e.title}</strong>
+                  <span className={`chip ${p === 'LIVE' ? 'approved' : p === 'Upcoming' ? 'pending' : 'neutral'}`}>{p}</span>
+                </div>
+                <div className="adm-meta">
+                  🕒 {fmtDateTime(e.startsAt)} – {fmtDateTime(e.endsAt)}
+                  <br />📍 {e.location} · {e.campus === 'all' ? 'All campuses' : campusName(e.campus)}
+                  <br />Tier {kindTier(e.kind)} · {kindInfo(e.kind).label} (+{kindPoints(e.kind)})
+                  <br />🔑 <span className="adm-pw">{e.password}</span> · <b>{e.goingCount}</b> going · <b>{e.attendeeCount}</b> came
+                  {p === 'Past' && e.goingCount > 0 && <> · {e.goingCount - e.rsvpCame} RSVP’d but didn’t come</>}
+                </div>
+                <div className="btn-row three">
+                  <button className="btn small blue" onClick={() => setWhoGoing(e)} aria-label={`Who’s going (${e.goingCount})`}>Going {e.goingCount}</button>
+                  <button className="btn small" onClick={() => setWhoCame(e)} aria-label={`Who came (${e.attendeeCount})`}>Came {e.attendeeCount}</button>
+                  <button className="btn small navy" onClick={() => setQrFor(e)}>QR code</button>
+                  <button className="btn small ghost" onClick={() => open(e)}>Edit</button>
+                  <button className="btn small ghost" onClick={() => open(e, true)} aria-label={`Duplicate ${e.title} one week later`}>Duplicate</button>
+                  <button className="btn small red" onClick={() => del(e)}>Delete</button>
+                </div>
+              </Panel>
+            );
+          })}
+          <ShowMore shown={Math.min(limit, shown.length)} total={shown.length} step={EVENTS_STEP} noun={['event', 'events']} onMore={() => setLimit((l) => nextLimit(l, EVENTS_STEP, shown.length))} />
+        </>
       )}
 
       <Modal open={!!whoCame} onClose={() => setWhoCame(null)} title={whoCame ? `Who came: ${whoCame.title}` : undefined}>
@@ -276,7 +276,7 @@ function Attendees({ e, onClose }: { e: YacEvent; onClose: () => void }) {
 }
 
 /** 0022: Admin → Events → Who's going: everyone who RSVP'd, oldest first, ✓ if they checked in. */
-function Going({ e, past, onClose }: { e: YacEvent; past: boolean; onClose: () => void }) {
+export function Going({ e, past, onClose }: { e: YacEvent; past: boolean; onClose: () => void }) {
   const toast = useToast();
   const list = useAsync<EventRsvp[]>(() => api.adminEventRsvps(e.id), [e.id]);
   const rows = list.data ?? [];
@@ -311,7 +311,7 @@ function Going({ e, past, onClose }: { e: YacEvent; past: boolean; onClose: () =
 }
 
 /** Admin → Events → QR code: big enough to project or screenshot. Scanning it opens #/checkin. */
-function CheckInQr({ e, onClose }: { e: YacEvent; onClose: () => void }) {
+export function CheckInQr({ e, onClose }: { e: YacEvent; onClose: () => void }) {
   const toast = useToast();
   const url = checkInUrl(e.id, e.password ?? '', e.title);
   const [img, setImg] = useState<string | null>(null);

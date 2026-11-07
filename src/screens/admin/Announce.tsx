@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import * as api from '../../api';
 import { CAMPUSES, campusName, type CampusId } from '../../config';
 import { Empty, ErrorText, Loading, Modal, Panel, useToast } from '../../components/ui';
+import { ShowMore, useShowMore } from '../../components/Blocks';
 import { useAuth } from '../../lib/auth';
 import { fmtDateTime } from '../../lib/format';
 import { errorMessage, useAsync } from '../../lib/useAsync';
@@ -28,6 +29,7 @@ export default function Announce() {
     [audience, search],
   );
   const sent = useAsync(() => api.listAnnouncements(15), [], { live: true });
+  const sentMore = useShowMore(5);
 
   const input: AnnouncementInput = { title, body, audience, campus: audience === 'campus' ? campus : undefined, userId: person?.id, sendEmail };
   const audienceText =
@@ -146,7 +148,7 @@ export default function Announce() {
           <Empty>No messages yet.</Empty>
         ) : (
           <ul className="list">
-            {sent.data.map((a) => (
+            {sent.data.slice(0, sentMore.limit).map((a) => (
               <li key={a.id} className="stack" style={{ gap: 4 }}>
                 <div className="spread">
                   <strong>{a.title}</strong>
@@ -160,6 +162,7 @@ export default function Announce() {
             ))}
           </ul>
         )}
+        {sent.data && <ShowMore shown={Math.min(sentMore.limit, sent.data.length)} total={sent.data.length} step={5} onMore={() => sentMore.more(sent.data?.length ?? 0)} />}
       </Panel>
 
       <Modal open={confirm} onClose={() => setConfirm(false)} title="Send this message?">

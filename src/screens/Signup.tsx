@@ -175,7 +175,8 @@ export default function Signup() {
 
       <Modal open={rulesOpen} onClose={() => !busy && setRulesOpen(false)} title="Quest rules">
         <div className="stack">
-          <RulesContent />
+          {/* Everything open here: people agree to the full text. */}
+          <RulesContent expanded />
           <label className="check">
             <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
             <span>I agree to the rules</span>

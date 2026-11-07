@@ -11,7 +11,7 @@ import type { LeaderRow } from '../types';
 
 type TabId = 'top' | 'campus' | 'cup';
 const TABS: { id: TabId; label: string }[] = [
-  { id: 'top', label: 'Top 10' },
+  { id: 'top', label: 'Overall' },
   { id: 'campus', label: 'By Campus' },
   { id: 'cup', label: 'Campus Cup' },
 ];
@@ -66,27 +66,53 @@ function Row({ r, me }: { r: LeaderRow; me: boolean }) {
   );
 }
 
+const TOP_STEP = 10;
+const TOP_MAX = 50;
+
 function Top() {
   const { user } = useAuth();
-  const top = useAsync(() => api.leaderboard(10), [], { live: true });
+  const [limit, setLimit] = useState(TOP_STEP);
+  const top = useAsync(() => api.leaderboard(limit), [limit], { live: true });
   const mine = useAsync(() => api.myRank(), [], { live: true });
   if (top.loading && !top.data) return <Loading lines={5} />;
-  if (top.error) return <ErrorText error={top.error} />;
+  if (top.error && !top.data) return <ErrorText error={top.error} />;
   const rows = top.data ?? [];
   if (!rows.length) return <Empty>No adventurers on the board yet. Be the first!</Empty>;
   const inTop = rows.some((r) => r.userId === user?.id);
+  // The server may return fewer rows than asked (end of the board, or a cap): then there's nothing more to load.
+  const canMore = rows.length >= limit && limit < TOP_MAX;
   return (
-    <Panel>
-      <ol className="list" style={{ listStyle: 'none' }}>
-        {rows.map((r) => <Row key={r.userId} r={r} me={r.userId === user?.id} />)}
-        {!inTop && mine.data && (
-          <>
-            <li aria-hidden="true" style={{ textAlign: 'center', padding: 2 }} className="muted">…</li>
-            <Row r={mine.data} me />
-          </>
+    <>
+      {mine.data && <YouBar r={mine.data} />}
+      <Panel>
+        <ol className="list" style={{ listStyle: 'none' }}>
+          {rows.map((r) => <Row key={r.userId} r={r} me={r.userId === user?.id} />)}
+          {!inTop && mine.data && (
+            <>
+              <li aria-hidden="true" style={{ textAlign: 'center', padding: 2 }} className="muted">…</li>
+              <Row r={mine.data} me />
+            </>
+          )}
+        </ol>
+        {canMore && (
+          <button type="button" className="show-more" disabled={top.loading} onClick={() => setLimit((l) => Math.min(TOP_MAX, l + TOP_STEP))}>
+            <span>{top.loading ? 'Loading…' : `Show top ${Math.min(TOP_MAX, limit + TOP_STEP)}`}</span>
+          </button>
         )}
-      </ol>
-    </Panel>
+      </Panel>
+    </>
+  );
+}
+
+/** Small sticky "You: #27 · 70 pts" bar so your own rank stays in view while scrolling the board. */
+function YouBar({ r }: { r: LeaderRow }) {
+  return (
+    <div className="you-bar" role="status" aria-label={`Your rank: ${r.rank}, ${r.points} points`}>
+      <CampusFrame campus={r.campus}><Avatar id={r.avatar} look={r.look} campus={r.campus} size={28} /></CampusFrame>
+      <span className="you-text">You · {campusName(r.campus)}</span>
+      <b>#{r.rank}</b>
+      <span style={{ fontWeight: 800 }}>{r.points} pts</span>
+    </div>
   );
 }
 

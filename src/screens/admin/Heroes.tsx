@@ -8,6 +8,7 @@ import * as api from '../../api';
 import { Avatar } from '../../components/Avatar';
 import { HallOfHeroes, HeroBannerPanel } from '../../components/HeroBanner';
 import { Empty, ErrorText, Loading, Modal, Panel, useToast } from '../../components/ui';
+import { Accordion } from '../../components/Blocks';
 import { STAFF_GRANTS, staffGrantById } from '../../lib/staffRewards';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 import type { StaffRewardRow } from '../../types';
@@ -90,7 +91,7 @@ export default function Heroes() {
         </form>
       </Panel>
 
-      <Panel title="🎁 Grant a Council reward">
+      <Accordion icon="🎁" title="Grant a Council reward" summary="Scepter, Throne Room, Wizard Hat or Council MVP">
         <p style={{ margin: '0 0 8px', fontSize: 15 }}>
           Royal Scepter, Starlit Throne Room and Wizard Council Hat are granted by YACquest Chairs only. <b>Council MVP</b> is for an extra-special accomplishment: it unlocks the Legendary Golden Yak.
         </p>
@@ -124,7 +125,7 @@ export default function Heroes() {
           {err?.where === 'grant' && <ErrorText error={err.msg} />}
           <button className="btn" disabled={busy || alreadyHas}>{busy ? 'Working…' : 'Grant reward'}</button>
         </form>
-      </Panel>
+      </Accordion>
 
       <Panel title="The Council">
         {team.length === 0 ? <Empty>No team yet.</Empty> : (

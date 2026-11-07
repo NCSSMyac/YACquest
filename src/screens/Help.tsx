@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { PageHeader } from '../components/Layout';
 import { Sprite } from '../components/Sprite';
 import { Panel, useToast } from '../components/ui';
+import { Accordion } from '../components/Blocks';
 import { CAPS, CONTACT_EMAILS, CYCLE, INSTAGRAM_HANDLE, INSTAGRAM_URL, PRIZE, TIER_LABELS, TIER_POINTS } from '../config';
 import { useAuth } from '../lib/auth';
 import { fmtCycleRange } from '../lib/format';
@@ -96,16 +97,13 @@ export default function Help() {
         </Panel>
 
         <Panel title="Quick answers">
-          <ul className="list">
+          <div>
             {faqs.map((f) => (
-              <li key={f.q}>
-                <details>
-                  <summary style={{ cursor: 'pointer', fontWeight: 700 }}>{f.q}</summary>
-                  <p style={{ margin: '8px 0 0' }}>{f.a}</p>
-                </details>
-              </li>
+              <Accordion key={f.q} flat className="quest-row" title={f.q}>
+                <p style={{ margin: 0 }}>{f.a}</p>
+              </Accordion>
             ))}
-          </ul>
+          </div>
           {user && <p style={{ margin: '8px 0 0' }}>Full details: <Link to="/rules">Rules</Link></p>}
         </Panel>
 

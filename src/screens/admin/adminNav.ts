@@ -1,13 +1,18 @@
 /**
- * The admin menu: one list drives both the tile grid on /admin and the "Jump to" menu
+ * The admin menu: one list drives both the compact quick-nav on /admin and the "Jump to" menu
  * on every other admin page. Paths match the routes in App.tsx.
  */
+import type { GlyphName } from '../../components/PixelGlyph';
+
 export type AdminPage = {
   path: string;
   label: string;
-  icon: string;
+  /** Shorter label for the small quick-nav buttons when `label` is too wide for them. */
+  short?: string;
+  /** Pixel glyph (src/components/PixelGlyph.tsx). */
+  icon: GlyphName;
   blurb: string;
-  /** Which live counter shows as a badge on this page's tile. */
+  /** Which live counter shows as a badge on this page's button. */
   badge?: 'review' | 'feedback';
 };
 
@@ -17,33 +22,33 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   {
     title: 'Events',
     pages: [
-      { path: '/admin/events', label: 'Events', icon: '📅', blurb: 'Create events, QR codes, who came' },
-      { path: '/admin/review', label: 'Review', icon: '✅', blurb: 'Approve or reject proof', badge: 'review' },
+      { path: '/admin/events', label: 'Events', icon: 'calendar', blurb: 'Create events, QR codes, who came' },
+      { path: '/admin/review', label: 'Review', icon: 'check', blurb: 'Approve or reject proof', badge: 'review' },
     ],
   },
   {
     title: 'People',
     pages: [
-      { path: '/admin/players', label: 'Players', icon: '👥', blurb: 'Look up players, award points' },
-      { path: '/admin/council', label: 'Council', icon: '🏛', blurb: 'Staff team board and badges' },
+      { path: '/admin/players', label: 'Players', icon: 'people', blurb: 'Look up players, award points' },
+      { path: '/admin/council', label: 'Council', icon: 'council', blurb: 'Staff team board and badges' },
     ],
   },
   {
     title: 'Messages',
     pages: [
-      { path: '/admin/announce', label: 'Announce', icon: '📣', blurb: 'Send news to everyone' },
-      { path: '/admin/feedback', label: 'Feedback', icon: '💬', blurb: 'Read ideas and bug reports', badge: 'feedback' },
+      { path: '/admin/announce', label: 'Announce', short: 'Notify', icon: 'megaphone', blurb: 'Send news to everyone' },
+      { path: '/admin/feedback', label: 'Feedback', icon: 'chat', blurb: 'Read ideas and bug reports', badge: 'feedback' },
     ],
   },
   {
     title: 'YACquest Chair tools',
     chairOnly: true,
     pages: [
-      { path: '/admin/prizes', label: 'Prizes', icon: '🏆', blurb: 'Prize claims and suggestions' },
-      { path: '/admin/heroes', label: 'Heroes', icon: '🦸', blurb: 'Crown the Hero of the Week' },
-      { path: '/admin/team', label: 'Team', icon: '🛡', blurb: 'Add or remove admins' },
-      { path: '/admin/log', label: 'Log', icon: '📜', blurb: 'Who changed what, when' },
-      { path: '/admin/system', label: 'System', icon: '⚙️', blurb: 'Cycles, export, weekly email' },
+      { path: '/admin/prizes', label: 'Prizes', icon: 'gift', blurb: 'Prize claims and suggestions' },
+      { path: '/admin/heroes', label: 'Heroes', icon: 'crown', blurb: 'Crown the Hero of the Week' },
+      { path: '/admin/team', label: 'Team', icon: 'shield', blurb: 'Add or remove admins' },
+      { path: '/admin/log', label: 'Log', icon: 'scroll', blurb: 'Who changed what, when' },
+      { path: '/admin/system', label: 'System', icon: 'gear', blurb: 'Cycles, export, weekly email' },
     ],
   },
 ];

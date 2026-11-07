@@ -7,6 +7,7 @@ import { fmtDateTime, fmtPts } from '../../lib/format';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 
 const gameWin = activityById('game_win')!;
+const PLAYERS_STEP = 20;
 
 export default function Players() {
   const [text, setText] = useState('');
@@ -16,7 +17,11 @@ export default function Players() {
     const t = setTimeout(() => setQuery(text), 250);
     return () => clearTimeout(t);
   }, [text]);
-  const list = useAsync(() => api.searchUsers(query), [query], { live: true });
+  const [limit, setLimit] = useState(PLAYERS_STEP);
+  useEffect(() => setLimit(PLAYERS_STEP), [query]);
+  const list = useAsync(() => api.searchUsers(query, limit), [query, limit], { live: true });
+  // Fewer rows than asked means we've reached the end (or the server's cap).
+  const canMore = !!list.data && list.data.length >= limit;
 
   return (
     <div className="stack">
@@ -27,6 +32,8 @@ export default function Players() {
       {list.loading && !list.data ? <Loading lines={3} /> : list.error ? <ErrorText error={list.error} /> : !list.data?.length ? (
         <Empty>No players found.</Empty>
       ) : (
+        <>
+        <p className="list-count">{query.trim() ? `${list.data.length}${canMore ? '+' : ''} found` : `Showing ${list.data.length}${canMore ? '' : ' (everyone)'} · search to find anyone`}</p>
         <ul className="list panel" style={{ padding: '4px 14px' }}>
           {list.data.map((u) => (
             <li key={u.id} style={{ padding: '2px 0' }}>
@@ -37,6 +44,12 @@ export default function Players() {
             </li>
           ))}
         </ul>
+        </>
+      )}
+      {canMore && (
+        <button type="button" className="show-more" style={{ marginTop: 0 }} disabled={list.loading} onClick={() => setLimit((l) => l + PLAYERS_STEP)}>
+          <span>{list.loading ? 'Loading…' : `Show ${PLAYERS_STEP} more players`}</span>
+        </button>
       )}
       {sel && <PlayerModal key={sel.id} user={list.data?.find((u) => u.id === sel.id) ?? sel} onClose={() => setSel(null)} />}
     </div>

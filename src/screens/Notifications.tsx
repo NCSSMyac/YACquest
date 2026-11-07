@@ -4,6 +4,8 @@ import { PageHeader } from '../components/Layout';
 import { Sprite } from '../components/Sprite';
 import { TodayChip } from '../components/TodayEvent';
 import { Empty, ErrorText, Loading, Panel } from '../components/ui';
+import { Card, ShowMore, useShowMore } from '../components/Blocks';
+import { groupByDay } from '../lib/listing';
 import { timeAgo } from '../lib/format';
 import { useAsync } from '../lib/useAsync';
 import type { NotificationKind } from '../types';
@@ -22,9 +24,12 @@ const KIND: Record<NotificationKind, { icon: string; color: string }> = {
   event_reminder: { icon: '📅', color: 'var(--blue-500)' },
 };
 
+const NOTE_STEP = 20;
+
 export default function Notifications() {
   const { data, loading, error, reload } = useAsync(() => api.notifications(), [], { live: true });
   const unread = data?.filter((n) => !n.read).length ?? 0;
+  const more = useShowMore(NOTE_STEP);
 
   // Auto-mark read shortly after opening (the highlight stays until then).
   useEffect(() => {
@@ -57,30 +62,33 @@ export default function Notifications() {
             <p>All quiet in the meadow. No notifications yet!</p>
           </Empty>
         </Panel>
-      ) : (
-        <ul className="list" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {data?.map((n) => {
-            const k = KIND[n.kind] ?? KIND.announcement;
-            return (
-              <li key={n.id} style={{ padding: 0, border: 0 }}>
-                <Panel tone={n.read ? 'flat' : 'gold'} className="">
-                  <div className="row" style={{ alignItems: 'flex-start' }}>
-                    <span aria-hidden style={{ fontSize: 18, color: k.color, minWidth: 28, textAlign: 'center' }}>{k.icon}</span>
-                    <div style={{ flex: 1 }}>
-                      <div className="spread" style={{ alignItems: 'flex-start' }}>
-                        <b>{n.title}</b>
-                        {!n.read && <span className="chip t1">New</span>}
+      ) : data ? (
+        <>
+          {groupByDay(data.slice(0, more.limit), (n) => n.createdAt).map((g) => (
+            <Card key={g.key} title={g.label} glyph={g.key === 'today' ? 'star' : 'scroll'} action={<span className="chip neutral">{g.items.length}</span>}>
+              <ul className="note-list">
+                {g.items.map((n) => {
+                  const k = KIND[n.kind] ?? KIND.announcement;
+                  return (
+                    <li key={n.id} className={n.read ? undefined : 'unread'}>
+                      <span className="note-icon" aria-hidden style={{ color: k.color }}>{k.icon}</span>
+                      <div className="note-body">
+                        <div className="spread" style={{ alignItems: 'flex-start' }}>
+                          <b>{n.title}</b>
+                          {!n.read && <span className="chip t1">New</span>}
+                        </div>
+                        <div style={{ whiteSpace: 'pre-wrap' }}>{n.body}</div>
+                        <div className="muted" style={{ fontSize: 13 }}>{timeAgo(n.createdAt)}</div>
                       </div>
-                      <div>{n.body}</div>
-                      <div className="muted" style={{ fontSize: 13 }}>{timeAgo(n.createdAt)}</div>
-                    </div>
-                  </div>
-                </Panel>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </Card>
+          ))}
+          <ShowMore shown={Math.min(more.limit, data.length)} total={data.length} step={NOTE_STEP} onMore={() => more.more(data.length)} />
+        </>
+      ) : null}
     </div>
   );
 }
