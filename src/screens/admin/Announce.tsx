@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import * as api from '../../api';
 import { CAMPUSES, campusName, type CampusId } from '../../config';
 import { Empty, ErrorText, Loading, Modal, Panel, useToast } from '../../components/ui';
@@ -7,7 +7,10 @@ import { useAuth } from '../../lib/auth';
 import { fmtDateTime } from '../../lib/format';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 import { ANNOUNCEMENT_LIMITS, announcementError } from '../../lib/validate';
-import type { AnnouncementAudience, AnnouncementInput } from '../../types';
+import type { AnnouncementAudience, AnnouncementInput, AnnouncementTemplate, YacEvent } from '../../types';
+import { BUILTIN_TEMPLATES, applyTemplate, eventDateText, placeholders, type TemplateDef, type TemplateVars } from '../../lib/announceTemplates';
+import { eventPhase } from '../../lib/adminDashboard';
+import { monthName } from '../../lib/format';
 
 /** Admins send a custom message to everyone, one campus, or one person (in-app + optional email). */
 export default function Announce() {
@@ -29,6 +32,18 @@ export default function Announce() {
     [audience, search],
   );
   const sent = useAsync(() => api.listAnnouncements(15), [], { live: true });
+  const [tplOpen, setTplOpen] = useState(false);
+  const left = placeholders(`${title} ${body}`);
+
+  function pickTemplate(t: TemplateDef, vars: TemplateVars) {
+    if ((title.trim() || body.trim()) && !window.confirm('Replace the title and message with this template?')) return;
+    const r = applyTemplate(t, vars);
+    setTitle(r.title);
+    setBody(r.body);
+    setErr(null);
+    setTplOpen(false);
+    toast(r.missing.length ? `Template added. Fill in: ${r.missing.map((m) => `{${m}}`).join(', ')}` : 'Template added. Check it, then send.', 'info');
+  }
   const sentMore = useShowMore(5);
 
   const input: AnnouncementInput = { title, body, audience, campus: audience === 'campus' ? campus : undefined, userId: person?.id, sendEmail };
@@ -66,6 +81,13 @@ export default function Announce() {
     <div className="stack">
       <Panel title="📣 Send a message">
         <form className="stack" onSubmit={review}>
+          <div className="tpl-row">
+            <button type="button" className="btn small navy" aria-expanded={tplOpen} aria-controls="tpl-panel" onClick={() => setTplOpen((v) => !v)}>
+              Templates {tplOpen ? '▴' : '▾'}
+            </button>
+            <SaveTemplate title={title} body={body} />
+          </div>
+          {tplOpen && <TemplatePanel onPick={pickTemplate} onClose={() => setTplOpen(false)} />}
           <label className="field">
             <span>Title</span>
             <input className="input" value={title} maxLength={ANNOUNCEMENT_LIMITS.titleMax} onChange={(e) => setTitle(e.target.value)} placeholder="Pickleball is Sunday!" required />
@@ -74,6 +96,9 @@ export default function Announce() {
             <span>Message</span>
             <textarea value={body} maxLength={ANNOUNCEMENT_LIMITS.bodyMax} onChange={(e) => setBody(e.target.value)} placeholder="Courts open at 2pm. The check-in password will be announced there." required />
             <small className="muted">{body.length}/{ANNOUNCEMENT_LIMITS.bodyMax}</small>
+            {left.length > 0 && (
+              <small className="tpl-left">Still to fill in: {left.map((p) => `{${p}}`).join(' ')}</small>
+            )}
           </label>
 
           <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0 }}>
@@ -179,6 +204,112 @@ export default function Announce() {
           </div>
         </div>
       </Modal>
+    </div>
+  );
+}
+
+/** "Save as template": the current title + message (placeholders like {event} are kept as-is). */
+function SaveTemplate({ title, body }: { title: string; body: string }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  async function save() {
+    setBusy(true);
+    try {
+      await api.saveAnnouncementTemplate(title, body);
+      toast('Saved to your templates.', 'success');
+    } catch (e) {
+      toast(errorMessage(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <button type="button" className="btn small ghost" disabled={busy || !title.trim() || !body.trim()} onClick={() => void save()} title="Save this title and message as a template">
+      {busy ? 'Saving…' : '☆ Save as template'}
+    </button>
+  );
+}
+
+/** Templates ▾: built-ins + saved ones, filled from the chosen event, the prize race and the Adventurer of the Month. */
+function TemplatePanel({ onPick, onClose }: { onPick: (t: TemplateDef, vars: TemplateVars) => void; onClose: () => void }) {
+  const toast = useToast();
+  const saved = useAsync(() => api.listAnnouncementTemplates(), [], { live: true });
+  const events = useAsync(() => api.adminListEvents(), []);
+  const prize = useAsync(() => api.prizeStatus(), []);
+  const star = useAsync(() => api.monthlyShoutout().catch(() => null), []);
+  // Upcoming + live first (soonest first), then the most recent past ones.
+  const choices = useMemo(() => {
+    const list = events.data ?? [];
+    const soon = list.filter((e) => eventPhase(e) !== 'Past').sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+    const past = list.filter((e) => eventPhase(e) === 'Past').sort((a, b) => b.startsAt.localeCompare(a.startsAt)).slice(0, 5);
+    return [...soon, ...past];
+  }, [events.data]);
+  const [eventId, setEventId] = useState('');
+  const ev: YacEvent | undefined = choices.find((e) => e.id === eventId) ?? choices[0];
+  const vars: TemplateVars = {
+    event: ev?.title,
+    date: ev ? eventDateText(ev.startsAt) : undefined,
+    location: ev?.location,
+    goal: prize.data?.goal,
+    spotsLeft: prize.data?.remaining,
+    adventurer: star.data?.displayName,
+    month: star.data ? monthName(star.data.month) : undefined,
+  };
+
+  async function del(t: AnnouncementTemplate) {
+    if (!window.confirm(`Delete the template “${t.title}”?`)) return;
+    try {
+      await api.deleteAnnouncementTemplate(t.id);
+      saved.setData((d) => (d ?? []).filter((x) => x.id !== t.id));
+      toast('Template deleted.', 'success');
+    } catch (e) {
+      toast(errorMessage(e), 'error');
+    }
+  }
+
+  return (
+    <div id="tpl-panel" className="tpl-panel" role="region" aria-label="Announcement templates">
+      <label className="field">
+        <span>Fill in details from</span>
+        <select value={ev?.id ?? ''} onChange={(e) => setEventId(e.target.value)} disabled={!choices.length}>
+          {!choices.length && <option value="">No events yet</option>}
+          {choices.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.title} · {eventDateText(e.startsAt)}{eventPhase(e) === 'Past' ? ' (past)' : ''}
+            </option>
+          ))}
+        </select>
+      </label>
+      <h3 className="dash-sub">Built-in</h3>
+      <ul className="tpl-list">
+        {BUILTIN_TEMPLATES.map((t) => (
+          <li key={t.id}>
+            <button type="button" className="tpl-pick" onClick={() => onPick(t, vars)}>
+              <b>{t.name}</b>
+              <span>{applyTemplate(t, vars).title}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      <h3 className="dash-sub">Saved by the team</h3>
+      {saved.loading && !saved.data ? <Loading lines={1} /> : saved.error ? <ErrorText error={saved.error} /> : !saved.data?.length ? (
+        <p className="muted tpl-empty">None yet. Write a message, then “☆ Save as template”.</p>
+      ) : (
+        <ul className="tpl-list">
+          {saved.data.map((t) => (
+            <li key={t.id} className="tpl-saved">
+              <button type="button" className="tpl-pick" onClick={() => onPick(t, vars)}>
+                <b>{t.title}</b>
+                <span>{t.authorName} · {fmtDateTime(t.createdAt)}</span>
+              </button>
+              {t.canDelete && (
+                <button type="button" className="tpl-del" onClick={() => void del(t)} aria-label={`Delete template ${t.title}`} title="Delete template">×</button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <button type="button" className="dash-more" onClick={onClose}>Close templates</button>
     </div>
   );
 }

@@ -19,7 +19,8 @@ import { HERO_ITEMS, HOSTED_EVENT_MIN_CHECKINS, STAFF_BADGES, STAFF_COSMETICS, i
 import { monthName } from '../lib/format';
 import { yakPunOfTheWeek } from '../lib/yakPuns';
 import { fmtEventTime, reminderTitle } from '../lib/todayEvent';
-import { announcementError, claimContactError, isEmail } from '../lib/validate';
+import { announcementError, claimContactError, cleanSurveyUrl, isEmail, surveyUrlError } from '../lib/validate';
+import { followupDue, checkInClosesAt, missedBody, missedTitle, nextEventFor, thanksBody, thanksTitle } from '../lib/followups';
 import type {
   Activity,
   AdminAction,
@@ -61,6 +62,15 @@ import type {
   EventRsvpInfo,
   QuestRecap,
   Streak,
+  AdminStats,
+  AnnouncementTemplate,
+  BulkReviewResult,
+  EventCheckin,
+  ParticipantExportRow,
+  PlayerNote,
+  EventFollowupStatus,
+  EventPhoto,
+  Friend,
 } from '../types';
 
 // ───────────────────────────── errors ─────────────────────────────
@@ -114,6 +124,14 @@ interface Db {
   rsvps: { eventId: string; userId: string; createdAt: string }[];
   /** 0024: `${eventId}:${userId}` for every RSVP reminder already sent (the real one is event_reminders_sent). */
   remindersSent: string[];
+  /** 0025: saved announcement templates (the real one is announcement_templates). Optional: older demo data has none. */
+  templates?: { id: string; title: string; body: string; createdBy: string; createdAt: string }[];
+  /** 0025: private staff notes on players (the real one is player_notes). */
+  playerNotes?: { id: string; userId: string; authorId: string; body: string; createdAt: string }[];
+  /** 0026: event id → follow-up marker (the real one is event_followups_sent). sentBy unset = automatic. */
+  followups?: Record<string, { sentAt: string; sentBy?: string; attended: number; missed: number; emailed: number }>;
+  /** 0026: submission id → staff moderation (submissions.wall_hidden_at / wall_hidden_by). */
+  wallHidden?: Record<string, { at: string; by: string }>;
   seq: number;
 }
 
@@ -125,7 +143,7 @@ interface OutboxRow extends EmailLogRow {
 
 const DB_KEY = 'yacquest-db-v1';
 const SESSION_KEY = 'yacquest-session';
-const DB_VERSION = 11;
+const DB_VERSION = 12;
 
 let db: Db | null = null;
 
@@ -232,10 +250,12 @@ function notify(userId: string, kind: NotificationKind, title: string, body: str
  * In production, the claim insert must be a single transaction with a unique (cycle, spot)
  * constraint so two people crossing at once can't both take the last spot.
  */
-function addLedger(entry: Omit<LedgerEntry, 'id' | 'createdAt'>, createdAt = now()) {
+function addLedger(entry: Omit<LedgerEntry, 'id' | 'createdAt'>, createdAt = now()): string {
   const d = load();
-  d.ledger.push({ ...entry, id: nextId('led'), createdAt });
+  const id = nextId('led');
+  d.ledger.push({ ...entry, id, createdAt });
   refreshPrizeRace();
+  return id;
 }
 
 /** When did this user most recently cross the goal (walking their ledger in order)? null if not at/above it. */
@@ -300,6 +320,7 @@ const strip = (e: YacEvent, includePassword: boolean): YacEvent => (includePassw
 
 export async function currentUser(): Promise<User | null> {
   queueEventReminders(); // 0024: the demo has no cron, so reminders go out when the app loads
+  queueEventFollowups(); // 0026: same for event follow-ups
   const id = sessionUserId();
   return load().users.find((u) => u.id === id) ?? null;
 }
@@ -351,6 +372,8 @@ export async function signup(input: SignupInput): Promise<SignupResult> {
     referredBy,
     createdAt: now(),
     emailOptIn: input.emailOptIn ?? true,
+    tourDoneAt: null,
+    photoWallOptOut: false,
   };
   d.users.push(user);
   notify(user.id, 'announcement', 'Welcome to YACquest!', `Earn points all year. The first ${PRIZE.count} people to reach ${PRIZE.goal} win a ${PRIZE.name}.`);
@@ -408,6 +431,7 @@ export async function updateProfile(patch: Partial<Pick<User, 'displayName' | 'a
 export async function getDashboard(): Promise<Dashboard> {
   await delay();
   queueEventReminders();
+  queueEventFollowups();
   const d = load();
   const user = me();
   const overall = rankedParticipants();
@@ -564,7 +588,7 @@ export async function canSubmit(activityId: string, eventId?: string): Promise<s
   return submissionBlocker(me(), activityId, eventId);
 }
 
-export async function submitProof(input: { activityId: string; eventId?: string; imageDataUrl: string; note: string }): Promise<Submission> {
+export async function submitProof(input: { activityId: string; eventId?: string; imageDataUrl: string; note: string; shareOnWall?: boolean }): Promise<Submission> {
   await delay(500);
   const user = me();
   const blocked = submissionBlocker(user, input.activityId, input.eventId);
@@ -580,6 +604,8 @@ export async function submitProof(input: { activityId: string; eventId?: string;
     note: input.note.trim(),
     status: 'pending',
     createdAt: now(),
+    // 0026: only event photos can go on the photo wall (default off).
+    shareOnWall: input.activityId === 'event_photos' && !!input.eventId && !!input.shareOnWall,
   };
   load().submissions.push(sub);
   save();
@@ -715,11 +741,18 @@ export async function reviewQueue(filters: { status?: SubmissionStatus; campus?:
 export async function reviewSubmission(id: string, decision: 'approved' | 'rejected', reason?: string): Promise<void> {
   await delay();
   const admin = requireRole('admin', 'chair');
+  reviewSync(admin, id, decision, reason);
+  save();
+}
+
+/** SERVER RULE (review_submission): one review, no save() (callers save once). */
+function reviewSync(admin: User, id: string, decision: 'approved' | 'rejected', reason?: string) {
   const d = load();
   const s = d.submissions.find((x) => x.id === id);
   if (!s) return fail('not_found', 'Submission not found.');
   const owner = d.users.find((u) => u.id === s.userId)!;
   if (!canManage(admin, owner)) fail('forbidden', 'That participant was not found.');
+  if (owner.id === admin.id) fail('forbidden', 'You can’t review your own submission.');
   if (s.status !== 'pending') fail('already_reviewed', 'Someone already reviewed this one.');
   if (decision === 'rejected' && !reason?.trim()) fail('reason', 'Add a reason so the participant knows what to fix.');
   const a = activityById(s.activityId)!;
@@ -734,7 +767,6 @@ export async function reviewSubmission(id: string, decision: 'approved' | 'rejec
     notify(owner.id, 'submission_rejected', `Not approved — ${a.title}`, reason!.trim());
   }
   logAction(decision === 'approved' ? 'submission_approved' : 'submission_rejected', owner, { activityId: a.id, reason: reason?.trim() || null }, admin);
-  save();
 }
 
 
@@ -766,8 +798,8 @@ export async function adjustPoints(userId: string, amount: number, reason: strin
   if (!Number.isInteger(amount) || amount === 0 || amount > TIER_POINTS[1] || amount < -PRIZE.goal)
     fail('amount', `Add at most ${TIER_POINTS[1]} points at a time (one High-Impact action), or remove up to ${PRIZE.goal}. Not 0.`);
   if (reason.trim().length < 3) fail('reason', 'A reason is required.');
-  addLedger({ userId, amount, source: 'manual', reason: reason.trim(), createdBy: admin.id });
-  logAction(amount > 0 ? 'points_added' : 'points_removed', u, { amount, reason: reason.trim(), activityId: null }, admin);
+  const ledgerId = addLedger({ userId, amount, source: 'manual', reason: reason.trim(), createdBy: admin.id });
+  logAction(amount > 0 ? 'points_added' : 'points_removed', u, { amount, reason: reason.trim(), activityId: null, ledgerId }, admin);
   notify(userId, 'points_adjusted', `${amount > 0 ? '+' : ''}${amount} pts from ${admin.displayName}`, reason.trim());
   save();
 }
@@ -781,21 +813,24 @@ export async function awardActivity(userId: string, activityId: string, note: st
   if (!u || !canManage(admin, u)) return fail('forbidden', 'That person was not found.');
   if (!a) return fail('activity', 'Unknown activity.');
   const why = note.trim() ? `${a.title}: ${note.trim()}` : a.title;
-  addLedger({ userId, amount: TIER_POINTS[a.tier], source: 'manual', activityId, reason: why, createdBy: admin.id });
-  logAction('points_added', u, { amount: TIER_POINTS[a.tier], reason: why, activityId }, admin);
+  const ledgerId = addLedger({ userId, amount: TIER_POINTS[a.tier], source: 'manual', activityId, reason: why, createdBy: admin.id });
+  logAction('points_added', u, { amount: TIER_POINTS[a.tier], reason: why, activityId, ledgerId }, admin);
   notify(userId, 'points_adjusted', `+${TIER_POINTS[a.tier]} pts — ${a.title}`, note.trim() || `Awarded by ${admin.displayName}`);
   save();
 }
 
 
-export async function adminListEvents(): Promise<(YacEvent & AdminEventRsvpCounts)[]> {
+export async function adminListEvents(): Promise<(YacEvent & AdminEventRsvpCounts & { followup?: EventFollowupStatus })[]> {
   await delay();
   const admin = requireRole('admin', 'chair');
   return load()
     .events.filter(() => canManage(admin))
     .slice()
     .sort((a, b) => b.startsAt.localeCompare(a.startsAt))
-    .map((e) => ({ ...e, ...rsvpCounts(e.id) }));
+    .map((e) => {
+      const f = followupStatus(e.id);
+      return { ...e, ...rsvpCounts(e.id), ...(f ? { followup: f } : {}) };
+    });
 }
 
 /** SERVER RULE (admin_event_attendees in 0013): admins + chairs; every check-in ledger row for the event, oldest first. */
@@ -824,6 +859,9 @@ function validateEvent(admin: User, input: EventInput) {
   if (input.title.trim().length < 3) fail('title', 'Give the event a title.');
   if (input.password.trim().length < 4) fail('password', 'Event password: at least 4 characters.');
   if (new Date(input.endsAt) <= new Date(input.startsAt)) fail('endsAt', 'End time must be after the start.');
+  // SERVER RULE (clean_survey_url, 0026): optional; http(s) only, no spaces, ≤ 500 characters.
+  const surveyErr = surveyUrlError(input.surveyUrl);
+  if (surveyErr) fail('surveyUrl', surveyErr);
   void admin;
 }
 
@@ -831,7 +869,8 @@ export async function createEvent(input: EventInput): Promise<YacEvent> {
   await delay();
   const admin = requireRole('admin', 'chair');
   validateEvent(admin, input);
-  const e: YacEvent = { ...normalizeEvent(input), title: input.title.trim(), password: input.password.trim(), id: nextId('evt'), attendeeCount: 0, activityId: kindInfo(input.kind).activityId };
+  const e: YacEvent = { ...normalizeEvent(input), title: input.title.trim(), password: input.password.trim(), id: nextId('evt'), attendeeCount: 0, activityId: kindInfo(input.kind).activityId, surveyUrl: cleanSurveyUrl(input.surveyUrl) };
+  if (!e.surveyUrl) delete e.surveyUrl;
   load().events.push(e);
   load().eventCreators[e.id] = admin.id;
   logAction('event_created', undefined, { title: e.title, kind: e.kind, campus: e.campus }, admin);
@@ -845,7 +884,8 @@ export async function updateEvent(id: string, input: EventInput): Promise<YacEve
   const e = load().events.find((x) => x.id === id);
   if (!e || !canManage(admin)) return fail('forbidden', 'Not found.');
   validateEvent(admin, input);
-  Object.assign(e, normalizeEvent(input), { title: input.title.trim(), password: input.password.trim(), activityId: kindInfo(input.kind).activityId });
+  Object.assign(e, normalizeEvent(input), { title: input.title.trim(), password: input.password.trim(), activityId: kindInfo(input.kind).activityId, surveyUrl: cleanSurveyUrl(input.surveyUrl) });
+  if (!e.surveyUrl) delete e.surveyUrl;
   logAction('event_updated', undefined, { title: e.title, kind: e.kind, campus: e.campus }, admin);
   save();
   return e;
@@ -1026,6 +1066,9 @@ export function seed(): Db {
       friendCode: makeFriendCode(rand),
       createdAt,
       emailOptIn: true,
+      // 0026: seeded players have used the app before, so no welcome tour (new sign-ups get one).
+      tourDoneAt: createdAt,
+      photoWallOptOut: false,
       ...u,
     };
     d.users.push(user);
@@ -1200,12 +1243,62 @@ export function seed(): Db {
     const pb = d.events[d.events.length - 1];
     d.rsvps.push({ eventId: pb.id, userId: demo.id, createdAt: iso(-2 * D) });
   }
+  // 0025: one saved announcement template and one private staff note on the demo player.
+  d.templates = [{ id: nextId('tpl'), title: 'Game night this {date}! 🎲', body: 'Board games, snacks and bonus points at {location}. Check in at the door with the password. See you at {event}!', createdBy: iesha.id, createdAt: iso(-9 * D) }];
+  d.playerNotes = [{ id: nextId('note'), userId: demo.id, authorId: jacob.id, body: 'Offered to help run the spring cornhole tournament. Follow up in March!', createdAt: iso(-5 * D) }];
+  // 0026 (own rng so the rest of the seed stays stable):
+  //  • Photo wall: two picnic regulars shared approved photos (one more is approved but not shared, so it stays off the wall).
+  //  • My friends: two people joined with the demo player's code; one came to Trivia Night (+35 for both).
+  //  • Follow-ups: the Kickoff Mixer follow-up already went out; the other past events show "Send follow-up now".
+  {
+    const xr = rng(2026);
+    const picnic = d.events.find((e) => e.title === 'Fall Welcome Picnic')!;
+    const goers = [...new Set(d.ledger.filter((l) => l.source === 'checkin' && l.refId === picnic.id && l.userId !== demo.id).map((l) => l.userId))];
+    const scenes: [string, string, boolean][] = [['#7fc8f8', '#5aa469', true], ['#ffb38a', '#6cbf5a', true], ['#c3b1e1', '#4f9d69', false]];
+    goers.slice(0, scenes.length).forEach((userId, i) => {
+      const [sky, grass, share] = scenes[i];
+      const at = new Date(new Date(picnic.endsAt).getTime() + (i + 1) * H).toISOString();
+      d.submissions.push({
+        id: nextId('sub'), userId, activityId: 'event_photos', eventId: picnic.id, imageUrl: PHOTO_IMG(sky, grass, i), note: i === 0 ? 'Best picnic ever!' : '',
+        status: 'approved', reviewerId: iesha.id, createdAt: at, reviewedAt: at, shareOnWall: share,
+      });
+    });
+    const trivia = d.events.find((e) => e.title === 'Trivia Night')!;
+    const taken = new Set([demo.id, ...goers]);
+    const pool = d.users.filter((u) => u.role === 'participant' && !taken.has(u.id) && !u.referredBy && d.ledger.some((l) => l.userId === u.id && l.source === 'seed' && l.amount >= 60));
+    const pickFriend = () => pool.splice(Math.floor(xr() * pool.length), 1)[0];
+    const came = pickFriend();
+    const notYet = d.users.find((u) => u.role === 'participant' && !taken.has(u.id) && u !== came && !d.ledger.some((l) => l.userId === u.id))!;
+    for (const f of [came, notYet]) {
+      f.referredBy = demo.id;
+      f.createdAt = iso(-(f === came ? 9 : 2) * D);
+      f.tourDoneAt = f.createdAt;
+    }
+    // came: their points move out of an existing seed row (their total stays the same); the demo player gets the real +35.
+    const row = d.ledger.find((l) => l.userId === came.id && l.source === 'seed' && l.amount >= 60)!;
+    row.amount -= TIER_POINTS[2] + TIER_POINTS[1];
+    d.ledger.push({ id: nextId('led'), userId: came.id, amount: TIER_POINTS[2], source: 'checkin', activityId: 'home_event', refId: trivia.id, reason: `Checked in: ${trivia.title}`, createdAt: trivia.startsAt });
+    d.ledger.push({ id: nextId('led'), userId: came.id, amount: TIER_POINTS[1], source: 'referral', activityId: 'joined_with_code', refId: `joined:${came.id}`, reason: 'Joined with a friend code', createdAt: trivia.startsAt });
+    d.ledger.push({ id: nextId('led'), userId: demo.id, amount: TIER_POINTS[1], source: 'referral', activityId: 'bring_new_alum', refId: came.id, reason: `Brought a new alum: ${came.displayName}`, createdAt: trivia.startsAt });
+    d.notifications.unshift({ id: nextId('ntf'), userId: demo.id, kind: 'points_adjusted', title: `+${TIER_POINTS[1]} for bringing a friend`, body: `${came.displayName} checked in to their first YAC event.`, read: true, createdAt: trivia.startsAt });
+    const kickoffClosed = new Date(new Date(kickoff.endsAt).getTime() + kickoff.checkInGraceMinutes * 60_000 + 10 * 60_000).toISOString();
+    d.followups = { [kickoff.id]: { sentAt: kickoffClosed, attended: 1, missed: d.rsvps.filter((r) => r.eventId === kickoff.id && r.userId !== demo.id).length, emailed: 9 } };
+    d.notifications.push({ id: nextId('ntf'), userId: demo.id, kind: 'event_followup', title: thanksTitle(kickoff.title), body: thanksBody(undefined, activityById('survey')!.title, TIER_POINTS[3]), read: true, createdAt: kickoffClosed });
+    d.actions.push({ id: 0, actorName: '', action: 'event_followup_sent', details: { title: kickoff.title, attended: 1, missed: d.followups[kickoff.id].missed, emailed: 9, automatic: true }, createdAt: kickoffClosed });
+  }
   d.actions.sort((a, b) => a.createdAt.localeCompare(b.createdAt)).forEach((a, i) => (a.id = i + 1));
   return d;
 }
 
+/** 0026 demo event photos: a tiny pixel picnic scene (sky, sun, grass, blanket, two little people). */
+const PHOTO_IMG = (sky: string, grass: string, variant: number) =>
+  'data:image/svg+xml;utf8,' +
+  encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="360" viewBox="0 0 32 24" shape-rendering="crispEdges"><rect width="32" height="24" fill="${sky}"/><rect x="${24 - variant * 6}" y="2" width="4" height="4" fill="#ffd34d"/><rect x="2" y="5" width="6" height="2" fill="#fff" opacity=".9"/><rect x="4" y="4" width="3" height="1" fill="#fff" opacity=".9"/><rect x="14" y="3" width="5" height="2" fill="#fff" opacity=".8"/><rect y="14" width="32" height="10" fill="${grass}"/><rect x="${3 + variant}" y="9" width="2" height="6" fill="#6b4226"/><rect x="${1 + variant}" y="6" width="6" height="4" fill="#2f7d32"/><rect x="10" y="17" width="12" height="5" fill="#e04848"/><rect x="10" y="17" width="2" height="1" fill="#fff"/><rect x="14" y="17" width="2" height="1" fill="#fff"/><rect x="18" y="17" width="2" height="1" fill="#fff"/><rect x="12" y="19" width="2" height="1" fill="#fff"/><rect x="16" y="19" width="2" height="1" fill="#fff"/><rect x="20" y="19" width="2" height="1" fill="#fff"/><rect x="12" y="12" width="2" height="2" fill="#f1c7a3"/><rect x="11" y="14" width="4" height="4" fill="#3b6fd8"/><rect x="19" y="12" width="2" height="2" fill="#8d5a3b"/><rect x="18" y="14" width="4" height="4" fill="#f2b33d"/><rect x="${25 - variant}" y="18" width="3" height="2" fill="#0b2a5b"/></svg>`,
+  );
+
 // Expose for tests
-export const __test = { queueEventReminders, load, pointsOf, rankedParticipants, setSession, addLedger, deliverOutbox, badgesFor, unlocksFor, shoutoutSync, staffStats, staffUnlocksFor, legendaryFor, streakFor };
+export const __test = { queueEventReminders, queueEventFollowups, load, pointsOf, rankedParticipants, setSession, addLedger, deliverOutbox, badgesFor, unlocksFor, shoutoutSync, staffStats, staffUnlocksFor, legendaryFor, streakFor };
 
 // ───────────────────────────── team (chairs only) ─────────────────────────────
 
@@ -1793,7 +1886,20 @@ interface MonthLeader {
  * SERVER RULE (monthly_standings, 0012): each America/New_York calendar month's leader among participants,
  * counting positive ledger rows only. Ties → reached the total first, then display name, then id.
  */
+/** 0025: set while one call computes badges for everyone (Stats, participants export), so the month tally runs once. */
+let leadersCache: Map<string, MonthLeader> | null = null;
+/** Runs `fn` with the month leaders computed once. */
+function withLeadersCached<T>(fn: () => T): T {
+  leadersCache = monthLeaders();
+  try {
+    return fn();
+  } finally {
+    leadersCache = null;
+  }
+}
+
 function monthLeaders(): Map<string, MonthLeader> {
+  if (leadersCache) return leadersCache;
   const d = load();
   const people = new Map(d.users.filter((u) => u.role === 'participant').map((u) => [u.id, u]));
   const cur = monthKey(now());
@@ -2234,8 +2340,8 @@ export async function awardGameWin(eventId: string, userId: string, note = ''): 
   const a = activityById('game_win')!;
   const points = TIER_POINTS[a.tier];
   const reason = `${a.title}: ${n}`;
-  addLedger({ userId, amount: points, source: 'manual', activityId: a.id, refId: e.id, reason, createdBy: admin.id });
-  logAction('points_added', u, { amount: points, reason, activityId: a.id }, admin);
+  const ledgerId = addLedger({ userId, amount: points, source: 'manual', activityId: a.id, refId: e.id, reason, createdBy: admin.id });
+  logAction('points_added', u, { amount: points, reason, activityId: a.id, ledgerId }, admin);
   notify(userId, 'points_adjusted', `+${points} pts — ${a.title}`, n);
   save();
   return { points };
@@ -2282,4 +2388,399 @@ function queueEventReminders(nowMs: number = Date.now()): number {
   }
   if (n) save();
   return n;
+}
+
+// ───────────────────────────── 0025: admin tools (staff) ─────────────────────────────
+
+/** SERVER RULE (review_submissions_bulk, 0025): approve each id with review_submission's own rules; partial success is fine. */
+export async function reviewSubmissionsBulk(ids: string[]): Promise<BulkReviewResult> {
+  await delay();
+  const admin = requireRole('admin', 'chair');
+  const unique = [...new Set(ids.filter(Boolean))];
+  if (!unique.length) fail('empty', 'Pick at least one submission.');
+  if (unique.length > 100) fail('too_many', 'Approve at most 100 at a time.');
+  const results: BulkReviewResult['results'] = [];
+  for (const id of unique) {
+    try {
+      reviewSync(admin, id, 'approved');
+      results.push({ id, ok: true });
+    } catch (e) {
+      const err = e instanceof ApiError ? e : new ApiError('error', 'Something went wrong.');
+      results.push({ id, ok: false, code: err.code, message: err.message });
+    }
+  }
+  save();
+  const approved = results.filter((r) => r.ok).length;
+  return { approved, skipped: results.length - approved, results };
+}
+
+/** SERVER RULE (admin_event_checkins, 0025): staff; every check-in, oldest first, with email + avatar. */
+export async function adminEventCheckins(eventId: string): Promise<EventCheckin[]> {
+  await delay(60);
+  requireRole('admin', 'chair');
+  const d = load();
+  if (!d.events.some((e) => e.id === eventId)) fail('not_found', 'That event no longer exists.');
+  return d.ledger
+    .filter((l) => l.source === 'checkin' && l.refId === eventId)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .flatMap((l) => {
+      const u = d.users.find((x) => x.id === l.userId);
+      return u ? [{ userId: u.id, displayName: u.displayName, handle: u.handle, email: u.email, campus: u.campus, avatar: u.avatar, look: u.look, checkedInAt: l.createdAt, points: l.amount }] : [];
+    });
+}
+
+/** SERVER RULE (admin_stats, 0025): staff; participants only. Weeks start Monday (local time in the demo). */
+export async function adminStats(): Promise<AdminStats> {
+  await delay();
+  requireRole('admin', 'chair');
+  const d = load();
+  const t = Date.now();
+  const parts = d.users.filter((u) => u.role === 'participant');
+  const isPart = new Set(parts.map((u) => u.id));
+  const led = d.ledger.filter((l) => isPart.has(l.userId));
+  const totals = pointsByUser();
+  const pts = (id: string) => totals.get(id) ?? 0;
+  const start = new Date(CYCLE.start).getTime();
+  const DAY = 86_400_000;
+  // Monday-start weeks from the cycle's first week to this week.
+  const weeks: { week: string; count: number }[] = [];
+  const iso = (ms: number) => { const x = new Date(ms); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+  for (let w = weekStart(new Date(start).toISOString()); w <= Math.min(t, new Date(CYCLE.end).getTime()); w = weekStart(new Date(w + 8 * DAY).toISOString())) {
+    weeks.push({ week: iso(w), count: 0 });
+  }
+  for (const u of parts) {
+    const c = new Date(u.createdAt).getTime();
+    if (c < start || c > t) continue;
+    const row = weeks.find((x) => x.week === iso(weekStart(u.createdAt)));
+    if (row) row.count++;
+  }
+  const active = (u: User) => led.some((l) => l.userId === u.id && l.amount > 0 && t - new Date(l.createdAt).getTime() < 30 * DAY);
+  const half = Math.floor((PRIZE.goal + 1) / 2);
+  const buckets: [string, number, number][] = [['0', 0, 0], ['1–49', 1, 49], ['50–99', 50, 99], [`100–${half - 1}`, 100, half - 1], [`${half}–249`, half, 249], [`250–${PRIZE.goal - 1}`, 250, PRIZE.goal - 1], [`${PRIZE.goal}+`, PRIZE.goal, Infinity]];
+  const sum = (rows: LedgerEntry[]) => rows.reduce((n, l) => n + l.amount, 0);
+  const pos = led.filter((l) => l.amount > 0);
+  const badgeCounts = new Map<string, number>(BADGES.map((b) => [b.id, 0]));
+  withLeadersCached(() => {
+    for (const u of parts) for (const b of badgesFor(u.id)) if (b.earned) badgeCounts.set(b.id, (badgeCounts.get(b.id) ?? 0) + 1);
+  });
+  const campuses = CAMPUSES.map((c) => {
+    const members = parts.filter((u) => u.campus === c.id);
+    const points = members.reduce((n, u) => n + pts(u.id), 0);
+    return { campus: c.id, members: members.length, active: members.filter(active).length, points, perMember: members.length ? Math.round((points / members.length) * 10) / 10 : 0 };
+  });
+  return {
+    generatedAt: now(),
+    goal: PRIZE.goal,
+    cycle: { name: CYCLE.name, startsAt: CYCLE.start, endsAt: CYCLE.end },
+    totals: {
+      participants: parts.length,
+      active30: parts.filter(active).length,
+      points: parts.reduce((n, u) => n + pts(u.id), 0),
+      checkins: pos.filter((l) => l.source === 'checkin').length,
+      approvals: pos.filter((l) => l.source === 'submission').length,
+    },
+    signupsBefore: parts.filter((u) => new Date(u.createdAt).getTime() < start).length,
+    signupsByWeek: weeks,
+    events: d.events
+      .filter((e) => new Date(e.startsAt).getTime() <= t)
+      .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
+      .map((e) => {
+        const came = pos.filter((l) => l.source === 'checkin' && l.refId === e.id).length;
+        // Demo seed events carry a head count (attendeeCount) without check-in rows; staff check-ins never count.
+        const staffRows = d.ledger.filter((l) => l.source === 'checkin' && l.refId === e.id && !isPart.has(l.userId)).length;
+        return { id: e.id, title: e.title, campus: e.campus, kind: e.kind, startsAt: e.startsAt, going: d.rsvps.filter((r) => r.eventId === e.id && isPart.has(r.userId)).length, came: Math.max(came, e.attendeeCount - staffRows) };
+      }),
+    campuses,
+    milestones: [50, 100, half, 250, PRIZE.goal].map((p) => ({ points: p, count: parts.filter((u) => pts(u.id) >= p).length })),
+    distribution: buckets.map(([label, lo, hi]) => ({ label, min: lo, count: parts.filter((u) => { const p = Math.max(0, pts(u.id)); return p >= lo && p <= hi; }).length })),
+    sources: {
+      event: sum(pos.filter((l) => l.source === 'checkin')),
+      digital: sum(pos.filter((l) => l.source === 'submission')),
+      referral: sum(pos.filter((l) => l.source === 'referral')),
+      staff: sum(pos.filter((l) => l.source === 'manual')),
+      removed: -sum(led.filter((l) => l.amount < 0)),
+      // Demo only: points the seed gave out "earlier this cycle".
+      other: sum(pos.filter((l) => l.source === 'seed')),
+    },
+    badges: [...badgeCounts.entries()].map(([id, count]) => ({ id, count })).sort((a, b) => b.count - a.count || BADGES.findIndex((x) => x.id === a.id) - BADGES.findIndex((x) => x.id === b.id)),
+  };
+}
+
+/** SERVER RULE (admin_participants_export, 0025): YACquest Chairs only; every participant. */
+export async function adminParticipantsExport(): Promise<ParticipantExportRow[]> {
+  await delay();
+  requireRole('chair');
+  const d = load();
+  const totals = pointsByUser();
+  return withLeadersCached(() => d.users
+    .filter((u) => u.role === 'participant')
+    .sort((a, b) => a.displayName.toLowerCase().localeCompare(b.displayName.toLowerCase()))
+    .map((u) => ({
+      displayName: u.displayName,
+      handle: u.handle,
+      email: u.email,
+      campus: u.campus,
+      points: totals.get(u.id) ?? 0,
+      badges: badgesFor(u.id).filter((b) => b.earned).map((b) => b.id),
+      eventsAttended: new Set(d.ledger.filter((l) => l.userId === u.id && l.source === 'checkin' && l.amount > 0).map((l) => l.refId)).size,
+      joinedAt: u.createdAt,
+      emailOptIn: u.emailOptIn,
+    })));
+}
+
+const nameOf = (id: string) => load().users.find((u) => u.id === id)?.displayName ?? 'Former staff';
+
+/** SERVER RULE (list_announcement_templates, 0025): staff see every template; delete your own, YACquest Chairs any. */
+export async function listAnnouncementTemplates(): Promise<AnnouncementTemplate[]> {
+  await delay(60);
+  const u = requireRole('admin', 'chair');
+  return (load().templates ?? [])
+    .slice()
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map((t) => ({ id: t.id, title: t.title, body: t.body, authorName: nameOf(t.createdBy), createdAt: t.createdAt, canDelete: t.createdBy === u.id || u.role === 'chair' }));
+}
+
+export async function saveAnnouncementTemplate(title: string, body: string): Promise<AnnouncementTemplate> {
+  await delay();
+  const u = requireRole('admin', 'chair');
+  const ti = title.trim();
+  const bo = body.trim();
+  if (!ti || ti.length > 80) fail('title', 'Give the template a name (up to 80 characters).');
+  if (!bo || bo.length > 1000) fail('body', 'The template message must be 1–1000 characters.');
+  const d = load();
+  const list = (d.templates ??= []);
+  if (list.filter((t) => t.createdBy === u.id).length >= 30) fail('too_many', 'You have 30 saved templates. Delete one first.');
+  const t = { id: nextId('tpl'), title: ti, body: bo, createdBy: u.id, createdAt: now() };
+  list.push(t);
+  save();
+  return { id: t.id, title: ti, body: bo, authorName: u.displayName, createdAt: t.createdAt, canDelete: true };
+}
+
+export async function deleteAnnouncementTemplate(id: string): Promise<void> {
+  await delay();
+  const u = requireRole('admin', 'chair');
+  const d = load();
+  const t = (d.templates ?? []).find((x) => x.id === id);
+  if (!t) return fail('not_found', 'That template was already deleted.');
+  if (t.createdBy !== u.id && u.role !== 'chair') fail('forbidden', 'You can only delete your own templates.');
+  d.templates = (d.templates ?? []).filter((x) => x.id !== id);
+  save();
+}
+
+/** SERVER RULE (list_player_notes, 0025): staff only (participants never see notes, not even about themselves). */
+export async function listPlayerNotes(userId: string): Promise<PlayerNote[]> {
+  await delay(60);
+  const u = requireRole('admin', 'chair');
+  return (load().playerNotes ?? [])
+    .filter((n) => n.userId === userId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map((n) => ({ id: n.id, body: n.body, authorName: nameOf(n.authorId), createdAt: n.createdAt, canDelete: n.authorId === u.id || u.role === 'chair' }));
+}
+
+export async function addPlayerNote(userId: string, body: string): Promise<PlayerNote> {
+  await delay();
+  const u = requireRole('admin', 'chair');
+  const d = load();
+  const target = d.users.find((x) => x.id === userId);
+  if (!target) return fail('not_found', 'That person wasn’t found.');
+  const b = body.trim();
+  if (!b) fail('body', 'Write a note first.');
+  if (b.length > 500) fail('body', 'Keep notes to 500 characters.');
+  const n = { id: nextId('note'), userId, authorId: u.id, body: b, createdAt: now() };
+  (d.playerNotes ??= []).push(n);
+  logAction('player_note_added', target, { noteId: n.id, length: b.length }, u);
+  save();
+  return { id: n.id, body: b, authorName: u.displayName, createdAt: n.createdAt, canDelete: true };
+}
+
+export async function deletePlayerNote(id: string): Promise<void> {
+  await delay();
+  const u = requireRole('admin', 'chair');
+  const d = load();
+  const n = (d.playerNotes ?? []).find((x) => x.id === id);
+  if (!n) return fail('not_found', 'That note was already deleted.');
+  if (n.authorId !== u.id && u.role !== 'chair') fail('forbidden', 'You can only delete your own notes.');
+  d.playerNotes = (d.playerNotes ?? []).filter((x) => x.id !== id);
+  logAction('player_note_deleted', d.users.find((x) => x.id === n.userId), { noteId: n.id, authorName: nameOf(n.authorId) }, u);
+  save();
+}
+
+/** SERVER RULE (undo_points_change, 0025): manual rows only, once each, current cycle; appends −amount. */
+export async function undoPointsChange(ledgerId: string): Promise<{ amount: number }> {
+  await delay();
+  const admin = requireRole('admin', 'chair');
+  const d = load();
+  const o = d.ledger.find((l) => l.id === ledgerId);
+  if (!o) return fail('not_found', 'That points change wasn’t found.');
+  if (o.source !== 'manual') fail('not_manual', 'Only manual points changes (adjustments and awards) can be undone.');
+  if (o.refId?.startsWith('undo:')) fail('not_manual', 'That row is already an undo.');
+  if (d.ledger.some((l) => l.source === 'manual' && l.refId === `undo:${o.id}`)) fail('already_undone', 'That change was already undone.');
+  const u = d.users.find((x) => x.id === o.userId);
+  const reason = `Undo: ${o.reason || 'points change'}`;
+  const amount = -o.amount;
+  const newId = addLedger({ userId: o.userId, amount, source: 'manual', refId: `undo:${o.id}`, reason, createdBy: admin.id });
+  logAction(amount > 0 ? 'points_added' : 'points_removed', u, { amount, reason, activityId: null, ledgerId: newId, undoOf: o.id }, admin);
+  notify(o.userId, 'points_adjusted', `${amount > 0 ? '+' : ''}${amount} pts from ${admin.displayName}`, reason);
+  save();
+  return { amount };
+}
+
+// ───────────────────────────── 0026: participant extras ─────────────────────────────
+
+function followupStatus(eventId: string): EventFollowupStatus | undefined {
+  const f = load().followups?.[eventId];
+  if (!f) return undefined;
+  return { sentAt: f.sentAt, automatic: !f.sentBy, sentByName: f.sentBy ? nameOf(f.sentBy) : undefined, attended: f.attended, missed: f.missed, emailed: f.emailed };
+}
+
+/**
+ * SERVER RULE (send_followup_for_event, 0026): once per event. Everyone who checked in gets "Thanks for
+ * coming" (survey link + the Feedback Survey quest); everyone who RSVP'd but didn't check in gets "Sorry
+ * we missed you" + the next event for their campus. Emails only for people with email updates on.
+ */
+function sendFollowup(e: YacEvent, nowMs: number, by?: User): EventFollowupStatus | null {
+  const d = load();
+  if (!d.followups) d.followups = {};
+  if (d.followups[e.id]) return null;
+  const quest = activityById('survey')!;
+  const pts = TIER_POINTS[quest.tier];
+  let attended = 0;
+  let missed = 0;
+  let emailed = 0;
+  const footer = 'You get this because you have email updates on in YACquest (turn them off in Me → Settings).';
+  const attendees = [...new Set(d.ledger.filter((l) => l.source === 'checkin' && l.refId === e.id).map((l) => l.userId))];
+  for (const id of attendees) {
+    const u = d.users.find((x) => x.id === id);
+    if (!u) continue;
+    notify(u.id, 'event_followup', thanksTitle(e.title), thanksBody(e.surveyUrl, quest.title, pts));
+    attended++;
+    if (u.emailOptIn) {
+      const survey = e.surveyUrl ? `Tell us how it went: ${e.surveyUrl}\n\nCompleting the survey counts` : 'When YAC shares the feedback survey, completing it counts';
+      const text = `Thanks for coming to ${e.title}!\n\n${survey} as the "${quest.title}" digital quest: send a screenshot of the confirmation in YACquest → Quests for ${pts} points.\n\n${footer}`;
+      const button = e.surveyUrl ? `<p style="margin:0 0 12px"><a href="${esc(e.surveyUrl)}" style="display:inline-block;background:#f2b33d;color:#0b2a5b;font-weight:700;padding:10px 14px;text-decoration:none">Take the feedback survey</a></p>` : '';
+      const html = emailHtml(`Thanks for coming to ${e.title}!`, `<p style="font-size:16px;margin:0 0 10px">Thanks for coming to <b>${esc(e.title)}</b>! 🐂</p>${button}<p style="margin:0 0 12px">Completing the feedback survey counts as the <b>${esc(quest.title)}</b> digital quest: send a screenshot of the confirmation in YACquest → Quests for <b>${pts} points</b>.</p><p style="font-size:12px;color:#4a5672;margin:0">${esc(footer)}</p>`);
+      if (enqueueEmail('event_followup', [u.email], `Thanks for coming to ${e.title}!`, text, html, `followup:${e.id}:${u.id}`)) emailed++;
+    }
+  }
+  for (const r of d.rsvps.filter((x) => x.eventId === e.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+    if (attendees.includes(r.userId)) continue;
+    const u = d.users.find((x) => x.id === r.userId);
+    if (!u) continue;
+    const next = nextEventFor(d.events, u.campus, nowMs, e.id);
+    const body = missedBody(next);
+    notify(u.id, 'event_followup', missedTitle(e.title), body);
+    missed++;
+    if (u.emailOptIn) {
+      const html = emailHtml(missedTitle(e.title), `<p style="font-size:16px;margin:0 0 10px">We missed you at <b>${esc(e.title)}</b>. Hope to see you next time!</p>${next ? `<p style="margin:0 0 12px">Next up: <b>${esc(next.title)}</b> at ${esc(next.location)}</p>` : ''}<p style="font-size:12px;color:#4a5672;margin:0">${esc(footer)}</p>`);
+      if (enqueueEmail('event_followup', [u.email], missedTitle(e.title), `${body}\n\n${footer}`, html, `followup:${e.id}:${u.id}`)) emailed++;
+    }
+  }
+  const sentAt = new Date(nowMs).toISOString();
+  d.followups[e.id] = { sentAt, sentBy: by?.id, attended, missed, emailed };
+  logAction('event_followup_sent', undefined, { eventId: e.id, title: e.title, attended, missed, emailed, automatic: !by }, by ?? null);
+  return followupStatus(e.id)!;
+}
+
+/** SERVER RULE (queue_event_followups, 0026): events whose check-in closed in the last 3 days, once each. */
+function queueEventFollowups(nowMs: number = Date.now()): number {
+  const d = load();
+  let n = 0;
+  for (const e of d.events.slice().sort((a, b) => a.endsAt.localeCompare(b.endsAt))) {
+    if (d.followups?.[e.id] || !followupDue(e, nowMs)) continue;
+    if (sendFollowup(e, nowMs)) n++;
+  }
+  if (n) save();
+  return n;
+}
+
+/** SERVER RULE (send_event_followup_now, 0026): staff, after check-in closes, once per event. */
+export async function sendEventFollowupNow(eventId: string): Promise<EventFollowupStatus> {
+  await delay();
+  const admin = requireRole('admin', 'chair');
+  const e = load().events.find((x) => x.id === eventId);
+  if (!e) return fail('not_found', 'That event no longer exists.');
+  if (load().followups?.[e.id]) fail('already_sent', 'The follow-up for this event was already sent.');
+  if (checkInClosesAt(e) > Date.now()) fail('not_ended', 'Check-in for this event is still open. Send the follow-up after it closes.');
+  const r = sendFollowup(e, Date.now(), admin)!;
+  save();
+  return r;
+}
+
+/** mark_tour_done (0026): the first time is kept. */
+export async function markTourDone(): Promise<void> {
+  await delay(40);
+  const user = me();
+  if (!user.tourDoneAt) user.tourDoneAt = now();
+  save();
+}
+
+/** set_photo_wall_opt_out (0026): true hides ALL of my photos from every photo wall. */
+export async function setPhotoWallOptOut(optOut: boolean): Promise<User> {
+  await delay(80);
+  const user = me();
+  user.photoWallOptOut = optOut;
+  save();
+  return user;
+}
+
+/** SERVER RULE (photo_on_wall, 0026): approved + shared by the owner + not hidden by staff + owner not opted out. */
+function onWall(s: Submission): boolean {
+  const owner = load().users.find((u) => u.id === s.userId);
+  return !!s.eventId && s.status === 'approved' && !!s.shareOnWall && !load().wallHidden?.[s.id] && !!owner && !owner.photoWallOptOut;
+}
+
+/** event_photos (0026): the photo wall for one event, oldest first. Any signed-in person. */
+export async function eventPhotos(eventId: string): Promise<EventPhoto[]> {
+  await delay();
+  const user = me();
+  const d = load();
+  return d.submissions
+    .filter((s) => s.eventId === eventId && onWall(s))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .map((s) => {
+      const u = d.users.find((x) => x.id === s.userId)!;
+      return { id: s.id, imageUrl: s.imageUrl, displayName: u.displayName, campus: u.campus, createdAt: s.createdAt, mine: u.id === user.id };
+    });
+}
+
+/** event_photo_counts (0026): event id → photos on its wall. */
+export async function eventPhotoCounts(): Promise<Record<string, number>> {
+  await delay(60);
+  me();
+  const out: Record<string, number> = {};
+  for (const s of load().submissions) if (s.eventId && onWall(s)) out[s.eventId] = (out[s.eventId] ?? 0) + 1;
+  return out;
+}
+
+/** set_photo_wall_hidden (0026): staff moderation, logged. */
+export async function hideEventPhoto(submissionId: string): Promise<void> {
+  await delay();
+  const admin = requireRole('admin', 'chair');
+  const d = load();
+  const s = d.submissions.find((x) => x.id === submissionId);
+  if (!s || !s.eventId) return fail('not_found', 'That photo wasn’t found.');
+  if (!d.wallHidden) d.wallHidden = {};
+  if (!d.wallHidden[s.id]) d.wallHidden[s.id] = { at: now(), by: admin.id };
+  const owner = d.users.find((u) => u.id === s.userId);
+  logAction('photo_hidden', owner, { submissionId: s.id, eventId: s.eventId, title: d.events.find((e) => e.id === s.eventId)?.title }, admin);
+  save();
+}
+
+/** my_friends (0026): people who joined with MY code. Safe fields only. */
+export async function myFriends(): Promise<Friend[]> {
+  await delay();
+  const user = me();
+  const d = load();
+  return d.users
+    .filter((u) => u.referredBy === user.id)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map((u) => ({
+      displayName: u.displayName,
+      campus: u.campus,
+      avatar: u.avatar,
+      look: u.look,
+      joinedAt: u.createdAt,
+      came: d.ledger.some((l) => l.userId === u.id && l.source === 'checkin'),
+      bonus: d.ledger.some((l) => l.userId === user.id && l.activityId === 'bring_new_alum' && l.refId === u.id),
+    }));
 }

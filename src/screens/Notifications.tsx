@@ -6,6 +6,7 @@ import { TodayChip } from '../components/TodayEvent';
 import { Empty, ErrorText, Loading, Panel } from '../components/ui';
 import { Card, ShowMore, useShowMore } from '../components/Blocks';
 import { groupByDay } from '../lib/listing';
+import { linkParts } from '../lib/linkify';
 import { timeAgo } from '../lib/format';
 import { useAsync } from '../lib/useAsync';
 import type { NotificationKind } from '../types';
@@ -22,6 +23,8 @@ const KIND: Record<NotificationKind, { icon: string; color: string }> = {
   staff_reward: { icon: '👑', color: 'var(--purple)' },
   // 0024: "⏰ Starts in 1 hour" (RSVP reminder)
   event_reminder: { icon: '📅', color: 'var(--blue-500)' },
+  // 0026: "Thanks for coming" / "Sorry we missed you" after an event
+  event_followup: { icon: '🐂', color: 'var(--green)' },
 };
 
 const NOTE_STEP = 20;
@@ -77,7 +80,9 @@ export default function Notifications() {
                           <b>{n.title}</b>
                           {!n.read && <span className="chip t1">New</span>}
                         </div>
-                        <div style={{ whiteSpace: 'pre-wrap' }}>{n.body}</div>
+                        <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                          {linkParts(n.body).map((p, i) => (p.href ? <a key={i} href={p.href} target="_blank" rel="noreferrer noopener">{p.text}</a> : p.text))}
+                        </div>
                         <div className="muted" style={{ fontSize: 13 }}>{timeAgo(n.createdAt)}</div>
                       </div>
                     </li>

@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import * as api from '../../api';
 import { CAMPUSES, TIER_POINTS, campusName, type CampusId } from '../../config';
 import { EVENT_KINDS, kindInfo, kindPoints, kindTier } from '../../lib/eventKinds';
@@ -8,12 +9,16 @@ import { nextLimit } from '../../lib/listing';
 import { useAuth } from '../../lib/auth';
 import { fmtDateTime } from '../../lib/format';
 import { checkInUrl } from '../../lib/pendingCheckin';
+import { qrDataUrl } from '../../lib/qr';
+import { csvDateTime, csvFilename, downloadCsv, toCsv } from '../../lib/csv';
 import { eventPhase } from '../../lib/adminDashboard';
 import { duplicateForm, editForm, toLocalInput as toLocal, type EventForm as Form } from '../../lib/duplicateEvent';
 import { errorMessage, useAsync } from '../../lib/useAsync';
-import type { AdminEventRsvpCounts, EventAttendee, EventRsvp, YacEvent } from '../../types';
+import { surveyUrlError } from '../../lib/validate';
+import { checkInClosesAt } from '../../lib/followups';
+import type { AdminEventRsvpCounts, EventAttendee, EventFollowupStatus, EventRsvp, YacEvent } from '../../types';
 
-type AdminEvent = YacEvent & AdminEventRsvpCounts;
+type AdminEvent = YacEvent & AdminEventRsvpCounts & { followup?: EventFollowupStatus };
 
 const WORDS = ['YAK', 'MOO', 'HORN', 'QUEST', 'GOLD', 'SHAGGY', 'FJORD', 'RIDGE'];
 const genPassword = () => `${WORDS[Math.floor(Math.random() * WORDS.length)]}-${1000 + Math.floor(Math.random() * 9000)}`;
@@ -52,7 +57,7 @@ export default function Events() {
       const s = new Date(Date.now() + 86400000);
       s.setHours(18, 0, 0, 0);
       const en = new Date(s.getTime() + 2 * 3600000);
-      setForm({ title: '', campus: user?.campus ?? 'duke', kind: 'active', location: '', start: toLocal(s.toISOString()), end: toLocal(en.toISOString()), grace: 60, password: genPassword() });
+      setForm({ title: '', campus: user?.campus ?? 'duke', kind: 'active', location: '', start: toLocal(s.toISOString()), end: toLocal(en.toISOString()), grace: 60, password: genPassword(), surveyUrl: '' });
     } else {
       setForm(editForm(e));
     }
@@ -61,11 +66,17 @@ export default function Events() {
   async function save(ev: FormEvent) {
     ev.preventDefault();
     if (!form || !editing) return;
+    const surveyErr = surveyUrlError(form.surveyUrl);
+    if (surveyErr) {
+      setErr(surveyErr);
+      return;
+    }
     setBusy(true);
     setErr(null);
     const input: api.EventInput = {
       title: form.title, campus: form.campus, crossCampus: form.campus === 'all', kind: form.kind, location: form.location,
       startsAt: new Date(form.start).toISOString(), endsAt: new Date(form.end).toISOString(), checkInGraceMinutes: form.grace, password: form.password,
+      surveyUrl: form.surveyUrl.trim() || undefined,
     };
     try {
       if (editing === 'new') await api.createEvent(input);
@@ -116,7 +127,10 @@ export default function Events() {
                   <br />Tier {kindTier(e.kind)} · {kindInfo(e.kind).label} (+{kindPoints(e.kind)})
                   <br />🔑 <span className="adm-pw">{e.password}</span> · <b>{e.goingCount}</b> going · <b>{e.attendeeCount}</b> came
                   {p === 'Past' && e.goingCount > 0 && <> · {e.goingCount - e.rsvpCame} RSVP’d but didn’t come</>}
+                  {e.surveyUrl && <><br />📝 Survey: <a href={e.surveyUrl} target="_blank" rel="noreferrer noopener" className="adm-survey">{e.surveyUrl.replace(/^https?:\/\//i, '')}</a></>}
                 </div>
+                {p === 'Past' && <FollowupRow e={e} onSent={() => void list.reload()} />}
+                <Link to={`/admin/door/${e.id}`} state={{ from: '/admin/events' }} className="btn small block door-btn" aria-label={`Door mode for ${e.title}`}>🚪 Door mode</Link>
                 <div className="btn-row three">
                   <button className="btn small blue" onClick={() => setWhoGoing(e)} aria-label={`Who’s going (${e.goingCount})`}>Going {e.goingCount}</button>
                   <button className="btn small" onClick={() => setWhoCame(e)} aria-label={`Who came (${e.attendeeCount})`}>Came {e.attendeeCount}</button>
@@ -174,6 +188,12 @@ export default function Events() {
             <label className="field"><span>Ends</span><input className="input" type="datetime-local" value={form.end} onChange={(e) => set('end', e.target.value)} required /></label>
             <label className="field"><span>Check-in grace (minutes after end)</span><input className="input" type="number" min={0} value={form.grace} onChange={(e) => set('grace', Number(e.target.value))} /></label>
             <label className="field">
+              <span>Survey link <small className="muted" style={{ fontFamily: 'var(--font-body)', letterSpacing: 0, fontSize: 12 }}>· optional</small></span>
+              <input className="input" type="url" inputMode="url" placeholder="https://forms.gle/…" value={form.surveyUrl} onChange={(e) => set('surveyUrl', e.target.value)} maxLength={500} aria-invalid={!!surveyUrlError(form.surveyUrl) || undefined} />
+              <small className="muted">Sent in the automatic “Thanks for coming” follow-up after check-in closes. Filling it out counts as the Feedback Survey quest.</small>
+              {form.surveyUrl.trim() && surveyUrlError(form.surveyUrl) && <ErrorText error={surveyUrlError(form.surveyUrl)} />}
+            </label>
+            <label className="field">
               <span>Event password</span>
               <div className="row">
                 <input className="input" value={form.password} onChange={(e) => set('password', e.target.value)} required />
@@ -201,7 +221,6 @@ async function copyText(text: string, toast: ReturnType<typeof useToast>, what: 
   }
 }
 
-const csvCell = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
 
 /** Admin → Events → Who came: everyone who checked in, oldest first, with a quick "🏆 Game win" award per person. */
 function Attendees({ e, onClose }: { e: YacEvent; onClose: () => void }) {
@@ -214,7 +233,22 @@ function Attendees({ e, onClose }: { e: YacEvent; onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const rows = list.data ?? [];
   const won = (id: string) => awarded.has(id) || !!wins.data?.includes(id);
-  const csv = ['name,username,campus,checked_in', ...rows.map((a) => [a.displayName, '@' + a.handle, campusName(a.campus), fmtDateTime(a.checkedInAt)].map(csvCell).join(','))].join('\n');
+  const csv = toCsv(['name', 'username', 'campus', 'checked_in'], rows.map((a) => [a.displayName, a.handle, campusName(a.campus), fmtDateTime(a.checkedInAt)]));
+  const [dl, setDl] = useState(false);
+  async function download() {
+    setDl(true);
+    try {
+      const full = await api.adminEventCheckins(e.id);
+      downloadCsv(
+        csvFilename('who-came', e.title),
+        toCsv(['name', 'handle', 'email', 'campus', 'checked_in', 'points'], full.map((a) => [a.displayName, a.handle, a.email, campusName(a.campus), csvDateTime(a.checkedInAt), a.points])),
+      );
+    } catch (x) {
+      toast(errorMessage(x), 'error');
+    } finally {
+      setDl(false);
+    }
+  }
 
   function ask(userId: string) {
     setConfirming(userId);
@@ -269,8 +303,9 @@ function Attendees({ e, onClose }: { e: YacEvent; onClose: () => void }) {
       )}
       <div className="btn-row">
         <button className="btn ghost" onClick={onClose}>Close</button>
-        <button className="btn" disabled={!rows.length} onClick={() => copyText(csv, toast, 'List')}>Copy list</button>
+        <button className="btn blue" disabled={!rows.length} onClick={() => copyText(csv, toast, 'List')}>Copy list</button>
       </div>
+      <button className="btn small ghost block" disabled={!rows.length || dl} onClick={() => void download()}>{dl ? 'Preparing…' : '⬇ Download CSV (with emails)'}</button>
     </div>
   );
 }
@@ -281,7 +316,12 @@ export function Going({ e, past, onClose }: { e: YacEvent; past: boolean; onClos
   const list = useAsync<EventRsvp[]>(() => api.adminEventRsvps(e.id), [e.id]);
   const rows = list.data ?? [];
   const came = rows.filter((r) => r.checkedIn).length;
-  const csv = ['name,username,campus,email,rsvp_at,came', ...rows.map((r) => [r.displayName, '@' + r.handle, campusName(r.campus), r.email, fmtDateTime(r.rsvpAt), r.checkedIn ? 'yes' : 'no'].map(csvCell).join(','))].join('\n');
+  const csv = toCsv(['name', 'username', 'campus', 'email', 'rsvp_at', 'came'], rows.map((r) => [r.displayName, r.handle, campusName(r.campus), r.email, fmtDateTime(r.rsvpAt), r.checkedIn]));
+  const download = () =>
+    downloadCsv(
+      csvFilename('whos-going', e.title),
+      toCsv(['name', 'handle', 'email', 'campus', 'rsvp_at', 'came'], rows.map((r) => [r.displayName, r.handle, r.email, campusName(r.campus), csvDateTime(r.rsvpAt), r.checkedIn])),
+    );
   return (
     <div className="stack">
       {rows.length > 0 && (
@@ -304,8 +344,9 @@ export function Going({ e, past, onClose }: { e: YacEvent; past: boolean; onClos
       )}
       <div className="btn-row">
         <button className="btn ghost" onClick={onClose}>Close</button>
-        <button className="btn" disabled={!rows.length} onClick={() => copyText(csv, toast, 'List')}>Copy list</button>
+        <button className="btn blue" disabled={!rows.length} onClick={() => copyText(csv, toast, 'List')}>Copy list</button>
       </div>
+      <button className="btn small ghost block" disabled={!rows.length} onClick={download}>⬇ Download CSV</button>
     </div>
   );
 }
@@ -320,8 +361,7 @@ export function CheckInQr({ e, onClose }: { e: YacEvent; onClose: () => void }) 
     let alive = true;
     setImg(null);
     // Lazy-loaded so the QR library stays out of the main bundle.
-    import('qrcode')
-      .then((QR) => QR.toDataURL(url, { width: 640, margin: 2, errorCorrectionLevel: 'M', color: { dark: '#0b2a5bff', light: '#ffffffff' } }))
+    qrDataUrl(url)
       .then((d) => alive && setImg(d))
       .catch(() => alive && setErr('Couldn’t make the QR code. Share the link below instead.'));
     return () => {
@@ -349,6 +389,63 @@ export function CheckInQr({ e, onClose }: { e: YacEvent; onClose: () => void }) 
         <button className="btn ghost" onClick={onClose}>Close</button>
         <button className="btn" onClick={() => copyText(url, toast, 'Link')}>Copy link</button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * 0026: past events show the automatic follow-up status ("Follow-up sent ✓ <time>"), or — when it didn't go
+ * out (e.g. the event closed before 0026, or more than 3 days ago) — a "Send follow-up now" button for staff.
+ */
+function FollowupRow({ e, onSent }: { e: AdminEvent; onSent: () => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+  const f = e.followup;
+  if (f) {
+    return (
+      <div className="followup-row sent">
+        <span className="chip approved">Follow-up sent ✓</span>
+        <span className="followup-meta">
+          {fmtDateTime(f.sentAt)}{f.automatic ? ' · automatic' : f.sentByName ? ` · by ${f.sentByName}` : ''}
+          <br />{f.attended} thanked · {f.missed} missed-you{f.emailed ? ` · ${f.emailed} emailed` : ''}
+        </span>
+      </div>
+    );
+  }
+  if (checkInClosesAt(e) > Date.now()) return null;
+  async function send() {
+    setBusy(true);
+    try {
+      const r = await api.sendEventFollowupNow(e.id);
+      toast(`Follow-up sent: ${r.attended} thanked, ${r.missed} missed-you.`, 'success');
+      setConfirm(false);
+      onSent();
+    } catch (x) {
+      toast(errorMessage(x), 'error');
+      if ((x as { code?: string }).code === 'already_sent') onSent();
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="followup-row">
+      {confirm ? (
+        <>
+          <p className="followup-meta" style={{ margin: 0 }}>
+            Send “Thanks for coming” to the {e.attendeeCount} who checked in{e.goingCount - e.rsvpCame > 0 ? ` and “Sorry we missed you” to ${e.goingCount - e.rsvpCame} RSVP no-shows` : ''}? Emails go only to people with email updates on. Once per event.
+          </p>
+          <div className="btn-row">
+            <button type="button" className="btn small ghost" disabled={busy} onClick={() => setConfirm(false)}>Cancel</button>
+            <button type="button" className="btn small green" disabled={busy} onClick={send}>{busy ? 'Sending…' : 'Send now'}</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <span className="followup-meta">No follow-up sent yet.</span>
+          <button type="button" className="btn small blue" onClick={() => setConfirm(true)}>✉ Send follow-up now</button>
+        </>
+      )}
     </div>
   );
 }

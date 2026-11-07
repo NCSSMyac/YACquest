@@ -12,7 +12,7 @@ import { BADGES } from '../lib/badges';
 import { STAFF_BADGES } from '../lib/staffRewards';
 import { NAME_NOT_ALLOWED, nameIsClean } from '../lib/nameFilter';
 import { getSupabase, siteUrl } from '../lib/supabase';
-import { announcementError, claimContactError, isEmail } from '../lib/validate';
+import { announcementError, claimContactError, cleanSurveyUrl, isEmail, surveyUrlError } from '../lib/validate';
 import type {
   Activity,
   AdminAction,
@@ -57,6 +57,15 @@ import type {
   EventRsvpInfo,
   QuestRecap,
   Streak,
+  AdminStats,
+  AnnouncementTemplate,
+  BulkReviewResult,
+  EventCheckin,
+  ParticipantExportRow,
+  PlayerNote,
+  EventFollowupStatus,
+  EventPhoto,
+  Friend,
 } from '../types';
 import { ApiError, emitChange } from './shared';
 import type { AdminOverview, AdminUserRow, EventInput, QueueItem, SignupInput, SignupResult, TeamMember } from './shared';
@@ -168,6 +177,9 @@ function toUser(r: AnyRow, emailVerified?: boolean): User {
     emailOptIn: pick(r, 'email_opt_in') !== false,
     emailVerified,
     look: toLook(r),
+    // 0026: only when the row has the columns (undefined = server without 0026 → the app falls back to this device).
+    ...('tour_done_at' in r ? { tourDoneAt: opt(r.tour_done_at) ?? null } : {}),
+    ...('photo_wall_opt_out' in r ? { photoWallOptOut: r.photo_wall_opt_out === true } : {}),
   };
 }
 
@@ -312,9 +324,19 @@ async function uid(): Promise<string> {
   return s.user.id;
 }
 
+/** 0026 profile columns. Read separately-tolerant: a server without 0026 just doesn't return them. */
+const PROFILE_COLS_0026: string = `${PROFILE_COLS}, tour_done_at, photo_wall_opt_out`;
+let has0026Cols = true;
+
 async function loadProfile(authUser: AuthUser): Promise<User | null> {
-  const row = rows(await sb().from('profiles').select(PROFILE_COLS).eq('id', authUser.id).maybeSingle());
-  me = row ? toUser(row as AnyRow, Boolean(authUser.email_confirmed_at)) : null;
+  const cols: string = has0026Cols ? PROFILE_COLS_0026 : PROFILE_COLS;
+  let res = await sb().from('profiles').select(cols).eq('id', authUser.id).maybeSingle();
+  if (res.error && has0026Cols && /tour_done_at|photo_wall_opt_out|42703/.test(`${(res.error as { code?: string }).code} ${res.error.message}`)) {
+    has0026Cols = false;
+    res = await sb().from('profiles').select(PROFILE_COLS).eq('id', authUser.id).maybeSingle();
+  }
+  const row = rows(res) as unknown as AnyRow | null;
+  me = row ? toUser(row, Boolean(authUser.email_confirmed_at)) : null;
   return me;
 }
 
@@ -516,10 +538,12 @@ export async function updateProfile(patch: Partial<Pick<User, 'displayName' | 'a
       p_email_opt_in: patch.emailOptIn ?? null,
     }),
   );
-  const prevLook = me?.look;
+  const prev = me;
   me = row ? toUser(row, Boolean(s?.user.email_confirmed_at)) : await requireMe();
   // Older update_profile versions don't return the look columns: keep what we had.
-  if (row && !('hat' in row) && !('accessory' in row) && !('background' in row)) me = { ...me, look: prevLook };
+  if (row && !('hat' in row) && !('accessory' in row) && !('background' in row)) me = { ...me, look: prev?.look };
+  // update_profile doesn't return the 0026 columns: keep what we had.
+  if (prev && prev.id === me.id) me = { ...me, tourDoneAt: me.tourDoneAt === undefined ? prev.tourDoneAt : me.tourDoneAt, photoWallOptOut: me.photoWallOptOut ?? prev.photoWallOptOut };
   notifyAuth(me);
   emitChange();
   return me;
@@ -704,7 +728,7 @@ function dataUrlToBlob(dataUrl: string): Blob {
   return new Blob([decodeURIComponent(payload)], { type: mime });
 }
 
-export async function submitProof(input: { activityId: string; eventId?: string; imageDataUrl: string; note: string }): Promise<Submission> {
+export async function submitProof(input: { activityId: string; eventId?: string; imageDataUrl: string; note: string; shareOnWall?: boolean }): Promise<Submission> {
   if (!input.imageDataUrl.startsWith('data:image/')) fail('file_type', 'Unsupported file. Please upload a JPG, PNG or WebP image.');
   if (input.note.length > 280) fail('note', 'Keep the note under 280 characters.');
   const userId = await uid();
@@ -729,8 +753,19 @@ export async function submitProof(input: { activityId: string; eventId?: string;
         p_note: input.note.trim(),
       }),
     );
+    const sub = toSubmission(row ?? {}, input.imageDataUrl);
+    // 0026: "Show my photo on the event photo wall" (default off). If this fails (e.g. no 0026 yet) the photo
+    // simply stays off the wall — the safe default — and the submission itself still went through.
+    if (input.shareOnWall && input.activityId === 'event_photos' && sub.id) {
+      try {
+        await rpc('set_submission_wall_share', { p_id: sub.id, p_share: true });
+        sub.shareOnWall = true;
+      } catch (e) {
+        console.error('[YACquest] could not share the photo on the wall', e);
+      }
+    }
     emitChange();
-    return toSubmission(row ?? {}, input.imageDataUrl);
+    return sub;
   } catch (e) {
     void sb().storage.from('proofs').remove([path]).catch(() => {});
     throw e;
@@ -922,17 +957,40 @@ export async function awardActivity(userId: string, activityId: string, note: st
   emitChange();
 }
 
-export async function adminListEvents(): Promise<(YacEvent & AdminEventRsvpCounts)[]> {
-  const [list, counts] = await Promise.all([
+export async function adminListEvents(): Promise<(YacEvent & AdminEventRsvpCounts & { followup?: EventFollowupStatus })[]> {
+  const [list, counts, surveys, followups] = await Promise.all([
     rpc<AnyRow[]>('admin_list_events'),
     // 0022 (admins + chairs): RSVP counts per event. Zeros if the server doesn't have 0022 yet.
     rpc<AnyRow[] | null>('admin_event_rsvp_counts').catch(() => [] as AnyRow[]),
+    // 0026: survey links + follow-up status. Nothing if the server doesn't have 0026 yet.
+    sb().from('events').select('id, survey_url').not('survey_url', 'is', null).limit(1000).then((r) => (r.error ? [] : ((r.data as AnyRow[] | null) ?? [])), () => [] as AnyRow[]),
+    rpc<AnyRow[] | null>('admin_event_followups').catch(() => [] as AnyRow[]),
   ]);
   const byId = new Map((counts ?? []).map((r) => [str(pick(r, 'event_id')), r]));
+  const survey = new Map(surveys.map((r) => [str(r.id), str(r.survey_url)]));
+  const sent = new Map((followups ?? []).map((r) => [str(pick(r, 'event_id')), toFollowup(r)]));
   return (list ?? []).map(toEvent).map((e) => {
     const c = byId.get(e.id);
-    return { ...e, goingCount: c ? num(c.going) : 0, rsvpCame: c ? num(pick(c, 'going_came')) : 0 };
+    const f = sent.get(e.id);
+    return {
+      ...e,
+      ...(survey.get(e.id) ? { surveyUrl: survey.get(e.id) } : {}),
+      goingCount: c ? num(c.going) : 0,
+      rsvpCame: c ? num(pick(c, 'going_came')) : 0,
+      ...(f ? { followup: f } : {}),
+    };
   });
+}
+
+function toFollowup(r: AnyRow): EventFollowupStatus {
+  return {
+    sentAt: str(pick(r, 'sent_at')),
+    automatic: pick(r, 'automatic') === true,
+    sentByName: opt(pick(r, 'sent_by_name')),
+    attended: num(r.attended),
+    missed: num(r.missed),
+    emailed: num(r.emailed),
+  };
 }
 
 /** admin_event_attendees (0013) → who checked in, oldest first. Admins + chairs. */
@@ -949,6 +1007,8 @@ export async function adminEventAttendees(eventId: string): Promise<EventAttende
 
 function validateEvent(input: EventInput) {
   if (input.title.trim().length < 3) fail('title', 'Give the event a title.');
+  const surveyErr = surveyUrlError(input.surveyUrl);
+  if (surveyErr) fail('surveyUrl', surveyErr);
   if (input.password.trim().length < 4) fail('password', 'Event password: at least 4 characters.');
   if (new Date(input.endsAt) <= new Date(input.startsAt)) fail('endsAt', 'End time must be after the start.');
 }
@@ -963,6 +1023,8 @@ const eventJson = (input: EventInput) => ({
   endsAt: input.endsAt,
   checkInGraceMinutes: input.checkInGraceMinutes,
   password: input.password.trim(),
+  // 0026 (ignored by a server without 0026)
+  surveyUrl: cleanSurveyUrl(input.surveyUrl) ?? '',
 });
 
 export async function createEvent(input: EventInput): Promise<YacEvent> {
@@ -1452,4 +1514,215 @@ export async function awardGameWin(eventId: string, userId: string, note = ''): 
 export async function adminEventGameWins(eventId: string): Promise<string[]> {
   const res = rows(await sb().from('ledger').select('user_id').eq('source', 'manual').eq('activity_id', 'game_win').eq('ref_id', eventId).limit(500)) as AnyRow[];
   return [...new Set((res ?? []).map((r) => str(r.user_id)))];
+}
+
+// ───────────────────────────── 0025: admin tools (staff) ─────────────────────────────
+
+/** review_submissions_bulk (0025): approve many at once; each id runs review_submission's own rules. Partial success is normal. */
+export async function reviewSubmissionsBulk(ids: string[]): Promise<BulkReviewResult> {
+  if (!ids.length) fail('empty', 'Pick at least one submission.');
+  if (ids.length > 100) fail('too_many', 'Approve at most 100 at a time.');
+  const r = (one(await rpc<AnyRow | AnyRow[] | null>('review_submissions_bulk', { p_ids: ids })) ?? {}) as AnyRow;
+  emitChange();
+  const results = Array.isArray(r.results) ? (r.results as AnyRow[]) : [];
+  return {
+    approved: num(r.approved),
+    skipped: num(r.skipped),
+    results: results.map((x) => ({ id: str(x.id), ok: x.ok === true, code: opt(x.code), message: opt(x.message) })),
+  };
+}
+
+/** admin_event_checkins (0025) → who checked in, oldest first, with email + avatar (Door mode, Who came CSV). */
+export async function adminEventCheckins(eventId: string): Promise<EventCheckin[]> {
+  return ((await rpc<AnyRow[]>('admin_event_checkins', { p_event_id: eventId })) ?? []).map((r) => ({
+    userId: str(pick(r, 'user_id')),
+    displayName: str(pick(r, 'display_name')),
+    handle: str(r.handle),
+    email: str(r.email),
+    campus: str(r.campus) as CampusId,
+    avatar: (opt(r.avatar) ?? 'yak') as AvatarId,
+    look: toLook(r),
+    checkedInAt: str(pick(r, 'checked_in_at')),
+    points: num(r.points),
+  }));
+}
+
+const arr = (v: unknown): AnyRow[] => (Array.isArray(v) ? (v as AnyRow[]) : []);
+
+/** admin_stats (0025) → everything on Admin → Stats in one call. Staff only; participants only in the numbers. */
+export async function adminStats(): Promise<AdminStats> {
+  const r = (one(await rpc<AnyRow | AnyRow[] | null>('admin_stats')) ?? {}) as AnyRow;
+  const cyc = (r.cycle ?? {}) as AnyRow;
+  const tot = (r.totals ?? {}) as AnyRow;
+  const src = (r.sources ?? {}) as AnyRow;
+  return {
+    generatedAt: str(pick(r, 'generated_at')),
+    goal: num(r.goal) || PRIZE.goal,
+    cycle: { name: str(cyc.name), startsAt: str(pick(cyc, 'starts_at')), endsAt: str(pick(cyc, 'ends_at')) },
+    totals: { participants: num(tot.participants), active30: num(tot.active30), points: num(tot.points), checkins: num(tot.checkins), approvals: num(tot.approvals) },
+    signupsBefore: num(pick(r, 'signups_before')),
+    signupsByWeek: arr(pick(r, 'signups_by_week')).map((w) => ({ week: str(w.week), count: num(w.count) })),
+    events: arr(r.events).map((e) => ({
+      id: str(e.id), title: str(e.title), campus: str(e.campus) as CampusId | 'all', kind: str(e.kind),
+      startsAt: str(pick(e, 'starts_at')), going: num(e.going), came: num(e.came),
+    })),
+    campuses: arr(r.campuses).map((c) => ({
+      campus: str(c.campus) as CampusId, members: num(c.members), active: num(c.active), points: num(c.points), perMember: num(pick(c, 'per_member')),
+    })),
+    milestones: arr(r.milestones).map((m) => ({ points: num(m.points), count: num(m.count) })),
+    distribution: arr(r.distribution).map((d) => ({ label: str(d.label), min: num(d.min), count: num(d.count) })),
+    sources: { event: num(src.event), digital: num(src.digital), referral: num(src.referral), staff: num(src.staff), removed: num(src.removed) },
+    badges: arr(r.badges).map((b) => ({ id: str(b.id), count: num(b.count) })),
+  };
+}
+
+/** admin_participants_export (0025) → every participant for the CSV. YACquest Chairs only. */
+export async function adminParticipantsExport(): Promise<ParticipantExportRow[]> {
+  return arr(await rpc<unknown>('admin_participants_export')).map((p) => ({
+    displayName: str(pick(p, 'display_name')),
+    handle: str(p.handle),
+    email: str(p.email),
+    campus: str(p.campus) as CampusId,
+    points: num(p.points),
+    badges: Array.isArray(p.badges) ? (p.badges as unknown[]).map(str) : [],
+    eventsAttended: num(pick(p, 'events_attended')),
+    joinedAt: str(pick(p, 'joined_at')),
+    emailOptIn: pick(p, 'email_opt_in') !== false,
+  }));
+}
+
+function toTemplate(r: AnyRow): AnnouncementTemplate {
+  return {
+    id: str(r.id),
+    title: str(r.title),
+    body: str(r.body),
+    authorName: str(pick(r, 'author_name')),
+    createdAt: str(pick(r, 'created_at')),
+    canDelete: pick(r, 'can_delete') === true,
+  };
+}
+
+export async function listAnnouncementTemplates(): Promise<AnnouncementTemplate[]> {
+  return ((await rpc<AnyRow[]>('list_announcement_templates')) ?? []).map(toTemplate);
+}
+
+export async function saveAnnouncementTemplate(title: string, body: string): Promise<AnnouncementTemplate> {
+  if (!title.trim() || title.trim().length > 80) fail('title', 'Give the template a name (up to 80 characters).');
+  if (!body.trim() || body.trim().length > 1000) fail('body', 'The template message must be 1–1000 characters.');
+  const r = (one(await rpc<AnyRow | AnyRow[] | null>('save_announcement_template', { p_title: title.trim(), p_body: body.trim() })) ?? {}) as AnyRow;
+  emitChange();
+  return toTemplate(r);
+}
+
+export async function deleteAnnouncementTemplate(id: string): Promise<void> {
+  await rpc('delete_announcement_template', { p_id: id });
+  emitChange();
+}
+
+function toNote(r: AnyRow): PlayerNote {
+  return { id: str(r.id), body: str(r.body), authorName: str(pick(r, 'author_name')), createdAt: str(pick(r, 'created_at')), canDelete: pick(r, 'can_delete') === true };
+}
+
+/** list_player_notes (0025) → private staff notes on a player, newest first. Staff only. */
+export async function listPlayerNotes(userId: string): Promise<PlayerNote[]> {
+  return ((await rpc<AnyRow[]>('list_player_notes', { p_user_id: userId })) ?? []).map(toNote);
+}
+
+export async function addPlayerNote(userId: string, body: string): Promise<PlayerNote> {
+  if (!body.trim()) fail('body', 'Write a note first.');
+  if (body.trim().length > 500) fail('body', 'Keep notes to 500 characters.');
+  const r = (one(await rpc<AnyRow | AnyRow[] | null>('add_player_note', { p_user_id: userId, p_body: body.trim() })) ?? {}) as AnyRow;
+  emitChange();
+  return toNote(r);
+}
+
+export async function deletePlayerNote(id: string): Promise<void> {
+  await rpc('delete_player_note', { p_id: id });
+  emitChange();
+}
+
+/** undo_points_change (0025): reverses one manual ledger row with a correcting row (once; this cycle only). */
+export async function undoPointsChange(ledgerId: string): Promise<{ amount: number }> {
+  const id = Number(ledgerId);
+  if (!Number.isInteger(id)) fail('not_found', 'That points change wasn’t found.');
+  const r = (one(await rpc<AnyRow | AnyRow[] | null>('undo_points_change', { p_ledger_id: id })) ?? {}) as AnyRow;
+  emitChange();
+  return { amount: num(r.amount) };
+}
+
+// ───────────────────────────── 0026: participant extras ─────────────────────────────
+
+/** send_event_followup_now (0026): staff, after check-in closes; once per event (`already_sent`, `not_ended`). */
+export async function sendEventFollowupNow(eventId: string): Promise<EventFollowupStatus> {
+  const r = (one(await rpc<AnyRow | AnyRow[] | null>('send_event_followup_now', { p_event_id: eventId })) ?? {}) as AnyRow;
+  emitChange();
+  return { ...toFollowup(r), sentByName: me?.displayName };
+}
+
+/** mark_tour_done (0026). Never throws: the tour is also remembered on this device. */
+export async function markTourDone(): Promise<void> {
+  try {
+    const at = await rpc<string | null>('mark_tour_done');
+    if (me) me = { ...me, tourDoneAt: at ? String(at) : new Date().toISOString() };
+  } catch (e) {
+    console.warn('[YACquest] could not save the welcome tour (server without 0026?)', e);
+  }
+}
+
+/** set_photo_wall_opt_out (0026). */
+export async function setPhotoWallOptOut(optOut: boolean): Promise<User> {
+  await rpc('set_photo_wall_opt_out', { p_opt_out: optOut });
+  const u = await requireMe();
+  me = { ...u, photoWallOptOut: optOut };
+  notifyAuth(me);
+  emitChange();
+  return me;
+}
+
+/**
+ * event_photos (0026): only photos the server allows on the wall. The `proofs` bucket is private; the
+ * storage policy proofs_read_wall lets this signed-in user sign exactly those paths (1 hour).
+ */
+export async function eventPhotos(eventId: string): Promise<EventPhoto[]> {
+  const list = (await rpc<AnyRow[] | null>('event_photos', { p_event_id: eventId })) ?? [];
+  const urls = await signedUrls(list.map((r) => opt(pick(r, 'image_path'))));
+  return list
+    .map((r) => ({
+      id: str(r.id),
+      imageUrl: urls.get(str(pick(r, 'image_path'))) ?? '',
+      displayName: str(pick(r, 'display_name')),
+      campus: str(r.campus) as CampusId,
+      createdAt: str(pick(r, 'created_at')),
+      mine: r.mine === true,
+    }))
+    .filter((p) => p.imageUrl);
+}
+
+/** event_photo_counts (0026) → event id → photos on its wall. Empty if the server doesn't have 0026 yet. */
+export async function eventPhotoCounts(): Promise<Record<string, number>> {
+  try {
+    const list = (await rpc<AnyRow[] | null>('event_photo_counts')) ?? [];
+    return Object.fromEntries(list.map((r) => [str(pick(r, 'event_id')), num(r.photos)]));
+  } catch {
+    return {};
+  }
+}
+
+/** set_photo_wall_hidden (0026): staff hide one photo from the wall (logged). */
+export async function hideEventPhoto(submissionId: string): Promise<void> {
+  await rpc('set_photo_wall_hidden', { p_id: submissionId, p_hidden: true });
+  emitChange();
+}
+
+/** my_friends (0026): people who joined with my friend code. Safe fields only. */
+export async function myFriends(): Promise<Friend[]> {
+  return ((await rpc<AnyRow[] | null>('my_friends')) ?? []).map((r) => ({
+    displayName: str(pick(r, 'display_name')),
+    campus: str(r.campus) as CampusId,
+    avatar: (opt(r.avatar) ?? 'yak') as AvatarId,
+    look: toLook(r),
+    joinedAt: str(pick(r, 'joined_at')),
+    came: r.came === true,
+    bonus: r.bonus === true,
+  }));
 }

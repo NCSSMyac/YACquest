@@ -40,3 +40,19 @@ export function announcementError(a: AnnouncementInput): { code: string; message
   if (a.audience === 'user' && !a.userId) return { code: 'user', message: 'Pick the person to message.' };
   return null;
 }
+
+/** 0026: event survey link — same rule as clean_survey_url() in 0026_participant_extras.sql. */
+export const SURVEY_URL_MAX = 500;
+export const SURVEY_URL_RE = /^https?:\/\/[a-z0-9.-]+\.[a-z]{2,}(:[0-9]{1,5})?([/?#]\S*)?$/i;
+
+/** '' (no link) is fine. Otherwise an http(s) web address, no spaces, ≤ 500 characters. */
+export function surveyUrlError(url: string | undefined | null): string | null {
+  const v = (url ?? '').trim();
+  if (!v) return null;
+  if (v.length > SURVEY_URL_MAX) return 'The survey link is too long (500 characters max).';
+  if (!SURVEY_URL_RE.test(v)) return 'The survey link must be a web address starting with https:// (or http://).';
+  return null;
+}
+
+/** Trimmed survey link, or undefined when empty. */
+export const cleanSurveyUrl = (url: string | undefined | null): string | undefined => (url ?? '').trim() || undefined;

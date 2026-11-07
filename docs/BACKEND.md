@@ -343,3 +343,69 @@ Additive only: no point values, caps or prize rules change.
 
 ### App-only changes (no SQL)
 Home "📅 Today" chip + bell dot (an RSVP'd event today, Eastern time, not yet checked in — from `listEvents()`), full-screen check-in confirmation with a live clock, the "N more points to <next checkpoint>" line, "Start here" tips for brand-new players, campus-color avatar frames on Ranks / Adventurer of the Month, and **Duplicate** on Admin → Events (prefills the New event form one week later with a new password; nothing is saved until Save).
+
+## 0025 — Admin tools (door mode data, bulk approve, stats, exports, templates, staff notes, undo)
+Additive only: no point values, caps or prize rules change. Everything is staff-only (admins + YACquest Chairs) unless noted; participants get `forbidden`, anon can't call anything (execute revoked from `public, anon`, granted to `authenticated`).
+
+### Bulk approve (Admin → Review)
+- `review_submissions_bulk(p_ids uuid[])` → json `{approved, skipped, results: [{id, ok, code?, message?}]}`. Duplicate ids count once (first position kept); 0 ids → `empty`, more than 100 → `too_many`. Each id runs the existing `review_submission(id, 'approved')` inside its own sub-transaction, so its rules apply unchanged (`forbidden` own submission, `already_reviewed`, `not_found`) and one failure never rolls back the others. `message` is the friendly part of the error (no `code:` prefix). Caps are unchanged: they are enforced when proof is uploaded (pending proofs already count toward them), so approving can never push anyone past one. Each approval is logged by the 0004 submissions trigger (`submission_approved`) and notifies the person, exactly like a single approval. Rejections stay one at a time (they need a reason).
+
+### Door mode + Who came CSV
+- `admin_event_checkins(p_event_id uuid)` → table `(user_id, display_name, handle, email, campus, avatar, hat, accessory, background, checked_in_at, points)`, oldest first: the same rows as `admin_event_attendees` (0013) plus email + avatar/look. `not_found` for an unknown event. Door mode polls it (and `admin_event_rsvps`) every ~5 s.
+
+### Stats (Admin → Stats)
+- `admin_stats(p_now timestamptz default null)` → one json. **Participants only** (`role = 'participant'`); staff check-ins, RSVPs, points and sign-ups never count. Current cycle only. `p_now` (default `now()`) exists for tests.
+  - `goal`, `cycle {name, startsAt, endsAt}`, `generatedAt`
+  - `totals {participants, active30, points, checkins, approvals}` — `active30` = earned points (positive ledger row) in the 30 days before `p_now`
+  - `signupsBefore` (joined before the cycle started), `signupsByWeek [{week, count}]` — Monday-start weeks in America/New_York from the cycle's first week to `p_now`'s week (zeros filled)
+  - `events [{id, title, campus, kind, startsAt, going, came}]` — this cycle's events that have started, oldest first; `going` = participant RSVPs, `came` = participant check-ins
+  - `campuses [{campus, members, active, points, perMember}]` (Duke, UNC, NC State; `perMember` rounded to 0.1 like `campus_cup`)
+  - `milestones [{points, count}]` for 50, 100, ⌈goal/2⌉ (175), 250, goal (350): participants at or above
+  - `distribution [{label, min, count}]` buckets 0 · 1–49 · 50–99 · 100–174 · 175–249 · 250–349 · 350+
+  - `sources {event, digital, referral, staff, removed}` — positive points by ledger source (`checkin`, `submission`, `referral`, `manual`) and points removed by negative rows
+  - `badges [{id, count}]` — participants who earned each badge (`badges_for`), most first
+- `admin_participants_export()` → json array, **YACquest Chairs only** (admins: `forbidden`): `{displayName, handle, email, campus, points, badges[], eventsAttended, joinedAt, emailOptIn}` for every participant, by name. The app builds the CSV in the browser.
+
+### Announcement templates (Admin → Announce → Templates ▾)
+- Table `announcement_templates (id, title 1–80, body 1–1000, created_by → profiles on delete set null, created_at)`. RLS on, no policies, no grants.
+- `list_announcement_templates()` → `(id, title, body, created_by, author_name, created_at, can_delete)` newest first (max 200). `save_announcement_template(p_title, p_body)` → json (trimmed; `title` / `body` errors; 30 per person → `too_many`). `delete_announcement_template(p_id)` — your own; YACquest Chairs any (`forbidden`, `not_found`). Placeholders like `{event}` are stored as typed and filled in by the app. Built-in templates live in `src/lib/announceTemplates.ts`, not the database.
+
+### Staff notes on players (Admin → Players)
+- Table `player_notes (id, user_id → profiles on delete cascade, author_id → profiles on delete set null, body 1–500, created_at)`. RLS on, **no policies, no table grants**: participants can never read notes, not even about themselves.
+- `list_player_notes(p_user_id)` → `(id, body, author_id, author_name, created_at, can_delete)` newest first. `add_player_note(p_user_id, p_body)` → json (trimmed; `body` for empty / over 500; `not_found`). `delete_player_note(p_id)` — your own; YACquest Chairs any. Both write the admin action log (`player_note_added` / `player_note_deleted`, details `noteId` (+ `length` / `authorName`) — never the note text).
+
+### Undo a points change
+- `undo_points_change(p_ledger_id bigint)` → json `{ledgerId, undoOf, amount, userId}`. Appends a correcting ledger row: `amount = −original`, `source = 'manual'`, `ref_id = 'undo:<original id>'`, reason `"Undo: <original reason>"`, `created_by` = the staff member; the original row is never edited. Only `source = 'manual'` rows (Adjust points, Award activity, Game win) — else `not_manual`; never an undo row (`not_manual`); only rows in the active cycle (`old_cycle`); once per original (`already_undone`, also enforced by the unique index `ledger_one_undo on ledger (ref_id) where source = 'manual' and ref_id like 'undo:%'`). The usual ledger trigger updates points and the prize race (a winner who drops below the goal loses the spot as with any removal). Undoing a removal gives those exact points back, even above the +`tier1_points` limit for new manual additions (it reverses, it doesn't award). The person is notified (`points_adjusted`, e.g. "-20 pts from Iesha", body "Undo: …").
+- `audit_ledger()` (0004) re-created: same `points_added` / `points_removed` rows, with two extra detail keys: `ledgerId` (so Admin → Log can offer Undo; rows logged before 0025 don't have it) and `undoOf` on undo rows.
+
+### App-only (no SQL)
+Event-day **Door mode** (`#/admin/door/<eventId>`, full screen, lazy-loaded: QR + password, live counter, going/here bar, recent arrivals, Wake Lock + full-screen buttons), the Stats page charts (hand-rolled SVG, lazy-loaded), and client-side CSV files (`src/lib/csv.ts`: quotes commas/quotes/line breaks; text starting with `= + - @`, tab or CR gets a leading `'` so spreadsheets don't run it as a formula).
+
+## 0026 — Participant extras (event follow-ups, welcome tour, photo wall, my friends)
+Additive, safe to re-run, **no points-rule changes**.
+
+### Automatic follow-up after events
+- `events.survey_url` (optional; `http(s)://host.tld…`, no spaces, ≤ 500 chars; check constraint + `clean_survey_url()` raising `surveyUrl: …`). `create_event` / `update_event` (re-created from 0001, otherwise unchanged) read `"surveyUrl"` from the event JSON (`""` clears it); `event_json()` returns `surveyUrl`. The app reads it for staff with `select id, survey_url from events`.
+- Table `event_followups_sent (event_id pk, sent_at, sent_by null = automatic, attended, missed, emailed)` — the once-per-event marker. RLS on, no policies, no grants.
+- `queue_event_followups(p_now default now())` → int. Service role / pg_cron only. Every event whose check-in window (`ends_at + check_in_grace_minutes`) closed **within the last 3 days** and has no marker: (a) everyone who checked in → notification kind `event_followup` "Thanks for coming to <title>! 🐂" with the survey link (if any) and that it counts as the **Complete a Feedback Survey** digital quest (screenshot → Tier 3 points); (b) everyone who RSVP'd but didn't check in → "Sorry we missed you at <title>" + the next upcoming event (their campus or all campuses first, else any; "Sat, Nov 21 at 6:00 PM" Eastern). Email (`email_outbox.kind = 'event_followup'`, dedupe `followup:<event>:<user>`) only for people with `email_opt_in` and a confirmed email. Logged `event_followup_sent` (actor System).
+- Runs with no new setup: `enqueue_weekly_report_if_due()` is re-created (exact copy of 0024) with one more guarded step `0b` calling `queue_event_followups()`; a failure only raises a warning.
+- `send_event_followup_now(p_event_id)` → `{eventId, sentAt, attended, missed, emailed, automatic:false}`. Staff. Errors: `not_found`, `already_sent`, `not_ended` (check-in still open). Logged with the staff member. This is how events older than 3 days (e.g. ones that closed before 0026) get a follow-up.
+- `admin_event_followups()` → `(event_id, sent_at, sent_by_name, automatic, attended, missed, emailed)`. Staff.
+
+### Welcome tour
+- `profiles.tour_done_at` (null = show the tour once) + `mark_tour_done()` → timestamptz (sets it the first time only). Existing accounts start null, so everyone sees the tour once. The app also remembers it per device (fallback on a server without 0026).
+
+### Event photo wall (privacy enforced in the database)
+- `submissions.share_on_wall` (default false; owner sets it with `set_submission_wall_share(p_id, p_share)` — own `event_photos` submissions only: `not_found`, `not_photo`), `submissions.wall_hidden_at / wall_hidden_by` (staff: `set_photo_wall_hidden(p_id, p_hidden default true)`, logged `photo_hidden` / `photo_unhidden`), `profiles.photo_wall_opt_out` (`set_photo_wall_opt_out(p_opt_out)` hides ALL of a person's photos).
+- **On the wall** = approved AND `share_on_wall` AND not hidden AND owner not opted out (`photo_on_wall(image_path)`).
+- `event_photos(p_event_id)` → `(id, image_path, display_name, campus, created_at, mine)`; `event_photo_counts()` → `(event_id, photos)`. Signed-in users only.
+- Storage: the `proofs` bucket stays **private**. New SELECT policy `proofs_read_wall` on `storage.objects`: a signed-in user may read an object only while `photo_on_wall(name)` is true. The app signs those paths with the user's own session (`storage.from('proofs').createSignedUrls(paths, 3600)`, which requires SELECT access), so no service role or Edge Function is involved. Un-sharing, opting out or a staff hide stops new URLs immediately; URLs already handed out expire within 1 hour. The `submissions` table RLS is unchanged (own rows or staff), so nobody can list other people's unapproved photos.
+
+### My friends
+- `my_friends()` → `(display_name, campus, avatar, hat, accessory, background, joined_at, came, bonus)` for profiles with `referred_by = auth.uid()` only. `came` = any event check-in; `bonus` = you got the `bring_new_alum` row for them this cycle. No ids, emails, handles or codes.
+
+### Grants
+Participant/staff RPCs: `revoke … from public, anon; grant … to authenticated`. `queue_event_followups` + `enqueue_weekly_report_if_due`: service_role only. Internal helpers (`clean_survey_url`, `followup_when`, `send_followup_for_event`) are not callable through the API.
+
+### App-only (no SQL)
+Welcome tour (lazy `src/components/WelcomeTour.tsx`), photo wall modal (lazy `src/components/PhotoWall.tsx`), `#/signup?code=YAC-XXXX` prefills the friend code, links in notification bodies are clickable, participant Home restyled like the admin dashboard.

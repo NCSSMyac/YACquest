@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { PageHeader } from '../components/Layout';
 import { Sprite } from '../components/Sprite';
 import { Panel, useToast } from '../components/ui';
@@ -7,6 +7,7 @@ import { CAPS, CONTACT_EMAILS, CYCLE, INSTAGRAM_HANDLE, INSTAGRAM_URL, PRIZE, TI
 import { useAuth } from '../lib/auth';
 import { fmtCycleRange } from '../lib/format';
 import { serverInfo } from '../lib/supabase';
+import { requestTour } from '../lib/tour';
 
 /** Lets a long email address wrap after the @ instead of mid-word. */
 const breakableEmail = (email: string) => {
@@ -18,6 +19,7 @@ const breakableEmail = (email: string) => {
 export default function Help() {
   const { user } = useAuth();
   const toast = useToast();
+  const nav = useNavigate();
   const subject = encodeURIComponent('YACquest help');
   const body = encodeURIComponent(
     `Hi YAC team,\n\n[Tell us what you need help with]\n\n—\nName: ${user?.displayName ?? ''}\nUsername: ${user ? '@' + user.handle : ''}\nCampus: ${user?.campus ?? ''}`,
@@ -106,6 +108,13 @@ export default function Help() {
           </div>
           {user && <p style={{ margin: '8px 0 0' }}>Full details: <Link to="/rules">Rules</Link></p>}
         </Panel>
+
+        {user && (
+          <Panel title="🧭 New here?">
+            <p style={{ margin: '0 0 10px' }}>Take the quick 4-step tour again: points, check-ins, badges and prizes.</p>
+            <button type="button" className="btn blue block" onClick={() => { requestTour(); nav('/'); }}>Replay the tour</button>
+          </Panel>
+        )}
 
         <p className="muted center" style={{ fontSize: 12, margin: 0 }}>App server: {serverInfo}</p>
       </div>

@@ -1,0 +1,89 @@
+/* ───────────── 0025: Admin → Stats (lazy chunk; see Stats.tsx) ───────────── */
+.stats { --c-going: var(--blue-500); --c-came: var(--gold-500); }
+.stats-intro { margin: 0; font-size: 13px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.stats-refresh { margin: 0; padding: 0; }
+.stats-cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (min-width: 820px) {
+  .wide .stats-cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .wide .stats-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+.stats-csv.btn.small { min-height: 30px; padding: 4px 8px; font-size: 10px; color: var(--text); }
+.stats-lede { margin: 0 0 6px; font-size: 14px; }
+.stats-lede b { font-size: 17px; }
+.stats-foot { margin: 6px 0 0; font-size: 12px; }
+
+/* SVG charts: theme tokens only, so light + dark both work */
+.chart { width: 100%; min-width: 0; overflow: hidden; }
+.chart svg { display: block; }
+.chart .grid { stroke: var(--rule); stroke-width: 1; stroke-dasharray: 3 3; }
+.chart .base { stroke: var(--text); stroke-width: 2; }
+.chart .axis { fill: var(--text-soft); font-family: var(--font-body); font-size: 11px; font-weight: 700; }
+.chart .axis.small { font-size: 10px; }
+.chart .val { fill: var(--text); font-family: var(--font-num); font-size: 11px; font-weight: 800; }
+.chart .bar { stroke: var(--navy-900); stroke-width: 2; }
+.chart .bar.blue { fill: var(--blue-500); }
+.chart .bar.gold { fill: var(--gold-500); }
+.chart .bar.muted { fill: var(--text-soft); opacity: 0.55; }
+
+/* Legend swatches (shared by Attendance + Sources) */
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: -4px 0 10px; font-size: 13px; font-weight: 700; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { display: inline-block; flex: none; width: 12px; height: 12px; border: 2px solid var(--navy-900); }
+.sw.going { background: var(--c-going); }
+.sw.came { background: var(--c-came); }
+
+/* Attendance: two thin bars per event */
+.att-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.att-head { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+.att-title { min-width: 0; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att-date { flex: none; color: var(--text-soft); font-size: 13px; }
+.att-bars { display: flex; flex-direction: column; gap: 3px; margin-top: 3px; }
+.att-row { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.att-row b { flex: none; min-width: 22px; font-family: var(--font-num); }
+.att-bar { display: block; height: 10px; min-width: 2px; border: 2px solid var(--navy-900); box-sizing: content-box; max-width: calc(100% - 36px); }
+.att-bar.going { background: var(--c-going); }
+.att-bar.came { background: repeating-linear-gradient(90deg, var(--gold-500) 0 6px, var(--gold-300) 6px 8px); }
+
+/* Campus table */
+.stats-table { width: 100%; border-collapse: collapse; font-size: 14px; table-layout: fixed; }
+.stats-table th, .stats-table td { padding: 6px 4px; text-align: right; border-bottom: 2px dashed var(--rule); }
+.stats-table thead th { font-family: var(--font-pixel); font-weight: 400; font-size: 9px; letter-spacing: 0.4px; text-transform: uppercase; color: var(--text-soft); }
+.stats-table th:first-child { text-align: left; width: 26%; }
+.stats-table thead th:last-child { width: 36%; }
+.stats-table tbody th { font-weight: 800; }
+.stats-table small { color: var(--text-soft); font-size: 11px; }
+.pm-cell { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.pm-bar { flex: 1; max-width: 70px; height: 10px; background: var(--cream); border: 2px solid var(--border); }
+.pm-bar > span { display: block; height: 100%; }
+
+/* Milestones */
+.miles { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.miles li { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 6px 2px; background: var(--cream); border: 2px solid var(--rule); min-width: 0; }
+.miles li.goal { border-color: var(--gold-500); background: rgba(242, 179, 61, 0.2); }
+.miles-pts { font-family: var(--font-pixel); font-size: 9px; color: var(--text-soft); }
+.miles-n { font-family: var(--font-num); font-size: 20px; line-height: 1.1; }
+.miles-pct { font-size: 11px; color: var(--text-soft); }
+
+/* Sources: one stacked bar + legend */
+.src-bar { display: flex; height: 22px; border: 3px solid var(--navy-900); background: var(--cream); overflow: hidden; }
+.src { display: block; flex: 1 1 0; min-width: 3px; height: 100%; }
+.src + .src { border-left: 2px solid var(--navy-900); }
+.src.none { flex-grow: 1; }
+.src.event, .sw.event { background: var(--gold-500); }
+.src.digital, .sw.digital { background: var(--blue-500); }
+.src.referral, .sw.referral { background: var(--green); }
+.src.staff, .sw.staff { background: var(--purple); }
+.src.other, .sw.other { background: var(--text-soft); }
+.src-legend { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.src-legend li { display: grid; grid-template-columns: auto 1fr auto 44px; align-items: center; gap: 8px; }
+.src-legend b { font-family: var(--font-num); }
+.src-pct { text-align: right; color: var(--text-soft); font-size: 13px; }
+
+/* Badges */
+.badge-stats { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.badge-stats li { display: grid; grid-template-columns: 28px minmax(0, 1.2fr) minmax(0, 1fr) 34px; align-items: center; gap: 8px; }
+.bs-name { font-weight: 800; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bs-bar { height: 10px; background: var(--cream); border: 2px solid var(--border); }
+.bs-bar > span { display: block; height: 100%; background: repeating-linear-gradient(90deg, var(--gold-500) 0 6px, var(--gold-300) 6px 8px); }
+.bs-n { text-align: right; font-family: var(--font-num); }
+.stats-pct { display: block; line-height: 1.1; }

@@ -91,6 +91,20 @@ export function describeAction(a: AdminAction): string {
       return d.reason === 'role_changed' ? `${possessive(target)} Hero of the Week reign ended (no longer staff)` : `${actor} cleared ${target} as Hero of the Week`;
     case 'staff_reward_granted':
       return d.reward === 'council_mvp' ? `${actor} named ${target} Council MVP (Golden Yak unlocked)` : `${actor} gave ${target} the ${s(d.name) || s(d.reward)}`;
+    case 'player_note_added':
+      return `${actor} added a staff note about ${target}`;
+    case 'player_note_deleted':
+      return `${actor} deleted a staff note about ${target}${s(d.authorName) && d.authorName !== a.actorName ? ` (written by ${s(d.authorName)})` : ''}`;
+    case 'event_followup_sent': {
+      const who = `${Number(d.attended) || 0} thanked, ${Number(d.missed) || 0} missed-you${Number(d.emailed) > 0 ? `, ${Number(d.emailed)} emailed` : ''}`;
+      return d.automatic || !a.actorName
+        ? `Automatic follow-up sent for “${s(d.title) || 'an event'}” (${who})`
+        : `${actor} sent the follow-up for “${s(d.title) || 'an event'}” (${who})`;
+    }
+    case 'photo_hidden':
+      return `${actor} hid ${possessive(target)} photo from the ${s(d.title) ? `“${s(d.title)}” ` : ''}photo wall`;
+    case 'photo_unhidden':
+      return `${actor} put ${possessive(target)} photo back on the ${s(d.title) ? `“${s(d.title)}” ` : ''}photo wall`;
     case 'report_settings_changed':
       return `${actor} changed the weekly email settings${settingsChange(d)}`;
     default:

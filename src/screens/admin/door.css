@@ -1,0 +1,118 @@
+/* ───────────── 0025: Event-day Door mode (lazy chunk; see DoorMode.tsx) ───────────── */
+.door {
+  min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; gap: 12px;
+  padding: max(10px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+  background:
+    radial-gradient(circle at 15% 0%, rgba(242, 179, 61, 0.18), transparent 45%),
+    radial-gradient(circle at 100% 100%, rgba(47, 111, 214, 0.16), transparent 50%),
+    var(--bg);
+  color: var(--text); overflow-x: hidden;
+}
+.door-msg { margin: auto; width: min(100%, 420px); display: flex; flex-direction: column; gap: 12px; padding: 16px; }
+
+/* Top bar: Exit · status · awake + full screen */
+.door-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.door-bar .btn.small { min-height: 36px; padding: 6px 10px; font-size: 10px; }
+.door-exit { color: var(--text); }
+.door-bar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.door-status {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; white-space: nowrap;
+  font-family: var(--font-pixel); font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase;
+  border: 2px solid var(--navy-900); background: var(--surface); color: var(--text);
+}
+.door-dot { width: 8px; height: 8px; background: var(--text-soft); }
+.door-status.open { background: var(--green); color: #fff; }
+.door-status.open .door-dot { background: #fff; animation: door-blink 1.2s steps(1) infinite; }
+.door-status.early { background: var(--gold-300); color: var(--navy-900); }
+.door-status.early .door-dot { background: var(--navy-900); }
+.door-wake { font-size: 12px; font-weight: 800; color: var(--text-soft); white-space: nowrap; }
+@keyframes door-blink { 50% { opacity: 0.2; } }
+
+/* Main: one column on phones, two on wide screens */
+.door-main { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-content: start; }
+.door-scan, .door-live {
+  min-width: 0; background: var(--surface); border: var(--px) solid var(--navy-900); box-shadow: var(--shadow-lg);
+  padding: 14px; display: flex; flex-direction: column;
+}
+.door-scan { align-items: center; text-align: center; gap: 8px; }
+.door-title { margin: 0; font-size: clamp(20px, 5.4vw, 40px); line-height: 1.15; overflow-wrap: anywhere; }
+.door-when { margin: 0; font-size: clamp(13px, 2.2vw, 17px); color: var(--text-soft); }
+.door-qr {
+  width: min(100%, 300px); aspect-ratio: 1 / 1; display: grid; place-items: center;
+  background: #fff; border: var(--px) solid var(--navy-900); padding: 6px;
+}
+.door-qr img { display: block; width: 100%; height: auto; image-rendering: pixelated; }
+.door-qr .muted { color: #4a5672; }
+.door-pw { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.door-pw-label { font-size: 13px; font-weight: 700; color: var(--text-soft); }
+.door-pw-value {
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace; font-weight: 800; line-height: 1.05;
+  font-size: clamp(30px, 9vw, 64px); letter-spacing: 2px; overflow-wrap: anywhere;
+  padding: 2px 12px; background: var(--gold-300); color: var(--navy-900); border: 3px solid var(--navy-900);
+}
+
+/* Live counter */
+.door-live { gap: 10px; }
+.door-count { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 12px; align-items: end; }
+.door-yak { grid-row: 1 / 3; align-self: center; display: grid; place-items: center; width: 68px; height: 68px; background: var(--gold-300); border: 3px solid var(--navy-900); }
+.door-count-num {
+  font-family: var(--font-num); font-weight: 800; font-variant-numeric: tabular-nums; line-height: 0.95;
+  font-size: clamp(56px, 16vw, 132px); animation: door-bump 0.35s steps(4);
+}
+.door-count-lbl { font-family: var(--font-pixel); font-size: clamp(10px, 2.4vw, 15px); letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-soft); }
+@keyframes door-bump { from { transform: scale(1.18); color: var(--gold-500); } }
+
+.door-bar-track { height: 22px; background: var(--navy-900); border: 3px solid var(--navy-900); overflow: hidden; }
+.door-bar-track > span {
+  display: block; height: 100%; transition: width 0.6s steps(6);
+  background: repeating-linear-gradient(90deg, var(--gold-500) 0 10px, var(--gold-300) 10px 14px);
+}
+.door-progress-text { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; font-size: 15px; }
+.door-progress-text b { font-size: 18px; }
+
+.door-sub { margin: 6px 0 0; font-family: var(--font-pixel); font-size: 11px; font-weight: 400; letter-spacing: 1px; text-transform: uppercase; color: var(--text-soft); }
+.door-empty { margin: 0; padding: 12px; text-align: center; font-weight: 700; border: 2px dashed var(--rule); }
+.door-recent { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.door-recent li {
+  display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 3px 10px 3px 4px;
+  background: var(--cream); border: 2px solid var(--rule);
+}
+.door-recent li:first-child { border-color: var(--gold-500); }
+.door-recent li > svg, .door-recent li > .hero-ring { flex: none; }
+.door-name { flex: 1; min-width: 0; font-weight: 800; font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.door-time { flex: none; font-size: 13px; color: var(--text-soft); }
+.door-recent li.pop { animation: door-pop 0.5s steps(5); border-color: var(--gold-500); background: rgba(242, 179, 61, 0.25); }
+@keyframes door-pop {
+  0% { transform: translateY(-14px) scale(0.85); opacity: 0; }
+  60% { transform: translateY(0) scale(1.04); opacity: 1; }
+  100% { transform: none; }
+}
+.door-tip {
+  margin: auto 0 0; padding: 10px 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  font-size: 15px; font-weight: 700; border: 2px dashed var(--rule); color: var(--text-soft);
+}
+.door-tip .chip { font-size: 13px; }
+.door-tip > span:last-child { flex: 1 1 200px; min-width: 0; }
+.door-stale { margin: 0; font-size: 13px; font-weight: 700; color: var(--orange); }
+
+/* Laptop / projector: QR on the left, live list on the right, everything sized to the screen */
+@media (min-width: 900px) and (min-aspect-ratio: 1/1) {
+  .door { padding: 14px 24px 20px; gap: 16px; }
+  .door-main { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 22px; align-items: stretch; align-content: stretch; }
+  .door-scan, .door-live { padding: 20px 22px; }
+  .door-qr { width: min(100%, calc(100vh - 370px), 560px); }
+  .door-title { font-size: clamp(24px, 2.6vw, 40px); }
+  .door-count-num { font-size: clamp(80px, 10vw, 150px); }
+  .door-pw-value { font-size: clamp(36px, 4.2vw, 64px); }
+  .door-live { justify-content: flex-start; }
+}
+/* Short landscape phones */
+@media (max-height: 520px) and (min-aspect-ratio: 1/1) {
+  .door-main { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .door-qr { width: min(100%, 60vh); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .door-recent li.pop, .door-count-num, .door-status.open .door-dot { animation: none; }
+  .door-bar-track > span { transition: none; }
+}

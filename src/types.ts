@@ -33,6 +33,13 @@ export interface User {
   emailVerified?: boolean;
   /** Equipped unlockable cosmetics (see src/lib/cosmetics.ts). */
   look?: Look;
+  /**
+   * 0026: when this person finished (or skipped) the welcome tour. null = not yet (show it once);
+   * undefined = the server doesn't have 0026 yet (the app falls back to remembering it on this device).
+   */
+  tourDoneAt?: string | null;
+  /** 0026: true hides ALL of this person's approved photos from event photo walls. */
+  photoWallOptOut?: boolean;
 }
 
 /** How an activity is verified. */
@@ -69,6 +76,8 @@ export interface YacEvent {
   password?: string;
   activityId: string; // which activity the check-in earns
   attendeeCount: number;
+  /** 0026: optional feedback survey link (http/https), sent in the automatic follow-up. Staff views only. */
+  surveyUrl?: string;
 }
 
 export type SubmissionStatus = 'pending' | 'approved' | 'rejected';
@@ -85,6 +94,8 @@ export interface Submission {
   reviewReason?: string;
   createdAt: string;
   reviewedAt?: string;
+  /** 0026: event photos only: the owner chose "Show my photo on the event photo wall". */
+  shareOnWall?: boolean;
 }
 
 export type LedgerSource = 'checkin' | 'submission' | 'manual' | 'referral' | 'seed';
@@ -148,7 +159,9 @@ export type NotificationKind =
   /** 0020, staff only: a chair granted a Council wardrobe item / Council MVP. */
   | 'staff_reward'
   /** 0024: "⏰ Starts in 1 hour: <title> at <location>" for an event you RSVP'd to. */
-  | 'event_reminder';
+  | 'event_reminder'
+  /** 0026: "Thanks for coming to <title>! 🐂" / "Sorry we missed you at <title>" after an event. */
+  | 'event_followup';
 
 export interface AppNotification {
   id: string;
@@ -227,7 +240,7 @@ export interface WeeklyReport {
   recipients: string[];
 }
 
-export type EmailKind = 'weekly_report' | 'prize_qualified' | 'prize_info' | 'test' | 'announcement' | 'event_reminder';
+export type EmailKind = 'weekly_report' | 'prize_qualified' | 'prize_info' | 'test' | 'announcement' | 'event_reminder' | 'event_followup';
 export type EmailStatus = 'pending' | 'sending' | 'sent' | 'failed';
 
 export interface EmailLogRow {
@@ -504,4 +517,114 @@ export interface QuestRecap {
   councilBadges?: number;
   cycleName: string;
   cycleEndsAt: string;
+}
+
+// ───────────── 0025: admin tools (staff only) ─────────────
+
+/** One result of review_submissions_bulk: approved, or skipped with the server's code + message. */
+export interface BulkReviewResult {
+  approved: number;
+  skipped: number;
+  results: { id: string; ok: boolean; code?: string; message?: string }[];
+}
+
+/** One check-in with email + avatar (Door mode live list, "Who came" CSV). */
+export interface EventCheckin extends EventAttendee {
+  email: string;
+  avatar: AvatarId;
+  look?: Look;
+}
+
+/** Admin → Stats (admin_stats in 0025). Participants only; staff never counted. */
+export interface AdminStats {
+  generatedAt: string;
+  goal: number;
+  cycle: { name: string; startsAt: string; endsAt: string };
+  totals: { participants: number; active30: number; points: number; checkins: number; approvals: number };
+  /** Participants who signed up before this cycle started. */
+  signupsBefore: number;
+  /** Monday (America/New_York) of each week since the cycle started, oldest first. */
+  signupsByWeek: { week: string; count: number }[];
+  /** Events of this cycle that have started, oldest first. */
+  events: { id: string; title: string; campus: CampusId | 'all'; kind: string; startsAt: string; going: number; came: number }[];
+  /** active = earned points in the last 30 days. */
+  campuses: { campus: CampusId; members: number; active: number; points: number; perMember: number }[];
+  /** How many participants have at least `points` (50, 100, half the goal, 250, the goal). */
+  milestones: { points: number; count: number }[];
+  distribution: { label: string; min: number; count: number }[];
+  /** Points earned this cycle by source (positive rows), and points removed by corrections. */
+  sources: { event: number; digital: number; referral: number; staff: number; removed: number; other?: number };
+  /** How many participants earned each badge, most first. */
+  badges: { id: string; count: number }[];
+}
+
+/** One row of the participants CSV (YACquest Chairs only). */
+export interface ParticipantExportRow {
+  displayName: string;
+  handle: string;
+  email: string;
+  campus: CampusId;
+  points: number;
+  badges: string[];
+  eventsAttended: number;
+  joinedAt: string;
+  emailOptIn: boolean;
+}
+
+/** A saved announcement template (Admin → Announce → Templates). */
+export interface AnnouncementTemplate {
+  id: string;
+  title: string;
+  body: string;
+  authorName: string;
+  createdAt: string;
+  canDelete: boolean;
+}
+
+/** A private staff note on a player (Admin → Players). Participants can never read these. */
+export interface PlayerNote {
+  id: string;
+  body: string;
+  authorName: string;
+  createdAt: string;
+  canDelete: boolean;
+}
+
+// ───────────── 0026: participant extras ─────────────
+
+/** Admin → Events: the automatic (or staff-sent) follow-up of one event. */
+export interface EventFollowupStatus {
+  sentAt: string;
+  /** true = sent by the every-10-minutes job; false = a staff member pressed "Send follow-up now". */
+  automatic: boolean;
+  sentByName?: string;
+  /** People thanked (checked in). */
+  attended: number;
+  /** People who RSVP'd but didn't check in. */
+  missed: number;
+  emailed: number;
+}
+
+/** One photo on an event's photo wall (event_photos in 0026: approved + shared + owner not opted out + not hidden). */
+export interface EventPhoto {
+  /** The submission id (staff hide by this id). */
+  id: string;
+  imageUrl: string;
+  displayName: string;
+  campus: CampusId;
+  createdAt: string;
+  mine: boolean;
+}
+
+/** my_friends() (0026): someone who joined with your friend code. Safe fields only. */
+export interface Friend {
+  displayName: string;
+  campus: CampusId;
+  avatar: AvatarId;
+  look?: Look;
+  joinedAt: string;
+  /** Checked in to at least one event. */
+  came: boolean;
+  /** You got the referral bonus for them this cycle. */
+  bonus: boolean;
 }

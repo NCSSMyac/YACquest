@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import * as api from '../api';
 import { isStaff, useAuth } from '../lib/auth';
@@ -6,6 +6,10 @@ import { BellIcon, ChestIcon, HomeIcon, ShieldIcon, SwordIcon, TrophyIcon, UserI
 import { NotificationPopups } from './NotificationPopups';
 import { Sprite } from './Sprite';
 import { TodayEventProvider, useTodayEvent } from './TodayEvent';
+import { localTourDone, setLocalTourDone, shouldAutoShowTour, useTourRequest } from '../lib/tour';
+
+// 0026: lazy-loaded so the tour stays out of the main bundle (most visits never open it).
+const WelcomeTour = lazy(() => import('./WelcomeTour'));
 
 /** App chrome for signed-in users: top bar + bottom tab bar. */
 export function Layout() {
@@ -23,13 +27,36 @@ function Shell() {
   // An RSVP'd event today counts as one more thing on the bell.
   const today = useTodayEvent();
   const count = unread + (today ? 1 : 0);
-  // The admin dashboard spreads into two columns on wide screens; every other page keeps the phone-width column.
-  const wide = useLocation().pathname.replace(/\/+$/, '') === '/admin';
+  // The admin dashboard (and Admin → Stats, 0025) spread into two columns on wide screens; every other page keeps the phone-width column.
+  // 0026: participant Home too (two columns like the admin dashboard).
+  const wide = ['', '/admin', '/admin/stats'].includes(useLocation().pathname.replace(/\/+$/, ''));
   const label = `Notifications${unread ? `, ${unread} unread` : ''}${today ? `, event today: ${today.title}` : ''}`;
+
+  // 0026 welcome tour: once after the first login (server flag, device fallback), or on "Replay the tour".
+  const [autoTour, setAutoTour] = useState(false);
+  const [replay, closeReplay] = useTourRequest();
+  const userId = user?.id;
+  const tourDoneAt = user?.tourDoneAt;
+  useEffect(() => {
+    if (userId && shouldAutoShowTour({ tourDoneAt }, localTourDone(userId))) setAutoTour(true);
+  }, [userId, tourDoneAt]);
+  function closeTour() {
+    setAutoTour(false);
+    closeReplay();
+    if (userId) {
+      setLocalTourDone(userId);
+      void api.markTourDone();
+    }
+  }
 
   return (
     <div className={`app-shell${wide ? ' wide' : ''}`}>
       {user && <NotificationPopups />}
+      {user && (autoTour || replay) && (
+        <Suspense fallback={null}>
+          <WelcomeTour user={user} onClose={closeTour} />
+        </Suspense>
+      )}
       <header className="topbar">
         <Link to="/" className="brand" aria-label="YACquest home">
           <span className="sprite-badge"><Sprite id="yak" size={30} /></span>

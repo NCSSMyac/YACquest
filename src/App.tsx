@@ -1,5 +1,5 @@
 import { CelebrateProvider } from './lib/celebrate';
-import { useEffect, useRef } from 'react';
+import { Suspense, lazy, useEffect, useRef } from 'react';
 import { HashRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { Loading, ToastProvider, useToast } from './components/ui';
@@ -32,6 +32,11 @@ import Feedback from './screens/admin/Feedback';
 import ActivityLog from './screens/admin/ActivityLog';
 import Heroes from './screens/admin/Heroes';
 import Council from './screens/admin/Council';
+
+// 0025: lazy-loaded so the charts and the full-screen door view stay out of the main bundle.
+const Stats = lazy(() => import('./screens/admin/Stats'));
+const DoorMode = lazy(() => import('./screens/admin/DoorMode'));
+const lazyPage = (el: JSX.Element) => <Suspense fallback={<Loading lines={3} />}>{el}</Suspense>;
 
 function RequireAuth() {
   const { user, ready } = useAuth();
@@ -138,6 +143,10 @@ export default function App() {
             <Route element={<RequireAuth />}>
               {/* Outside Layout: the reset link logs the person in, then they pick a new password here. */}
               <Route path="/reset-password" element={<ResetPassword />} />
+              {/* 0025: Event-day Door mode is full screen (no app header / tab bar). Staff only. */}
+              <Route element={<RequireStaff />}>
+                <Route path="/admin/door/:eventId" element={<Suspense fallback={<div className="app-shell"><Loading /></div>}><DoorMode /></Suspense>} />
+              </Route>
               <Route element={<Layout />}>
                 <Route index element={<Home />} />
                 <Route path="earn" element={<Earn />} />
@@ -155,6 +164,7 @@ export default function App() {
                     <Route path="feedback" element={<Feedback />} />
                     <Route path="players" element={<Players />} />
                     <Route path="events" element={<Events />} />
+                    <Route path="stats" element={lazyPage(<Stats />)} />
                     <Route element={<RequireStaff chairOnly />}>
                       <Route path="prizes" element={<Prizes />} />
                       <Route path="system" element={<System />} />

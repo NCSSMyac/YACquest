@@ -32,7 +32,8 @@ describe('badges', () => {
   it('seeds the demo player with a few badges', async () => {
     asUser('yak001');
     const got = await earned();
-    expect(got).toEqual(new Set(['first_checkin', 'champion', 'voice']));
+    // 0026 seed: a friend who joined with the demo player's code came to an event → Recruiter.
+    expect(got).toEqual(new Set(['first_checkin', 'champion', 'voice', 'recruiter']));
     const digital = (await api.myBadges()).find((b) => b.id === 'digital')!;
     expect(digital).toMatchObject({ earned: false, progress: 2, goal: 3 });
   });
@@ -88,13 +89,14 @@ describe('unlocks', () => {
     expect(unlocks.has('party_hat')).toBe(true); // First Steps
     expect(unlocks.has('medal')).toBe(true); // Champion
     expect(unlocks.has('sunset')).toBe(true); // 50 points
-    expect(unlocks.has('flower_crown')).toBe(false); // 100 points
+    expect(unlocks.has('bowtie')).toBe(true); // Recruiter (0026 seed: a referred friend came)
+    expect(unlocks.has('flower_crown')).toBe(true); // 100 points (the seed's +35 friend bonus → 105)
+    expect(unlocks.has('gold_chain')).toBe(false); // 250 points
     expect(unlocks.has('crown')).toBe(false);
-    addLedger({ userId: u.id, amount: TIER_POINTS[1], source: 'manual', reason: 'test' });
-    addLedger({ userId: u.id, amount: TIER_POINTS[1], source: 'manual', reason: 'test' });
+    for (let i = 0; i < 5; i++) addLedger({ userId: u.id, amount: TIER_POINTS[1], source: 'manual', reason: 'test' });
     unlocks = new Set(await api.myUnlocks());
-    expect(unlocks.has('flower_crown')).toBe(true);
-    expect(unlocks.has('gold_chain')).toBe(false);
+    expect(unlocks.has('gold_chain')).toBe(true);
+    expect(unlocks.has('sparkles')).toBe(false); // 300 points
   });
 
   it('unlocks Sparkle Aura at 300 points', async () => {

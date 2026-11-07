@@ -2545,5 +2545,578 @@ end $$;
 rollback;
 
 -- =============================================================================
+-- 29. 0025 — admin tools: bulk approve, stats, exports, templates, staff notes, undo
+--     Fixed dates: a fresh test cycle from Mon 2030-01-07; admin_stats(p_now = 2030-01-25).
+--     Everything is rolled back afterwards.
+-- =============================================================================
+:as_super
+begin;
+update profiles set role = 'participant' where id in (t.u('alice'), t.u('carol'), t.u('erin'), t.u('bob'));
+update profiles set role = 'admin' where id = t.u('admin');
+update profiles set role = 'chair' where id in (t.u('chair1'), t.u('chair2'));
+update app_config set prize_goal = 350 where id = 1;
+update cycles set is_active = false where is_active;
+insert into cycles (id, name, starts_at, ends_at, is_active) values
+  ('00000000-0000-0000-0000-000000025c00', 'Test 2030', '2030-01-07 00:00-05', '2030-06-30 00:00-04', true);
+update profiles set points = 0 where points <> 0;   -- as reset_cycle() does
+-- three sign-ups during the cycle (weeks of Jan 7, Jan 7, Jan 21) + a staff member who must not count
+insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data) values
+  ('00000000-0000-0000-0000-000000025a01', 'stat1@example.edu', now(), '{"handle":"stat1","display_name":"Stat One","campus":"duke","avatar":"yak"}'),
+  ('00000000-0000-0000-0000-000000025a02', 'stat2@example.edu', now(), '{"handle":"stat2","display_name":"Stat Two","campus":"unc","avatar":"yak"}'),
+  ('00000000-0000-0000-0000-000000025a03', 'stat3@example.edu', now(), '{"handle":"stat3","display_name":"Stat Three","campus":"ncsu","avatar":"yak"}');
+update profiles set created_at = '2030-01-08 10:00-05' where id = '00000000-0000-0000-0000-000000025a01';
+update profiles set created_at = '2030-01-13 23:30-05' where id = '00000000-0000-0000-0000-000000025a02';  -- Sunday night Eastern = still week of Jan 7
+update profiles set created_at = '2030-01-22 10:00-05' where id = '00000000-0000-0000-0000-000000025a03';
+update profiles set created_at = '2030-01-09 10:00-05' where id = t.u('chair2');
+insert into events (id, cycle_id, title, campus, kind, location, starts_at, ends_at, activity_id) values
+  ('00000000-0000-0000-0000-000000025e01', active_cycle_id(), 'Stats Mixer', 'duke', 'active', 'Quad', '2030-01-10 18:00-05', '2030-01-10 20:00-05', 'home_event'),
+  ('00000000-0000-0000-0000-000000025e02', active_cycle_id(), 'Future Gala', 'all', 'high_impact', 'Durham', '2030-01-30 18:00-05', '2030-01-30 20:00-05', 'cross_campus_event');
+insert into event_rsvps (event_id, user_id) values
+  ('00000000-0000-0000-0000-000000025e01', t.u('alice')),
+  ('00000000-0000-0000-0000-000000025e01', t.u('bob')),
+  ('00000000-0000-0000-0000-000000025e01', t.u('chair1')),     -- staff: not counted
+  ('00000000-0000-0000-0000-000000025e02', t.u('alice'));
+insert into ledger (cycle_id, user_id, amount, source, activity_id, ref_id, reason, created_at) values
+  (active_cycle_id(), t.u('alice'), 20, 'checkin', 'home_event', '00000000-0000-0000-0000-000000025e01', 'Checked in: Stats Mixer', '2030-01-10 18:30-05'),
+  (active_cycle_id(), t.u('carol'), 20, 'checkin', 'home_event', '00000000-0000-0000-0000-000000025e01', 'Checked in: Stats Mixer', '2030-01-10 18:40-05'),
+  (active_cycle_id(), t.u('admin'), 20, 'checkin', 'home_event', '00000000-0000-0000-0000-000000025e01', 'Checked in: Stats Mixer', '2030-01-10 18:50-05'),
+  (active_cycle_id(), t.u('alice'),  5, 'submission', 'poll', '00000000-0000-0000-0000-000000025f99', 'Approved: Vote in a Community Poll', '2030-01-12 10:00-05'),
+  (active_cycle_id(), t.u('alice'), 40, 'manual', 'annual_fund', null, 'Give to the Annual Fund', '2030-01-15 10:00-05'),
+  (active_cycle_id(), t.u('alice'), 40, 'manual', null, null, 'Volunteer table', '2030-01-16 10:00-05'),
+  (active_cycle_id(), t.u('carol'), 40, 'referral', 'bring_new_alum', 'ref-25-carol', 'Brought a friend', '2030-01-17 10:00-05'),
+  (active_cycle_id(), t.u('bob'),   40, 'manual', null, null, 'Early bird', '2029-12-20 10:00-05'),
+  (active_cycle_id(), t.u('bob'),  -10, 'manual', null, null, 'Fix', '2029-12-21 10:00-05');
+
+-- ---- admin_stats: staff only ----
+:as_alice
+do $$ begin
+  perform t.throws('select admin_stats()', 'forbidden', '0025: participants can''t read stats');
+  perform t.throws('select admin_participants_export()', 'forbidden', '0025: participants can''t export participants');
+  perform t.throws('select admin_event_checkins(''00000000-0000-0000-0000-000000025e01'')', 'forbidden', '0025: participants can''t read check-ins');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied('select admin_stats()', '0025: anon can''t call admin_stats');
+  perform t.denied('select review_submissions_bulk(array[]::uuid[])', '0025: anon can''t call review_submissions_bulk');
+  perform t.denied('select undo_points_change(1)', '0025: anon can''t call undo_points_change');
+  perform t.denied('select list_player_notes(''00000000-0000-0000-0000-0000000000a1'')', '0025: anon can''t list notes');
+end $$;
+:as_admin
+do $$
+declare s jsonb := admin_stats('2030-01-25 12:00-05')::jsonb;
+        c jsonb;
+begin
+  perform t.eq((s->>'goal')::int, 350, '0025 stats: goal');
+  perform t.eq(s->'cycle'->>'name', 'Test 2030', '0025 stats: active cycle');
+  perform t.eq((s->'totals'->>'participants')::int, (select count(*)::int from profiles where role = 'participant'), '0025 stats: participants only');
+  perform t.eq(s->'signupsByWeek', '[{"week":"2030-01-07","count":2},{"week":"2030-01-14","count":0},{"week":"2030-01-21","count":1}]'::jsonb, '0025 stats: weekly sign-ups since cycle start (Eastern weeks, zeros filled, staff excluded)');
+  perform t.eq((s->>'signupsBefore')::int, (select count(*)::int from profiles where role = 'participant' and created_at < '2030-01-07 00:00-05'), '0025 stats: sign-ups before the cycle');
+  perform t.eq(jsonb_array_length(s->'events'), 1, '0025 stats: only events that have started');
+  perform t.ok((s->'events'->0->>'title') = 'Stats Mixer' and (s->'events'->0->>'going')::int = 2 and (s->'events'->0->>'came')::int = 2, '0025 stats: going 2 vs came 2 (staff excluded)');
+  perform t.eq(s->'sources', '{"event":40,"digital":5,"referral":40,"staff":120,"removed":10}'::jsonb, '0025 stats: points by source');
+  perform t.eq((s->'totals'->>'points')::int, 105 + 60 + 30, '0025 stats: total participant points');
+  perform t.eq((s->'totals'->>'active30')::int, 2, '0025 stats: active in the last 30 days');
+  perform t.eq((s->'totals'->>'checkins')::int, 2, '0025 stats: participant check-ins');
+  select x into c from jsonb_array_elements(s->'campuses') x where x->>'campus' = 'duke';
+  perform t.ok((c->>'points')::int = 165 and (c->>'active')::int = 2
+               and (c->>'members')::int = (select count(*)::int from profiles where role = 'participant' and campus = 'duke')
+               and (c->>'perMember')::numeric = round(165::numeric / (c->>'members')::int, 1), '0025 stats: Duke members / active / points / per member');
+  select x into c from jsonb_array_elements(s->'campuses') x where x->>'campus' = 'unc';
+  perform t.ok((c->>'points')::int = 30 and (c->>'active')::int = 0, '0025 stats: UNC (old rows are not "active")');
+  perform t.eq(s->'campuses'->0->>'campus', 'duke', '0025 stats: campuses in fixed order');
+  perform t.eq(s->'milestones', '[{"points":50,"count":2},{"points":100,"count":1},{"points":175,"count":0},{"points":250,"count":0},{"points":350,"count":0}]'::jsonb, '0025 stats: milestones 50/100/175/250/350');
+  perform t.eq((select (x->>'count')::int from jsonb_array_elements(s->'distribution') x where x->>'label' = '100–174'), 1, '0025 stats: distribution 100–174');
+  perform t.eq((select (x->>'count')::int from jsonb_array_elements(s->'distribution') x where x->>'label' = '1–49'), 1, '0025 stats: distribution 1–49');
+  perform t.eq((select sum((x->>'count')::int)::int from jsonb_array_elements(s->'distribution') x), (s->'totals'->>'participants')::int, '0025 stats: distribution covers everyone');
+  perform t.eq((select (x->>'count')::int from jsonb_array_elements(s->'badges') x where x->>'id' = 'first_checkin'), 2, '0025 stats: First Steps earned by 2 participants');
+  perform t.eq((select (x->>'count')::int from jsonb_array_elements(s->'badges') x where x->>'id' = 'giver'), 1, '0025 stats: Giver earned by 1');
+  perform t.ok((admin_stats()::jsonb) ? 'signupsByWeek', '0025 stats: default p_now works');
+  perform t.throws('select admin_participants_export()', 'forbidden', '0025: admins can''t export all participants (YACquest Chairs only)');
+  perform t.eq((select count(*)::int from admin_event_checkins('00000000-0000-0000-0000-000000025e01')), 3, '0025: admin_event_checkins lists every check-in');
+  perform t.ok((select email = 'alice@example.edu' and avatar is not null from admin_event_checkins('00000000-0000-0000-0000-000000025e01') where user_id = t.u('alice')), '0025: check-ins include email + avatar');
+  perform t.throws(format('select admin_event_checkins(%L)', gen_random_uuid()), 'not_found', '0025: unknown event');
+end $$;
+:as_chair1
+do $$
+declare x json; a json;
+begin
+  x := admin_participants_export();
+  perform t.eq(json_array_length(x), (select count(*)::int from profiles where role = 'participant'), '0025 export: one row per participant (no staff)');
+  select e into a from json_array_elements(x) e where e->>'handle' = 'alice';
+  perform t.ok((a->>'points')::int = 105 and (a->>'eventsAttended')::int = 1 and (a->>'email') = 'alice@example.edu'
+               and (a->'badges')::jsonb ? 'first_checkin' and (a->>'emailOptIn') is not null and (a->>'joinedAt') is not null, '0025 export: points, events, badges, email, opt-in, joined');
+  perform t.ok(not exists (select 1 from json_array_elements(x) e where e->>'handle' in ('helper', 'iesha', 'jacob')), '0025 export: staff never included');
+end $$;
+
+-- ---- bulk approve ----
+:as_super
+insert into submissions (id, cycle_id, user_id, activity_id, image_path, status, created_at) values
+  ('00000000-0000-0000-0000-000000025b01', active_cycle_id(), t.u('alice'), 'survey', 'x/1.jpg', 'pending', '2030-01-20 10:00-05'),
+  ('00000000-0000-0000-0000-000000025b02', active_cycle_id(), t.u('bob'),   'social_tag', 'x/2.jpg', 'pending', '2030-01-20 10:01-05'),
+  ('00000000-0000-0000-0000-000000025b03', active_cycle_id(), t.u('carol'), 'annual_fund', 'x/3.jpg', 'pending', '2030-01-20 10:02-05'),
+  ('00000000-0000-0000-0000-000000025b04', active_cycle_id(), t.u('admin'), 'repost', 'x/4.jpg', 'pending', '2030-01-20 10:03-05'),
+  ('00000000-0000-0000-0000-000000025b05', active_cycle_id(), t.u('erin'),  'poll', 'x/5.jpg', 'approved', '2030-01-20 10:04-05');
+:as_alice
+do $$ begin
+  perform t.throws('select review_submissions_bulk(array[''00000000-0000-0000-0000-000000025b02''::uuid])', 'forbidden', '0025 bulk: participants can''t approve');
+end $$;
+:as_admin
+do $$
+declare r json;
+        a0 int := (select points from profiles where id = t.u('alice'));
+        c0 int := (select points from profiles where id = t.u('carol'));
+begin
+  perform t.throws('select review_submissions_bulk(array[]::uuid[])', 'empty', '0025 bulk: nothing picked');
+  perform t.throws('select review_submissions_bulk(array(select gen_random_uuid() from generate_series(1, 101)))', 'too_many', '0025 bulk: at most 100 per call');
+  r := review_submissions_bulk(array['00000000-0000-0000-0000-000000025b01', '00000000-0000-0000-0000-000000025b02',
+                                     '00000000-0000-0000-0000-000000025b01', '00000000-0000-0000-0000-000000025b03',
+                                     '00000000-0000-0000-0000-000000025b04', '00000000-0000-0000-0000-000000025b05',
+                                     '00000000-0000-0000-0000-000000025bff']::uuid[]);
+  perform t.eq((r->>'approved')::int, 3, '0025 bulk: 3 approved');
+  perform t.eq((r->>'skipped')::int, 3, '0025 bulk: 3 skipped (partial success)');
+  perform t.eq(json_array_length(r->'results'), 6, '0025 bulk: duplicate ids counted once, one result per id');
+  perform t.eq((select string_agg(coalesce(x->>'code', 'ok'), ',' order by n) from json_array_elements(r->'results') with ordinality as e (x, n)),
+               'ok,ok,ok,forbidden,already_reviewed,not_found', '0025 bulk: per-id results in order, with review_submission''s own rules');
+  perform t.ok((select x->>'message' from json_array_elements(r->'results') x where x->>'code' = 'forbidden') like 'You can’t review your own%', '0025 bulk: friendly message without the code prefix');
+  perform t.eq((select points from profiles where id = t.u('alice')), a0 + 5, '0025 bulk: Tier 3 points awarded');
+  perform t.eq((select points from profiles where id = t.u('carol')), c0 + 40, '0025 bulk: Tier 1 points awarded');
+  perform t.eq((select status from submissions where id = '00000000-0000-0000-0000-000000025b04'), 'pending', '0025 bulk: a skipped one stays pending');
+  perform t.eq((select count(*)::int from ledger where source = 'submission' and ref_id = '00000000-0000-0000-0000-000000025b01'), 1, '0025 bulk: one ledger row per approval');
+  r := review_submissions_bulk(array['00000000-0000-0000-0000-000000025b01']::uuid[]);
+  perform t.ok((r->>'approved')::int = 0 and (r->'results'->0->>'code') = 'already_reviewed', '0025 bulk: re-running is safe (already reviewed)');
+end $$;
+
+-- ---- announcement templates ----
+:as_super
+do $$ begin
+  perform t.ok(not has_table_privilege('authenticated', 'public.announcement_templates', 'select'), '0025 templates: no direct table access');
+end $$;
+:as_alice
+do $$ begin
+  perform t.throws('select save_announcement_template(''Hi'', ''Body'')', 'forbidden', '0025 templates: participants can''t save');
+  perform t.throws('select * from list_announcement_templates()', 'forbidden', '0025 templates: participants can''t list');
+  perform t.denied('select * from announcement_templates', '0025 templates: participants can''t read the table');
+end $$;
+:as_admin
+do $$
+declare x json;
+begin
+  x := save_announcement_template('  Pizza night  ', 'Join us at {location} on {date}!');
+  perform set_config('t.tpl_admin', x->>'id', false);
+  perform t.ok((x->>'title') = 'Pizza night' and (x->>'canDelete')::boolean, '0025 templates: admin saves (trimmed)');
+  perform t.throws('select save_announcement_template('''', ''x'')', 'title', '0025 templates: name required');
+  perform t.throws(format('select save_announcement_template(%L, %L)', 'x', repeat('y', 1001)), 'body', '0025 templates: body max 1000');
+end $$;
+:as_chair1
+do $$
+declare x json;
+begin
+  x := save_announcement_template('Chair note', 'Thanks for coming to {event}!');
+  perform set_config('t.tpl_chair', x->>'id', false);
+  perform t.eq((select count(*)::int from list_announcement_templates()), 2, '0025 templates: everyone on staff sees all templates');
+  perform t.ok((select bool_and(can_delete) from list_announcement_templates()), '0025 templates: YACquest Chairs can delete any');
+end $$;
+:as_admin
+do $$ begin
+  perform t.ok((select not can_delete from list_announcement_templates() where id = current_setting('t.tpl_chair')::uuid), '0025 templates: admins see others'' templates as not deletable');
+  perform t.throws(format('select delete_announcement_template(%L)', current_setting('t.tpl_chair')), 'forbidden', '0025 templates: admins can''t delete others''');
+  perform delete_announcement_template(current_setting('t.tpl_admin')::uuid);
+  perform t.throws(format('select delete_announcement_template(%L)', current_setting('t.tpl_admin')), 'not_found', '0025 templates: admins delete their own');
+end $$;
+:as_super
+insert into announcement_templates (title, body, created_by) values ('Admin two', 'x', t.u('admin'));
+:as_chair1
+do $$ begin
+  perform delete_announcement_template((select id from list_announcement_templates() where title = 'Admin two'));
+  perform t.ok(not exists (select 1 from list_announcement_templates() where title = 'Admin two'), '0025 templates: a YACquest Chair deletes an admin''s template');
+end $$;
+
+-- ---- staff notes ----
+:as_super
+do $$ begin
+  perform t.ok(not has_table_privilege('authenticated', 'public.player_notes', 'select'), '0025 notes: no table grant to authenticated');
+  perform t.ok((select relrowsecurity from pg_class where oid = 'public.player_notes'::regclass), '0025 notes: RLS on');
+  perform t.eq((select count(*)::int from pg_policies where tablename = 'player_notes'), 0, '0025 notes: no policies (only staff RPCs read it)');
+end $$;
+:as_admin
+do $$
+declare x json;
+begin
+  x := add_player_note(t.u('alice'), '  Super helpful at check-in.  ');
+  perform set_config('t.note_admin', x->>'id', false);
+  perform t.eq(x->>'body', 'Super helpful at check-in.', '0025 notes: admin adds a note (trimmed)');
+  perform t.throws(format('select add_player_note(%L, %L)', t.u('alice'), repeat('n', 501)), 'body', '0025 notes: max 500 characters');
+  perform t.throws(format('select add_player_note(%L, %L)', t.u('alice'), '   '), 'body', '0025 notes: empty note');
+  perform t.throws(format('select add_player_note(%L, %L)', gen_random_uuid(), 'x'), 'not_found', '0025 notes: unknown player');
+end $$;
+-- same transaction = same now(): make the admin's note a minute older so "newest first" doesn't depend on random ids
+:as_super
+update player_notes set created_at = created_at - interval '1 minute' where id = current_setting('t.note_admin')::uuid;
+:as_chair1
+do $$
+declare x json;
+begin
+  x := add_player_note(t.u('alice'), 'Asked about volunteering in spring.');
+  perform set_config('t.note_chair', x->>'id', false);
+  perform t.eq((select string_agg(author_name, ',' order by created_at desc, id) from list_player_notes(t.u('alice'))), 'Iesha,Helper', '0025 notes: newest first with author');
+end $$;
+:as_alice
+do $$ begin
+  perform t.denied('select * from player_notes', '0025 notes: participants can''t read the table');
+  perform t.throws(format('select * from list_player_notes(%L)', t.u('alice')), 'forbidden', '0025 notes: participants can''t read notes, even about themselves');
+  perform t.throws(format('select add_player_note(%L, %L)', t.u('bob'), 'hi'), 'forbidden', '0025 notes: participants can''t add notes');
+end $$;
+:as_admin
+do $$ begin
+  perform t.throws(format('select delete_player_note(%L)', current_setting('t.note_chair')), 'forbidden', '0025 notes: admins can''t delete others'' notes');
+  perform delete_player_note(current_setting('t.note_admin')::uuid);
+  perform t.eq((select count(*)::int from list_player_notes(t.u('alice'))), 1, '0025 notes: admins delete their own');
+end $$;
+:as_super
+insert into player_notes (user_id, author_id, body) values (t.u('alice'), t.u('admin'), 'Another');
+:as_chair1
+do $$ begin
+  perform delete_player_note((select id from list_player_notes(t.u('alice')) where body = 'Another'));
+  perform t.ok(not exists (select 1 from list_player_notes(t.u('alice')) where body = 'Another'), '0025 notes: YACquest Chairs delete any note');
+end $$;
+
+-- ---- undo a manual points change ----
+:as_admin
+do $$
+declare v_id bigint; v_undo json; a0 int := (select points from profiles where id = t.u('alice'));
+        n0 int := (select count(*) from ledger);
+begin
+  perform adjust_points(t.u('alice'), 30, 'Bonus for helping');
+  v_id := (select max(id) from ledger where user_id = t.u('alice') and source = 'manual');
+  perform t.eq((select points from profiles where id = t.u('alice')), a0 + 30, '0025 undo: setup +30');
+  v_undo := undo_points_change(v_id);
+  perform t.eq((v_undo->>'amount')::int, -30, '0025 undo: correcting row is −amount');
+  perform t.eq((select points from profiles where id = t.u('alice')), a0, '0025 undo: points back where they were');
+  perform t.eq((select count(*)::int from ledger) - n0, 2, '0025 undo: appends a row (ledger stays append-only)');
+  perform t.ok((select source = 'manual' and amount = -30 and ref_id = 'undo:' || v_id and reason = 'Undo: Bonus for helping' and created_by = t.u('admin')
+                  from ledger where id = (v_undo->>'ledgerId')::bigint), '0025 undo: ledger row links to the original, reason "Undo: …"');
+  perform t.throws(format('select undo_points_change(%s)', v_id), 'already_undone', '0025 undo: only once per original');
+  perform t.throws(format('select undo_points_change(%s)', v_undo->>'ledgerId'), 'not_manual', '0025 undo: an undo can''t be undone');
+  perform t.throws(format('select undo_points_change(%s)', (select id from ledger where user_id = t.u('alice') and source = 'checkin' and cycle_id = active_cycle_id() limit 1)), 'not_manual', '0025 undo: check-ins can''t be undone');
+  perform t.throws(format('select undo_points_change(%s)', (select id from ledger where user_id = t.u('alice') and source = 'submission' and cycle_id = active_cycle_id() limit 1)), 'not_manual', '0025 undo: approvals can''t be undone');
+  perform t.throws('select undo_points_change(-1)', 'not_found', '0025 undo: unknown row');
+  -- undoing a removal gives the points back (an exact reversal, not a new award)
+  perform adjust_points(t.u('bob'), -50, 'Duplicate check-in');
+  perform t.eq((undo_points_change((select max(id) from ledger where user_id = t.u('bob')))->>'amount')::int, 50, '0025 undo: a removal can be undone (+50)');
+  perform set_config('t.undo_id', v_id::text, false);
+end $$;
+:as_super
+do $$
+declare v_id bigint := current_setting('t.undo_id')::bigint;
+begin
+  perform t.eq((select count(*)::int from admin_actions where action = 'submission_approved' and actor_id = t.u('admin') and created_at = now()), 3, '0025 bulk: each approval logged');
+  perform t.eq((select count(*)::int from notifications where user_id = t.u('bob') and kind = 'submission_approved' and title like '+20 pts%'), 1, '0025 bulk: participant notified');
+  perform t.ok(exists (select 1 from notifications where user_id = t.u('alice') and kind = 'points_adjusted' and title = '-30 pts from Helper' and body = 'Undo: Bonus for helping'), '0025 undo: player notified');
+  perform t.ok(exists (select 1 from admin_actions where action = 'player_note_added' and actor_id = t.u('admin') and target_user_id = t.u('alice')
+                        and not (details ? 'body')), '0025 notes: adding is logged (without the note text)');
+  perform t.ok(exists (select 1 from admin_actions where action = 'player_note_deleted' and actor_id = t.u('chair1') and target_user_id = t.u('alice')), '0025 notes: deleting is logged');
+  perform t.ok(exists (select 1 from admin_actions where action = 'points_removed' and actor_id = t.u('admin') and target_user_id = t.u('alice')
+                        and (details->>'undoOf')::bigint = v_id and (details->>'amount')::int = -30), '0025 undo: logged with undoOf');
+  perform t.ok(exists (select 1 from admin_actions where action = 'points_added' and (details->>'ledgerId')::bigint = v_id), '0025: log rows carry ledgerId (for Undo in the Log)');
+end $$;
+:as_super
+-- a manual row from an earlier cycle
+insert into ledger (cycle_id, user_id, amount, source, reason, created_by)
+select id, t.u('alice'), 20, 'manual', 'Old bonus', t.u('admin') from cycles where not is_active limit 1;
+:as_alice
+do $$ begin
+  perform t.throws(format('select undo_points_change(%s)', (select max(id) from ledger where user_id = t.u('alice'))), 'forbidden', '0025 undo: participants can''t undo');
+end $$;
+:as_chair1
+do $$ begin
+  perform t.throws(format('select undo_points_change(%s)', (select max(id) from ledger where reason = 'Old bonus')), 'old_cycle', '0025 undo: only this cycle');
+end $$;
+:as_super
+do $$
+declare v_state text;
+begin
+  -- race safety net: the unique index blocks a second undo row even outside the RPC
+  begin
+    insert into ledger (cycle_id, user_id, amount, source, ref_id, reason)
+    values (active_cycle_id(), t.u('alice'), 30, 'manual', (select ref_id from ledger where reason = 'Undo: Bonus for helping'), 'x');
+  exception when others then
+    v_state := sqlstate;
+  end;
+  perform t.eq(v_state, '23505', '0025 undo: unique index ledger_one_undo blocks a second undo row');
+end $$;
+rollback;
+
+-- =============================================================================
+-- 30. 0026 — participant extras: event follow-ups (fixed dates), survey link, welcome tour,
+--     photo wall privacy, my friends. Everything is rolled back afterwards.
+-- =============================================================================
+:as_super
+begin;
+update profiles set role = 'participant' where id in (t.u('alice'), t.u('carol'), t.u('erin'), t.u('bob'), t.u('dave'), t.u('ref3'));
+update profiles set role = 'admin' where id = t.u('admin');
+update profiles set role = 'chair' where id = t.u('chair1');
+update profiles set email_opt_in = true  where id in (t.u('alice'), t.u('carol'), t.u('bob'));
+update profiles set email_opt_in = false where id in (t.u('erin'), t.u('dave'), t.u('ref3'));
+update profiles set photo_wall_opt_out = false;
+update profiles set display_name = v.n from (values ('alice', 'Alice A.'), ('bob', 'Bob'), ('carol', 'Carol'), ('dave', 'Dave'), ('erin', 'Erin'),
+  ('ref2', 'Ref2'), ('ref3', 'Ref3'), ('ref4', 'Ref4'), ('admin', 'Helper')) v(h, n) where id = t.u(v.h);
+insert into events (id, cycle_id, title, campus, kind, location, starts_at, ends_at, activity_id, survey_url) values
+  ('00000000-0000-0000-0000-0000000026f1', active_cycle_id(), 'Spring Social', 'duke', 'active', 'Duke Gardens', '2030-04-04 18:00-04', '2030-04-04 20:00-04', 'home_event', 'https://forms.gle/abc123'),
+  ('00000000-0000-0000-0000-0000000026f2', active_cycle_id(), 'Panel Night', 'unc', 'active', 'Gerrard Hall', '2030-04-05 18:00-04', '2030-04-05 20:00-04', 'home_event', null),
+  ('00000000-0000-0000-0000-0000000026f3', active_cycle_id(), 'Next Mixer', 'duke', 'active', 'Bryan Center', '2030-04-20 18:00-04', '2030-04-20 20:00-04', 'home_event', null),
+  ('00000000-0000-0000-0000-0000000026f4', active_cycle_id(), 'Big Gala', 'all', 'high_impact', 'Durham', '2030-04-25 18:00-04', '2030-04-25 21:00-04', 'cross_campus_event', null),
+  ('00000000-0000-0000-0000-0000000026f5', active_cycle_id(), 'Old Picnic', 'duke', 'active', 'Quad', '2025-03-01 12:00-05', '2025-03-01 14:00-05', 'home_event', null);
+insert into ledger (cycle_id, user_id, amount, source, activity_id, ref_id, reason)
+select active_cycle_id(), t.u(n), 20, 'checkin', 'home_event', '00000000-0000-0000-0000-0000000026f1', 'Checked in: Spring Social'
+  from unnest(array['alice', 'carol', 'erin']) n;
+insert into ledger (cycle_id, user_id, amount, source, activity_id, ref_id, reason)
+values (active_cycle_id(), t.u('carol'), 20, 'checkin', 'home_event', '00000000-0000-0000-0000-0000000026f5', 'Checked in: Old Picnic');
+insert into event_rsvps (event_id, user_id)
+select '00000000-0000-0000-0000-0000000026f1', t.u(n) from unnest(array['alice', 'bob', 'dave', 'ref3']) n;
+
+-- ---- follow-ups: who may run them ----
+:as_alice
+do $$ begin
+  perform t.denied('select queue_event_followups(''2030-04-04 21:30-04'')', '0026: participants can''t run the follow-up job');
+  perform t.throws('select send_event_followup_now(''00000000-0000-0000-0000-0000000026f5'')', 'forbidden', '0026: participants can''t send a follow-up');
+  perform t.throws('select * from admin_event_followups()', 'forbidden', '0026: participants can''t see follow-up status');
+end $$;
+:as_admin
+do $$ begin
+  perform t.denied('select queue_event_followups()', '0026: admins can''t run the job directly (they use Send follow-up now)');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied('select send_event_followup_now(''00000000-0000-0000-0000-0000000026f5'')', '0026: anon can''t send a follow-up');
+end $$;
+
+-- ---- automatic run (fixed dates) ----
+:as_service
+do $$ begin
+  perform t.eq(queue_event_followups('2030-04-04 20:30-04'), 0, '0026: check-in still open (ends 8 PM + 60 min grace) → nothing yet');
+  perform t.eq(queue_event_followups('2030-04-04 21:30-04'), 1, '0026: window closed → Spring Social followed up (Old Picnic is too old for the automatic run)');
+  perform t.eq(queue_event_followups('2030-04-04 21:30-04'), 0, '0026: same run again → nothing (once per event)');
+  perform t.eq(queue_event_followups('2030-04-04 21:40-04'), 0, '0026: 10 minutes later → still nothing');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok((select sent_by is null and attended = 3 and missed = 3 and emailed = 3 and sent_at = '2030-04-04 21:30-04'
+                  from event_followups_sent where event_id = '00000000-0000-0000-0000-0000000026f1'), '0026: marker row: automatic, 3 came, 3 missed, 3 emails');
+  perform t.eq((select count(*) from notifications where kind = 'event_followup' and title = 'Thanks for coming to Spring Social! 🐂'), 3::bigint,
+               '0026: thanks → the three who checked in (alice, carol, erin)');
+  perform t.eq((select body from notifications where kind = 'event_followup' and user_id = t.u('alice')),
+               'Tell us how it went in the feedback survey: https://forms.gle/abc123 It counts as the “Complete a Feedback Survey” digital quest: send a screenshot of the confirmation in Quests for ' || tier_points(3) || ' points.',
+               '0026: thanks body: survey link + the Feedback Survey digital quest + Tier 3 points');
+  perform t.eq((select count(*) from notifications where kind = 'event_followup' and user_id = t.u('alice')), 1::bigint, '0026: alice came (and RSVP''d) → only the thanks, no "missed you"');
+  perform t.eq((select title || ' | ' || body from notifications where kind = 'event_followup' and user_id = t.u('bob')),
+               'Sorry we missed you at Spring Social | Hope to see you next time! Next up: Panel Night — Fri, Apr 5 at 6:00 PM at Gerrard Hall. RSVP in Quests.',
+               '0026: RSVP no-show (UNC) → "Sorry we missed you" + next UNC/all-campus event (Eastern time)');
+  perform t.eq((select body from notifications where kind = 'event_followup' and user_id = t.u('ref3')),
+               'Hope to see you next time! Next up: Big Gala — Thu, Apr 25 at 6:00 PM at Durham. RSVP in Quests.',
+               '0026: NC State no-show → next event for their campus or all campuses');
+  perform t.ok(exists (select 1 from notifications where kind = 'event_followup' and user_id = t.u('dave') and title = 'Sorry we missed you at Spring Social'), '0026: no-show with email off still gets the in-app note');
+  perform t.eq((select count(*) from notifications where kind = 'event_followup' and user_id = t.u('chair1')), 0::bigint, '0026: people who neither RSVP''d nor came get nothing');
+  perform t.eq((select array_agg(to_emails[1] order by to_emails[1]) from email_outbox where kind = 'event_followup'),
+               array['alice@example.edu', 'bob@example.edu', 'carol@example.edu'], '0026: emails only for people with email updates on (not erin, dave, ref3)');
+  perform t.ok((select subject = 'Thanks for coming to Spring Social!' and body_text like '%https://forms.gle/abc123%' and body_html like '%Take the feedback survey%'
+                       and body_text like '%Complete a Feedback Survey%' and status = 'pending'
+                  from email_outbox where kind = 'event_followup' and dedupe_key = 'followup:00000000-0000-0000-0000-0000000026f1:' || t.u('alice')),
+               '0026: thanks email: subject, survey link + button, the quest');
+  perform t.ok((select subject = 'Sorry we missed you at Spring Social' and body_html like '%Panel Night%' and body_text like '%turn them off in Me%'
+                  from email_outbox where kind = 'event_followup' and to_emails = array['bob@example.edu']), '0026: missed-you email names the next event');
+  perform t.ok(exists (select 1 from admin_actions where action = 'event_followup_sent' and actor_id is null and actor_name = 'System'
+                        and details->>'title' = 'Spring Social' and (details->>'automatic')::boolean), '0026: automatic follow-up logged as System');
+end $$;
+-- no survey link: the thanks still mentions the quest; nobody to thank / miss is fine too
+:as_service
+do $$ begin
+  perform t.eq(queue_event_followups('2030-04-06 09:00-04'), 1, '0026: Panel Night (nobody came) followed up once');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok((select attended = 0 and missed = 0 and emailed = 0 from event_followups_sent where event_id = '00000000-0000-0000-0000-0000000026f2'), '0026: empty event → marker with zeros');
+end $$;
+-- the every-10-minutes send-emails call runs the job on its own
+insert into events (id, cycle_id, title, campus, kind, location, starts_at, ends_at, check_in_grace_minutes, activity_id) values
+  ('00000000-0000-0000-0000-0000000026f6', active_cycle_id(), 'Cron Brunch', 'duke', 'active', 'Quad', now() - interval '3 hours', now() - interval '2 hours', 30, 'home_event');
+insert into event_rsvps (event_id, user_id) values ('00000000-0000-0000-0000-0000000026f6', t.u('carol'));
+:as_service
+select enqueue_weekly_report_if_due() \g /dev/null
+:as_super
+do $$ begin
+  perform t.ok(exists (select 1 from event_followups_sent where event_id = '00000000-0000-0000-0000-0000000026f6' and sent_by is null), '0026: the send-emails run queues follow-ups (no new cron)');
+  perform t.ok(exists (select 1 from notifications where user_id = t.u('carol') and title = 'Sorry we missed you at Cron Brunch'), '0026: …and the notes go out');
+  perform t.ok(position('queue_event_followups' in pg_get_functiondef('public.enqueue_weekly_report_if_due()'::regprocedure)) > 0
+               and position('queue_event_reminders' in pg_get_functiondef('public.enqueue_weekly_report_if_due()'::regprocedure)) > 0,
+               '0026: enqueue_weekly_report_if_due calls both reminders and follow-ups');
+end $$;
+
+-- ---- staff: Send follow-up now ----
+:as_admin
+do $$ declare r json; begin
+  perform t.throws('select send_event_followup_now(''00000000-0000-0000-0000-0000000026f3'')', 'not_ended', '0026: can''t send before check-in closes');
+  perform t.throws(format('select send_event_followup_now(%L)', gen_random_uuid()), 'not_found', '0026: unknown event');
+  r := send_event_followup_now('00000000-0000-0000-0000-0000000026f5');
+  perform t.ok((r->>'attended')::int = 1 and (r->>'missed')::int = 0 and not (r->>'automatic')::boolean, '0026: staff can send an older event''s follow-up');
+  perform t.throws('select send_event_followup_now(''00000000-0000-0000-0000-0000000026f5'')', 'already_sent', '0026: only once (manual)');
+  perform t.throws('select send_event_followup_now(''00000000-0000-0000-0000-0000000026f1'')', 'already_sent', '0026: only once (after the automatic run)');
+  perform t.ok((select automatic and attended = 3 from admin_event_followups() where event_id = '00000000-0000-0000-0000-0000000026f1'), '0026: status: automatic');
+  perform t.ok((select not automatic and sent_by_name = 'Helper' from admin_event_followups() where event_id = '00000000-0000-0000-0000-0000000026f5'), '0026: status: sent by Helper');
+end $$;
+:as_service
+do $$ begin
+  perform t.eq(queue_event_followups(now()), 0, '0026: the automatic run skips events staff already followed up');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok(exists (select 1 from admin_actions where action = 'event_followup_sent' and actor_id = t.u('admin') and details->>'title' = 'Old Picnic'), '0026: manual follow-up logged with the staff member');
+  perform t.ok((select body like '%When YAC shares the feedback survey%' from notifications where kind = 'event_followup' and user_id = t.u('carol') and title = 'Thanks for coming to Old Picnic! 🐂'),
+               '0026: no survey link → the thanks still points to the survey quest');
+end $$;
+
+-- ---- survey link on events ----
+:as_admin
+do $$ declare r json; v_id uuid;
+  base jsonb := '{"title":"Survey Test","campus":"duke","kind":"active","location":"Here","startsAt":"2030-05-01T18:00:00-04:00","endsAt":"2030-05-01T20:00:00-04:00","password":"SURVEY"}';
+begin
+  perform t.throws(format('select create_event(%L)', base || '{"surveyUrl":"javascript:alert(1)"}'), 'surveyUrl', '0026 survey: javascript: refused');
+  perform t.throws(format('select create_event(%L)', base || '{"surveyUrl":"ftp://forms.example.com/x"}'), 'surveyUrl', '0026 survey: only http(s)');
+  perform t.throws(format('select create_event(%L)', base || '{"surveyUrl":"https://forms.gle/a b"}'), 'surveyUrl', '0026 survey: no spaces');
+  perform t.throws(format('select create_event(%L)', base || '{"surveyUrl":"https://localhost"}'), 'surveyUrl', '0026 survey: needs a real host');
+  perform t.throws(format('select create_event(%L)', base || jsonb_build_object('surveyUrl', 'https://x.co/' || repeat('a', 500))), 'surveyUrl', '0026 survey: 500 characters max');
+  r := create_event(base || '{"surveyUrl":"  https://forms.gle/AbC123?usp=sf  "}');
+  v_id := (r->>'id')::uuid;
+  perform t.eq(r->>'surveyUrl', 'https://forms.gle/AbC123?usp=sf', '0026 survey: saved trimmed, returned by event_json');
+  perform t.eq((update_event(v_id, base || '{"surveyUrl":"HTTP://Example.org/s"}'))->>'surveyUrl', 'HTTP://Example.org/s', '0026 survey: update changes it');
+  perform t.ok((update_event(v_id, base || '{"surveyUrl":""}'))->>'surveyUrl' is null, '0026 survey: empty clears it');
+  perform t.ok((update_event(v_id, base))->>'surveyUrl' is null, '0026 survey: optional');
+end $$;
+:as_super
+do $$ declare v_state text; begin
+  begin
+    update events set survey_url = 'javascript:alert(1)' where id = '00000000-0000-0000-0000-0000000026f3';
+  exception when others then v_state := sqlstate;
+  end;
+  perform t.eq(v_state, '23514', '0026 survey: table check constraint backs it up');
+end $$;
+
+-- ---- welcome tour ----
+:as_alice
+do $$ declare t1 timestamptz; begin
+  perform t.ok((select tour_done_at is null from profiles where id = t.u('alice')), '0026 tour: not done yet');
+  t1 := mark_tour_done();
+  perform t.ok(t1 is not null and (select tour_done_at from profiles where id = t.u('alice')) = t1, '0026 tour: mark_tour_done sets it (and the person can read it)');
+end $$;
+:as_super
+update profiles set tour_done_at = '2030-01-01 09:00-05' where id = t.u('alice');
+:as_alice
+do $$ begin
+  perform t.eq(mark_tour_done(), '2030-01-01 09:00-05'::timestamptz, '0026 tour: set once (the first time is kept)');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok((select tour_done_at is null from profiles where id = t.u('carol')), '0026 tour: other people unaffected');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied('select mark_tour_done()', '0026 tour: anon can''t call it');
+end $$;
+
+-- ---- photo wall privacy ----
+:as_super
+insert into submissions (id, cycle_id, user_id, activity_id, event_id, image_path, note, status, share_on_wall) values
+  ('00000000-0000-0000-0000-00000026a001', active_cycle_id(), t.u('alice'), 'event_photos', '00000000-0000-0000-0000-0000000026f1', t.u('alice') || '/w1.jpg', '', 'approved', true),
+  ('00000000-0000-0000-0000-00000026a002', active_cycle_id(), t.u('carol'), 'event_photos', '00000000-0000-0000-0000-0000000026f1', t.u('carol') || '/w1.jpg', '', 'approved', false),
+  ('00000000-0000-0000-0000-00000026a003', active_cycle_id(), t.u('erin'),  'event_photos', '00000000-0000-0000-0000-0000000026f1', t.u('erin')  || '/w1.jpg', '', 'pending',  true),
+  ('00000000-0000-0000-0000-00000026a004', active_cycle_id(), t.u('bob'),   'event_photos', '00000000-0000-0000-0000-0000000026f1', t.u('bob')   || '/w1.jpg', '', 'approved', true),
+  ('00000000-0000-0000-0000-00000026a005', active_cycle_id(), t.u('dave'),  'event_photos', '00000000-0000-0000-0000-0000000026f1', t.u('dave')  || '/w1.jpg', '', 'approved', true),
+  ('00000000-0000-0000-0000-00000026a006', active_cycle_id(), t.u('alice'), 'survey', null, t.u('alice') || '/s1.jpg', '', 'approved', false),
+  ('00000000-0000-0000-0000-00000026a007', active_cycle_id(), t.u('frank'), 'event_photos', '00000000-0000-0000-0000-0000000026f1', t.u('frank') || '/w1.jpg', '', 'rejected', true);
+update profiles set photo_wall_opt_out = true where id = t.u('bob');
+insert into storage.buckets (id, name) values ('proofs', 'proofs') on conflict do nothing;
+insert into storage.objects (bucket_id, name, owner)
+select 'proofs', image_path, user_id from submissions where id::text like '00000000-0000-0000-0000-00000026a%';
+:as_carol
+do $$ begin
+  perform t.eq((select array_agg(display_name order by display_name) from event_photos('00000000-0000-0000-0000-0000000026f1')),
+               array['Alice A.', 'Dave'], '0026 wall: only approved + shared + not opted out (not carol''s unshared, erin''s pending, bob''s opted-out, frank''s rejected)');
+  perform t.ok((select bool_and(not mine) from event_photos('00000000-0000-0000-0000-0000000026f1')), '0026 wall: mine = false for other people''s photos');
+  perform t.eq((select photos from event_photo_counts() where event_id = '00000000-0000-0000-0000-0000000026f1'), 2, '0026 wall: counts use the same rule');
+  perform t.eq((select array_agg(name order by name) from storage.objects where name not like t.u('carol') || '/%'),
+               array[t.u('alice') || '/w1.jpg', t.u('dave') || '/w1.jpg'], '0026 wall: storage lets carol read (sign) only wall photos + her own');
+  perform t.ok(exists (select 1 from storage.objects where name = t.u('carol') || '/w1.jpg'), '0026 wall: own photo still readable');
+  perform t.eq((select count(*) from submissions where user_id <> t.u('carol')), 0::bigint, '0026 wall: other people''s submission rows (and unapproved photos) stay hidden');
+  perform t.throws('select set_submission_wall_share(''00000000-0000-0000-0000-00000026a001'', false)', 'not_found', '0026 wall: can''t change someone else''s photo');
+  perform t.throws('select set_photo_wall_hidden(''00000000-0000-0000-0000-00000026a001'')', 'forbidden', '0026 wall: participants can''t hide photos');
+  perform t.ok(set_submission_wall_share('00000000-0000-0000-0000-00000026a002', true), '0026 wall: owner opts a photo in');
+  perform t.eq((select count(*) from event_photos('00000000-0000-0000-0000-0000000026f1')), 3::bigint, '0026 wall: …and it shows up');
+  perform t.ok((select mine from event_photos('00000000-0000-0000-0000-0000000026f1') where display_name = 'Carol'), '0026 wall: mine = true for your own');
+end $$;
+:as_alice
+do $$ begin
+  perform t.throws('select set_submission_wall_share(''00000000-0000-0000-0000-00000026a006'', true)', 'not_photo', '0026 wall: only event photos can be shared');
+  perform t.eq((select count(*) from storage.objects where name = t.u('erin') || '/w1.jpg'), 0::bigint, '0026 wall: a pending photo can''t be read even if shared');
+end $$;
+:as_admin
+do $$ begin
+  perform t.ok(set_photo_wall_hidden('00000000-0000-0000-0000-00000026a005'), '0026 wall: staff hide a photo');
+end $$;
+:as_carol
+do $$ begin
+  perform t.eq((select array_agg(display_name order by display_name) from event_photos('00000000-0000-0000-0000-0000000026f1')),
+               array['Alice A.', 'Carol'], '0026 wall: hidden photo gone from the wall');
+  perform t.eq((select count(*) from storage.objects where name = t.u('dave') || '/w1.jpg'), 0::bigint, '0026 wall: …and from storage');
+end $$;
+:as_alice
+do $$ begin
+  perform t.eq(set_photo_wall_opt_out(true), true, '0026 wall: global opt-out');
+  perform t.ok((select photo_wall_opt_out from profiles where id = t.u('alice')), '0026 wall: stored on the profile');
+  perform t.ok(exists (select 1 from storage.objects where name = t.u('alice') || '/w1.jpg'), '0026 wall: opted-out owner still sees their own');
+end $$;
+:as_carol
+do $$ begin
+  perform t.eq((select array_agg(display_name) from event_photos('00000000-0000-0000-0000-0000000026f1')), array['Carol'], '0026 wall: opting out hides ALL of alice''s photos');
+  perform t.eq((select count(*) from storage.objects where name = t.u('alice') || '/w1.jpg'), 0::bigint, '0026 wall: …in storage too');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied('select * from event_photos(''00000000-0000-0000-0000-0000000026f1'')', '0026 wall: anon can''t list photos');
+  perform t.denied('select * from event_photo_counts()', '0026 wall: anon can''t count photos');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok(exists (select 1 from admin_actions where action = 'photo_hidden' and actor_id = t.u('admin') and target_user_id = t.u('dave')
+                        and details->>'title' = 'Spring Social'), '0026 wall: hiding is logged');
+  perform t.ok((select wall_hidden_by = t.u('admin') and wall_hidden_at is not null from submissions where id = '00000000-0000-0000-0000-00000026a005'), '0026 wall: who hid it is kept');
+  perform t.ok((select not share_on_wall from submissions where id = '00000000-0000-0000-0000-00000026a006'), '0026 wall: share_on_wall defaults off');
+end $$;
+
+-- ---- my friends ----
+:as_alice
+do $$ begin
+  perform t.eq((select array_agg(display_name order by display_name) from my_friends()), array['Bob', 'Ref2', 'Ref3', 'Ref4'], '0026 friends: exactly the people who used alice''s code');
+  perform set_config('t.friends', (select json_agg(f) from my_friends() f)::text, false);
+  perform t.ok((select count(*) filter (where bonus) <= 3 and bool_and(not bonus or came) from my_friends()), '0026 friends: bonus only for friends who came (max 3)');
+end $$;
+:as_carol
+do $$ begin
+  perform t.eq((select count(*) from my_friends()), 0::bigint, '0026 friends: nobody used carol''s code → empty (never other people''s referrals)');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied('select * from my_friends()', '0026 friends: anon can''t call it');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok((select bool_and(f.came = exists (select 1 from ledger l join profiles p on p.id = l.user_id
+                                                  where p.display_name = f.display_name and p.referred_by = t.u('alice') and l.source = 'checkin'))
+                  from json_to_recordset(current_setting('t.friends')::json) f(display_name text, came boolean)), '0026 friends: came = has an event check-in');
+  perform t.ok((select bool_and(json_typeof(j->'joined_at') = 'string' and j->>'campus' in ('duke','unc','ncsu') and j->>'avatar' is not null)
+                  from json_array_elements(current_setting('t.friends')::json) j), '0026 friends: campus, character and joined date included');
+  perform t.ok(pg_get_function_result('public.my_friends()'::regprocedure) !~* '(email|handle|user_id|friend_code|points)', '0026 friends: only safe fields (no email, handle, id, code or points)');
+end $$;
+rollback;
+
+-- =============================================================================
 :as_super
 select 'PASSED: ' || current_setting('t.passed') || ' assertions' as result;

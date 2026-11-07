@@ -31,6 +31,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     pages: [
       { path: '/admin/players', label: 'Players', icon: 'people', blurb: 'Look up players, award points' },
       { path: '/admin/council', label: 'Council', icon: 'council', blurb: 'Staff team board and badges' },
+      { path: '/admin/stats', label: 'Stats', icon: 'chart', blurb: 'Charts, trends and CSV exports' },
     ],
   },
   {

@@ -273,6 +273,7 @@ function NextEventCard({ events, error }: { events: AdminEvent[] | null; error: 
           <button type="button" className="btn small navy" onClick={() => setModal('qr')}>QR code</button>
           <button type="button" className="btn small blue" onClick={() => setModal('going')}>Who’s going</button>
         </div>
+        <Link to={`/admin/door/${e.id}`} state={{ from: '/admin' }} className="btn small block door-btn">🚪 Door mode</Link>
       </div>
       <Modal open={modal === 'qr'} onClose={() => setModal(null)} title="Check-in QR code">
         {modal === 'qr' && <CheckInQr e={e} onClose={() => setModal(null)} />}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import * as api from '../../api';
 import { ACTIVITIES } from '../../lib/activities';
 import { CAMPUSES, campusName, type CampusId } from '../../config';
@@ -8,6 +8,7 @@ import { nextLimit } from '../../lib/listing';
 import { fmtDateTime, timeAgo } from '../../lib/format';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 import type { SubmissionStatus } from '../../types';
+import { bulkSummary, toggleAll } from '../../lib/adminTools';
 
 const REVIEW_STEP = 8;
 const QUICK = ['Screenshot unclear', 'Duplicate', "Doesn't show YAC content"];
@@ -24,11 +25,44 @@ export default function Review() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [limit, setLimit] = useState(REVIEW_STEP);
+  // 0025 bulk approve: ticked pending cards (ids), the confirm dialog, and the running request.
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [confirmBulk, setConfirmBulk] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const q = useAsync(
     () => api.reviewQueue({ status, campus: campus || undefined, activityId: activityId || undefined }),
     [status, campus, activityId],
   );
+
+  // Forget ticks that left the list (reviewed elsewhere, filters changed, other tab).
+  useEffect(() => {
+    if (status !== 'pending') return setPicked(new Set());
+    const ids = new Set((q.data ?? []).map((x) => x.id));
+    setPicked((p) => (([...p].every((id) => ids.has(id))) ? p : new Set([...p].filter((id) => ids.has(id)))));
+  }, [q.data, status]);
+
+  const pageIds = status === 'pending' ? (q.data ?? []).slice(0, limit).map((x) => x.id) : [];
+  const allOnPage = pageIds.length > 0 && pageIds.every((id) => picked.has(id));
+  const tick = (id: string) => setPicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+
+  async function approvePicked() {
+    const ids = [...picked];
+    setBulkBusy(true);
+    try {
+      const r = await api.reviewSubmissionsBulk(ids);
+      const done = new Set(r.results.filter((x) => x.ok).map((x) => x.id));
+      q.setData((d) => (d ? d.filter((x) => !done.has(x.id)) : d));
+      setPicked(new Set(r.results.filter((x) => !x.ok && x.code !== 'already_reviewed' && x.code !== 'not_found').map((x) => x.id)));
+      toast(bulkSummary(r), r.skipped ? 'info' : 'success');
+      setConfirmBulk(false);
+      if (r.skipped) void q.reload();
+    } catch (e) {
+      toast(errorMessage(e), 'error');
+    } finally {
+      setBulkBusy(false);
+    }
+  }
 
   async function decide(id: string, decision: 'approved' | 'rejected', why?: string) {
     setBusy(true);
@@ -77,9 +111,23 @@ export default function Review() {
         <Empty>Nothing {status} here. Nice work!</Empty>
       ) : (
         <>
-          <p className="list-count">{q.data.length} {status}</p>
+          <div className="review-top">
+            <p className="list-count">{q.data.length} {status}</p>
+            {status === 'pending' && (
+              <label className="check review-all">
+                <input type="checkbox" checked={allOnPage} onChange={() => setPicked((p) => toggleAll(p, pageIds))} />
+                <span>Select all on this page ({pageIds.length})</span>
+              </label>
+            )}
+          </div>
           {q.data.slice(0, limit).map((s) => (
-            <Panel key={s.id} className="adm-item">
+            <Panel key={s.id} className={`adm-item${picked.has(s.id) ? ' picked' : ''}`}>
+              {status === 'pending' && (
+                <label className="check review-pick">
+                  <input type="checkbox" checked={picked.has(s.id)} onChange={() => tick(s.id)} aria-label={`Select ${s.user.displayName}’s ${s.activity.title}`} />
+                  <span aria-hidden="true">{picked.has(s.id) ? 'Selected' : 'Select'}</span>
+                </label>
+              )}
               <div className="row" style={{ alignItems: 'flex-start', gap: 12 }}>
                 <button onClick={() => setZoom(s.imageUrl)} aria-label="Enlarge proof image" className="review-thumb">
                   <img src={s.imageUrl} alt={`Proof from ${s.user.displayName}`} />
@@ -111,6 +159,25 @@ export default function Review() {
           <ShowMore shown={Math.min(limit, q.data.length)} total={q.data.length} step={REVIEW_STEP} onMore={() => setLimit((l) => nextLimit(l, REVIEW_STEP, q.data?.length ?? 0))} />
         </>
       )}
+
+      {status === 'pending' && picked.size > 0 && (
+        <div className="bulk-bar" role="region" aria-label="Bulk approve">
+          <span className="bulk-count"><b>{picked.size}</b> selected</span>
+          <button type="button" className="btn small ghost" onClick={() => setPicked(new Set())}>Clear</button>
+          <button type="button" className="btn small green" disabled={bulkBusy} onClick={() => setConfirmBulk(true)}>✓ Approve {picked.size}</button>
+        </div>
+      )}
+
+      <Modal open={confirmBulk} onClose={() => !bulkBusy && setConfirmBulk(false)} title={`Approve ${picked.size} ${picked.size === 1 ? 'submission' : 'submissions'}?`}>
+        <div className="stack">
+          <p style={{ margin: 0 }}>Each person gets their points and an “approved” notification. Anything someone else already reviewed is skipped.</p>
+          <p className="muted" style={{ margin: 0 }}>Rejecting still happens one at a time, so you can give a reason.</p>
+          <div className="btn-row">
+            <button className="btn ghost" disabled={bulkBusy} onClick={() => setConfirmBulk(false)}>Cancel</button>
+            <button className="btn green" disabled={bulkBusy} onClick={() => void approvePicked()}>{bulkBusy ? 'Approving…' : `Approve ${picked.size}`}</button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal open={!!zoom} onClose={() => setZoom(null)} title="Proof image">
         {zoom && <img src={zoom} alt="Proof, enlarged" style={{ width: '100%', maxHeight: '70vh', objectFit: 'contain' }} />}

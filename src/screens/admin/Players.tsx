@@ -3,7 +3,10 @@ import * as api from '../../api';
 import { ACTIVITIES, activityById } from '../../lib/activities';
 import { PRIZE, TIER_POINTS, campusName } from '../../config';
 import { Empty, ErrorText, Loading, Modal, useToast } from '../../components/ui';
-import { fmtDateTime, fmtPts } from '../../lib/format';
+import { fmtDateTime, fmtPts, timeAgo } from '../../lib/format';
+import { Accordion } from '../../components/Blocks';
+import { canUndo, undoneIds, UNDO_PREFIX } from '../../lib/adminTools';
+import type { LedgerEntry } from '../../types';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 
 const gameWin = activityById('game_win')!;
@@ -123,6 +126,12 @@ function PlayerModal({ user, onClose }: { user: api.AdminUserRow; onClose: () =>
           +{TIER_POINTS[gameWin.tier]} Game win
         </button>
 
+        <StaffNotes userId={user.id} name={user.displayName} />
+
+        <Accordion flat title="Points history" glyph="scroll" summary="Manual changes can be undone once" right={ledger.data ? <span className="chip neutral">{ledger.data.length}</span> : undefined} defaultOpen>
+          {ledger.loading && !ledger.data ? <Loading /> : !ledger.data?.length ? <Empty>No entries yet.</Empty> : <History ledger={ledger.data} name={user.displayName} />}
+        </Accordion>
+
         <form className="stack" onSubmit={(e) => { e.preventDefault(); void award(activityId, note); }}>
           <h3>Award activity</h3>
           <label className="field">
@@ -157,19 +166,138 @@ function PlayerModal({ user, onClose }: { user: api.AdminUserRow; onClose: () =>
           <button className="btn" disabled={busy || newName.trim().length < 2 || newName.trim() === user.displayName}>Save name</button>
         </form>
 
-        <h3>Points history</h3>
-        {ledger.loading && !ledger.data ? <Loading /> : !ledger.data?.length ? <Empty>No entries yet.</Empty> : (
-          <ul className="list">
-            {ledger.data.map((l) => (
-              <li key={l.id} className="spread">
-                <span>{l.reason}<br /><span className="muted">{fmtDateTime(l.createdAt)}</span></span>
-                <strong style={{ color: l.amount < 0 ? 'var(--red)' : 'var(--green)' }}>{fmtPts(l.amount)}</strong>
-              </li>
-            ))}
-          </ul>
-        )}
         <button className="btn ghost block" onClick={onClose}>Close</button>
       </div>
     </Modal>
+  );
+}
+
+const NOTE_MAX = 500;
+
+/** 0025: private staff notes (never shown to the player). Delete your own; YACquest Chairs can delete any. */
+function StaffNotes({ userId, name }: { userId: string; name: string }) {
+  const toast = useToast();
+  const notes = useAsync(() => api.listPlayerNotes(userId), [userId]);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function add(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setErr(null);
+    try {
+      const n = await api.addPlayerNote(userId, text);
+      notes.setData((d) => [n, ...(d ?? [])]);
+      setText('');
+    } catch (x) {
+      setErr(errorMessage(x));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function del(id: string) {
+    if (!window.confirm('Delete this note?')) return;
+    try {
+      await api.deletePlayerNote(id);
+      notes.setData((d) => (d ?? []).filter((n) => n.id !== id));
+      toast('Note deleted.', 'success');
+    } catch (x) {
+      toast(errorMessage(x), 'error');
+    }
+  }
+
+  const count = notes.data?.length ?? 0;
+  return (
+    <Accordion flat title="Staff notes" glyph="todo" summary={`Private: ${name} never sees these`} right={count ? <span className="chip t2">{count}</span> : undefined} defaultOpen className="staff-notes">
+      <form className="stack" style={{ gap: 6 }} onSubmit={add}>
+        <label className="field">
+          <span className="sr-only">New note about {name}</span>
+          <textarea rows={2} value={text} maxLength={NOTE_MAX} onChange={(e) => setText(e.target.value)} placeholder="e.g. Wants to help at the spring service day" />
+        </label>
+        <div className="spread">
+          <small className="muted">{text.length}/{NOTE_MAX} · only staff can read notes</small>
+          <button className="btn small navy" disabled={busy || !text.trim()}>{busy ? 'Saving…' : '+ Add note'}</button>
+        </div>
+        <ErrorText error={err} />
+      </form>
+      {notes.loading && !notes.data ? <Loading lines={1} /> : notes.error ? <ErrorText error={notes.error} /> : count === 0 ? (
+        <p className="muted" style={{ margin: '8px 0 0', fontSize: 14 }}>No notes yet.</p>
+      ) : (
+        <ul className="note-list">
+          {notes.data!.map((n) => (
+            <li key={n.id}>
+              <p className="note-body">{n.body}</p>
+              <div className="note-meta">
+                <span><b>{n.authorName}</b> · <time dateTime={n.createdAt} title={fmtDateTime(n.createdAt)}>{timeAgo(n.createdAt)}</time></span>
+                {n.canDelete && <button type="button" className="note-del" onClick={() => void del(n.id)} aria-label={`Delete note by ${n.authorName}`}>Delete</button>}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Accordion>
+  );
+}
+
+/** Points history with "Undo" on manual changes (0025: once per change, this cycle only). */
+function History({ ledger, name }: { ledger: LedgerEntry[]; name: string }) {
+  const toast = useToast();
+  const [asking, setAsking] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<Set<string>>(new Set());
+  const undone = new Set([...undoneIds(ledger), ...done]);
+
+  async function undo(l: LedgerEntry) {
+    setBusy(true);
+    try {
+      const r = await api.undoPointsChange(l.id);
+      setDone((s) => new Set(s).add(l.id));
+      setAsking(null);
+      toast(`Undone: ${fmtPts(r.amount)} to ${name}.`, 'success');
+    } catch (x) {
+      toast(errorMessage(x), 'error');
+      if ((x as { code?: string }).code === 'already_undone') setDone((s) => new Set(s).add(l.id));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <ul className="list ledger-list">
+      {ledger.map((l) => {
+        const isUndo = l.source === 'manual' && !!l.refId?.startsWith(UNDO_PREFIX);
+        return (
+          <li key={l.id} className="stack" style={{ gap: 6 }}>
+            <div className="spread" style={{ alignItems: 'flex-start' }}>
+              <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+                {l.reason}
+                <br />
+                <span className="muted" style={{ fontSize: 13 }}>
+                  {fmtDateTime(l.createdAt)}
+                  {isUndo && <span className="chip neutral ledger-tag">↩ undo</span>}
+                  {undone.has(l.id) && <span className="chip neutral ledger-tag">undone</span>}
+                </span>
+              </span>
+              <span className="ledger-right">
+                <strong style={{ color: l.amount < 0 ? 'var(--red)' : 'var(--green)' }}>{fmtPts(l.amount)}</strong>
+                {canUndo(l, undone) && asking !== l.id && (
+                  <button type="button" className="btn small ghost undo-btn" onClick={() => setAsking(l.id)} aria-label={`Undo ${fmtPts(l.amount)}: ${l.reason}`}>↩ Undo</button>
+                )}
+              </span>
+            </div>
+            {asking === l.id && (
+              <div className="undo-ask">
+                <span>Add {fmtPts(-l.amount)} to cancel this? {name} gets a notification.</span>
+                <div className="btn-row">
+                  <button type="button" className="btn small ghost" disabled={busy} onClick={() => setAsking(null)}>Cancel</button>
+                  <button type="button" className="btn small red" disabled={busy} onClick={() => void undo(l)}>{busy ? 'Undoing…' : `Yes, undo`}</button>
+                </div>
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
   );
 }

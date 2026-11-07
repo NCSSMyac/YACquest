@@ -15,6 +15,8 @@ export interface EventForm {
   end: string;
   grace: number;
   password: string;
+  /** 0026: optional feedback survey link ('' = none). Duplicate keeps it. */
+  surveyUrl: string;
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -25,10 +27,10 @@ export const toLocalInput = (iso: string | Date) => {
 };
 
 export function editForm(e: YacEvent): EventForm {
-  return { title: e.title, campus: e.campus, kind: e.kind, location: e.location, start: toLocalInput(e.startsAt), end: toLocalInput(e.endsAt), grace: e.checkInGraceMinutes, password: e.password ?? '' };
+  return { title: e.title, campus: e.campus, kind: e.kind, location: e.location, start: toLocalInput(e.startsAt), end: toLocalInput(e.endsAt), grace: e.checkInGraceMinutes, password: e.password ?? '', surveyUrl: e.surveyUrl ?? '' };
 }
 
-/** Same title, tier, campus, location, length and grace; one week later (same wall-clock time); new password. */
+/** Same title, tier, campus, location, length, grace and survey link; one week later (same wall-clock time); new password. */
 export function duplicateForm(e: YacEvent, newPassword: string): EventForm {
   const start = new Date(e.startsAt);
   const length = new Date(e.endsAt).getTime() - start.getTime();

@@ -2,7 +2,7 @@ import { NAME_NOT_ALLOWED, nameIsClean } from '../lib/nameFilter';
 import { FeedbackForm } from '../components/FeedbackForm';
 import { InstallApp } from '../components/InstallApp';
 import { useEffect, useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import * as api from '../api';
 import { campusName } from '../config';
 import { AVATAR_IDS, AVATAR_NAMES } from '../components/Sprite';
@@ -16,6 +16,8 @@ import { errorMessage, useAsync } from '../lib/useAsync';
 import type { AvatarId } from '../types';
 import { LEGENDARY_AVATARS } from '../lib/staffRewards';
 import { useStaffRewards } from '../lib/useStaffRewards';
+import { MyFriends } from '../components/MyFriends';
+import { requestTour } from '../lib/tour';
 
 type Theme = 'light' | 'dark' | 'system';
 const THEME_KEY = 'yacquest-theme';
@@ -58,6 +60,17 @@ export default function Me() {
   const [theme, setTheme] = useState<Theme>(readTheme);
   const [confirmReset, setConfirmReset] = useState(false);
   const histMore = useShowMore(10, 5);
+  // `#/me?section=friends` (Home's friend-code row) scrolls to My friends.
+  const [params] = useSearchParams();
+  const section = params.get('section');
+  useEffect(() => {
+    if (section !== 'friends') return;
+    const t = setTimeout(() => {
+      const el = document.getElementById('friends');
+      el?.scrollIntoView({ block: 'start', behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    }, 50);
+    return () => clearTimeout(t);
+  }, [section]);
 
   useEffect(() => {
     if (user) {
@@ -91,6 +104,16 @@ export default function Me() {
     try {
       await api.updateProfile({ emailOptIn: on });
       await refresh();
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  }
+
+  async function togglePhotoWall(show: boolean) {
+    try {
+      await api.setPhotoWallOptOut(!show);
+      await refresh();
+      toast(show ? 'Your shared event photos can appear on photo walls.' : 'Your photos are hidden from every photo wall.', 'success');
     } catch (err) {
       toast(errorMessage(err), 'error');
     }
@@ -161,6 +184,8 @@ export default function Me() {
         )}
       </Card>
 
+      <MyFriends code={user.friendCode} id="friends" />
+
       <Accordion glyph="people" title="Name & character" summary={`${user.displayName} · ${AVATAR_NAMES[user.avatar] ?? 'Character'}`}>
         <form className="stack" onSubmit={saveProfile}>
           <label className="field">
@@ -201,13 +226,20 @@ export default function Me() {
         </form>
       </Accordion>
 
-      <Accordion glyph="gear" title="Settings" summary="Email, sound effects and theme">
+      <Accordion glyph="gear" title="Settings" summary="Email, photo wall, sound effects and theme">
         <div className="stack">
           <label className="check">
             <input type="checkbox" checked={user.emailOptIn} onChange={(e) => toggleEmail(e.target.checked)} />
             <span>
               Email me announcements from YAC
               <small className="muted" style={{ display: 'block' }}>Event news and reminders. You’ll still see every message in the app.</small>
+            </span>
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={!user.photoWallOptOut} onChange={(e) => togglePhotoWall(e.target.checked)} />
+            <span>
+              Show my approved event photos on photo walls
+              <small className="muted" style={{ display: 'block' }}>Only photos you chose to share when you uploaded them. Turn off to hide all of them.</small>
             </span>
           </label>
           <SoundToggle />
@@ -233,6 +265,7 @@ export default function Me() {
         <Link className="btn small ghost" to="/help">❓ Help</Link>
         <Link className="btn small ghost" to="/notifications" aria-label="Notifications">🔔 Alerts</Link>
       </nav>
+      <button type="button" className="btn small ghost block" onClick={requestTour}>🧭 Replay the tour</button>
 
       <button className="btn block navy" onClick={async () => { await signOut(); nav('/login'); }}>Sign out</button>
       {api.isMock && <button className="btn block red small" onClick={() => setConfirmReset(true)}>Reset demo data</button>}

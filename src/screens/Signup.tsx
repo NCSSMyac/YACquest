@@ -1,6 +1,6 @@
 import { playCoin, setSoundOn } from '../lib/sound';
 import { useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import * as api from '../api';
 import { CAMPUSES, CYCLE, type CampusId } from '../config';
 import { fmtCycleRange } from '../lib/format';
@@ -12,6 +12,7 @@ import type { AvatarId } from '../types';
 import { NAME_NOT_ALLOWED, nameIsClean } from '../lib/nameFilter';
 import { RulesContent } from './Rules';
 import { PendingCheckInBanner } from './CheckInLink';
+import { codeFromQuery } from '../lib/friends';
 
 type Errors = Partial<Record<'handle' | 'displayName' | 'email' | 'password' | 'campus' | 'friendCode' | 'form', string>>;
 
@@ -24,7 +25,10 @@ export default function Signup() {
   const [password, setPassword] = useState('');
   const [campus, setCampus] = useState<CampusId | ''>('');
   const [avatar, setAvatar] = useState<AvatarId>('yak');
-  const [friendCode, setFriendCode] = useState('');
+  // 0026: `#/signup?code=YAC-XXXX` (the "My friends" share link) prefills the friend code.
+  const [params] = useSearchParams();
+  const [friendCode, setFriendCode] = useState(() => codeFromQuery(params.get('code')));
+  const prefilled = !!codeFromQuery(params.get('code'));
   const [sound, setSound] = useState(true);
   const [emailOptIn, setEmailOptIn] = useState(true);
   const [errors, setErrors] = useState<Errors>({});
@@ -151,6 +155,7 @@ export default function Signup() {
           <label className="field">
             <span>Did a friend invite you?</span>
             <input className="input" value={friendCode} onChange={(e) => setFriendCode(e.target.value)} placeholder="YAC-XXXX" autoCapitalize="characters" />
+            {prefilled && friendCode && <small className="muted">From your friend’s invite link. You both get bonus points at your first event!</small>}
             <ErrorText error={errors.friendCode} />
           </label>
         </Panel>

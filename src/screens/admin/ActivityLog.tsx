@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import * as api from '../../api';
-import { Empty, ErrorText, Loading, Panel } from '../../components/ui';
+import { Empty, ErrorText, Loading, Panel, useToast } from '../../components/ui';
 import { describeAction } from '../../lib/actionText';
 import { fmtDateTime, timeAgo } from '../../lib/format';
 import { errorMessage } from '../../lib/useAsync';
@@ -20,6 +20,8 @@ const ICON: Record<string, string> = {
   hero_crowned: 'chip t1',
   hero_cleared: 'chip neutral',
   staff_reward_granted: 'chip t1',
+  player_note_added: 'chip t2',
+  player_note_deleted: 'chip neutral',
 };
 const TAG: Record<string, string> = {
   points_added: 'points',
@@ -37,7 +39,13 @@ const TAG: Record<string, string> = {
   hero_crowned: 'hero',
   hero_cleared: 'hero',
   staff_reward_granted: 'reward',
+  player_note_added: 'note',
+  player_note_deleted: 'note',
 };
+
+/** 0025: points rows that carry their ledger id (and aren't undo rows themselves) can be undone from here. */
+const undoableId = (a: AdminAction): string | null =>
+  (a.action === 'points_added' || a.action === 'points_removed') && a.details.ledgerId != null && a.details.undoOf == null ? String(a.details.ledgerId) : null;
 
 export default function ActivityLog() {
   const [items, setItems] = useState<AdminAction[]>([]);
@@ -45,6 +53,26 @@ export default function ActivityLog() {
   const [more, setMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
+  const [undone, setUndone] = useState<Set<string>>(new Set());
+  const [undoing, setUndoing] = useState<string | null>(null);
+
+  async function undo(a: AdminAction, ledgerId: string) {
+    const amt = Number(a.details.amount);
+    if (!window.confirm(`Undo this change? ${a.targetName ?? 'They'} will get ${amt > 0 ? `−${amt}` : `+${-amt}`} points back to cancel it, with a notification.`)) return;
+    setUndoing(ledgerId);
+    try {
+      const r = await api.undoPointsChange(ledgerId);
+      setUndone((s) => new Set(s).add(ledgerId));
+      toast(`Undone (${r.amount > 0 ? '+' : ''}${r.amount} pts).`, 'success');
+      void loadFirst();
+    } catch (e) {
+      toast(errorMessage(e), 'error');
+      if ((e as { code?: string }).code === 'already_undone') setUndone((s) => new Set(s).add(ledgerId));
+    } finally {
+      setUndoing(null);
+    }
+  }
 
   const loadFirst = useCallback(async () => {
     setLoading(true);
@@ -92,17 +120,28 @@ export default function ActivityLog() {
       ) : (
         <>
           <ul className="list">
-            {items.map((a) => (
-              <li key={a.id} className="stack" style={{ gap: 4 }}>
-                <span>{describeAction(a)}</span>
-                <span className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                  <span className={ICON[a.action] ?? 'chip neutral'}>{TAG[a.action] ?? 'other'}</span>
-                  <time className="muted" dateTime={a.createdAt} title={fmtDateTime(a.createdAt)} style={{ fontSize: 13 }}>
-                    {timeAgo(a.createdAt)} · {fmtDateTime(a.createdAt)}
-                  </time>
-                </span>
-              </li>
-            ))}
+            {items.map((a) => {
+              const lid = undoableId(a);
+              const undoneHere = lid != null && (undone.has(lid) || items.some((b) => b.details.undoOf != null && String(b.details.undoOf) === lid));
+              return (
+                <li key={a.id} className="stack" style={{ gap: 4 }}>
+                  <span>{describeAction(a)}</span>
+                  <span className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                    <span className={ICON[a.action] ?? 'chip neutral'}>{a.details.undoOf != null ? 'undo' : TAG[a.action] ?? 'other'}</span>
+                    <time className="muted" dateTime={a.createdAt} title={fmtDateTime(a.createdAt)} style={{ fontSize: 13 }}>
+                      {timeAgo(a.createdAt)} · {fmtDateTime(a.createdAt)}
+                    </time>
+                    {lid && (undoneHere ? (
+                      <span className="chip neutral">undone</span>
+                    ) : (
+                      <button type="button" className="btn small ghost undo-btn" disabled={undoing === lid} onClick={() => void undo(a, lid)} aria-label={`Undo: ${describeAction(a)}`}>
+                        {undoing === lid ? 'Undoing…' : '↩ Undo'}
+                      </button>
+                    ))}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
           <ErrorText error={error} />
           {hasMore && (

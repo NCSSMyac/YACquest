@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import * as api from '../api';
 import { INSTAGRAM_HANDLE, INSTAGRAM_URL, TIER_POINTS, UPLOAD, campusName, type Tier } from '../config';
@@ -31,6 +31,8 @@ const TABS: { id: TabId; label: string }[] = [
 const TIER_TITLES: Record<Tier, string> = { 1: 'Tier 1 · High-Impact', 2: 'Tier 2 · Active', 3: 'Tier 3 · Digital' };
 const TIER_GLYPH: Record<Tier, GlyphName> = { 1: 'star', 2: 'bolt', 3: 'chat' };
 const OPEN_BEFORE_MIN = 30;
+// 0026: the photo wall gallery is lazy-loaded (only opened from a past event).
+const PhotoWall = lazy(() => import('../components/PhotoWall'));
 const EVENTS_STEP = 4;
 
 export default function Earn() {
@@ -68,6 +70,8 @@ function Events({ focusId }: { focusId?: string }) {
   const past = useAsync(() => api.listEvents('past'), [], { live: true });
   const [showPast, setShowPast] = useState(false);
   const [pastLimit, setPastLimit] = useState(10);
+  const photoCounts = useAsync(() => (showPast ? api.eventPhotoCounts() : Promise.resolve({} as Record<string, number>)), [showPast], {});
+  const [wall, setWall] = useState<{ id: string; title: string } | null>(null);
   // Live and soonest events first; the rest behind "Show more" (always far enough to include a deep-linked event).
   const focusIndex = focusId && up.data ? up.data.findIndex((e) => e.id === focusId) : -1;
   const [limit, setLimit] = useState(EVENTS_STEP);
@@ -118,6 +122,9 @@ function Events({ focusId }: { focusId?: string }) {
                 <span className="mini-main">
                   <span className="mini-title">{e.title}</span>
                   <span className="mini-meta">{fmtDate(e.startsAt)} · {e.campus === 'all' ? 'All campuses' : campusName(e.campus)}</span>
+                  <button type="button" className="photo-link" onClick={() => setWall({ id: e.id, title: e.title })} aria-label={`Photos from ${e.title} (${photoCounts.data?.[e.id] ?? 0})`}>
+                    📸 Photos ({photoCounts.data?.[e.id] ?? 0})
+                  </button>
                 </span>
                 {e.checkedIn ? <span className="chip approved">Went ✓</span> : <span className="chip neutral">Missed</span>}
               </li>
@@ -125,6 +132,11 @@ function Events({ focusId }: { focusId?: string }) {
           </ul>
           {past.data && <ShowMore shown={Math.min(pastLimit, past.data.length)} total={past.data.length} step={10} onMore={() => setPastLimit((l) => nextLimit(l, 10, past.data?.length ?? 0))} />}
         </Panel>
+      )}
+      {wall && (
+        <Suspense fallback={null}>
+          <PhotoWall eventId={wall.id} title={wall.title} onClose={() => setWall(null)} onChanged={() => void photoCounts.reload()} />
+        </Suspense>
       )}
     </>
   );
@@ -313,6 +325,7 @@ function ProofModal({ activity, onClose }: { activity: Activity; onClose: () => 
   const [eventId, setEventId] = useState('');
   const [image, setImage] = useState<string | null>(null);
   const [note, setNote] = useState('');
+  const [shareOnWall, setShareOnWall] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [blocker, setBlocker] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -350,7 +363,7 @@ function ProofModal({ activity, onClose }: { activity: Activity; onClose: () => 
         setBlocker(msg);
         return;
       }
-      await api.submitProof({ activityId: activity.id, eventId: needsEvent ? eventId : undefined, imageDataUrl: image, note: note.trim() });
+      await api.submitProof({ activityId: activity.id, eventId: needsEvent ? eventId : undefined, imageDataUrl: image, note: note.trim(), shareOnWall: needsEvent && shareOnWall });
       toast('Sent for review!', 'success');
       onClose();
     } catch (x) {
@@ -385,6 +398,15 @@ function ProofModal({ activity, onClose }: { activity: Activity; onClose: () => 
           <textarea className="input" rows={2} maxLength={280} value={note} onChange={(e) => setNote(e.target.value)} />
           <small className="muted" aria-live="polite">{note.length}/280</small>
         </label>
+        {needsEvent && (
+          <label className="check">
+            <input type="checkbox" checked={shareOnWall} onChange={(e) => setShareOnWall(e.target.checked)} />
+            <span>
+              Show my photo on the event photo wall
+              <small className="muted" style={{ display: 'block' }}>After a YAC admin approves it, other players can see it in that event’s 📸 Photos with your display name. Hide all your photos any time in Me → Settings.</small>
+            </span>
+          </label>
+        )}
         {blocker && <p className="field-error" role="alert">{blocker}</p>}
         <ErrorText error={err} />
         <div className="btn-row">

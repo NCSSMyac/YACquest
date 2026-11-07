@@ -10,7 +10,7 @@ This takes about 30–45 minutes, done once. Dashboard menu names can differ sli
 ## 2. Create the database
 1. Open **SQL Editor → New query**.
 2. Paste the whole of `supabase/migrations/0001_init.sql` and click **Run**. It should finish with "Success". It is safe to run again.
-3. Then do the same for every later file in `supabase/migrations/` **in number order** (`0002_event_kinds.sql`, … through `0024_small_improvements.sql`). Each new migration only needs to be run once, but re-running is safe.
+3. Then do the same for every later file in `supabase/migrations/` **in number order** (`0002_event_kinds.sql`, … through `0026_participant_extras.sql`). Each new migration only needs to be run once, but re-running is safe.
    - **Already live before 0013?** Run `0013_launch_extras.sql` once (anonymous feedback, the sign-up email checkbox, and Admin → Events → **Who came**).
    - **Already live before 0014?** Run `0014_goal_350.sql` once (prize goal 650 → 350, Halfway badge 175, Sparkle Aura at 300, "close to the prize" range 75). Deploy the new app build at the same time so the app shows the same goal.
    - **Already live before 0015?** Run `0015_yak_puns.sql` once (adds a "Yak of the week" line to the weekly committee email and admin prize alerts).
@@ -23,6 +23,9 @@ This takes about 30–45 minutes, done once. Dashboard menu names can differ sli
    - **Already live before 0022?** Run `0022_rsvp_streaks.sql` once (after 0021) and deploy the app build with it: event RSVPs ("I'm going" on Quests, "N going · M came" and **Who's going** on Admin → Events, an RSVP line in the weekly email), monthly check-in streaks + the **Hot Streak** badge, and the shareable **My Quest Card** (Prize → Treasure). No point rules change. Until 0022 is run, the new app build still works; RSVP counts and streaks just show as 0.
    - **Already live before 0023?** Run `0023_yacquest_chair_wording.sql` once (wording only: server messages and notifications say "YACquest Chair" instead of "chair" / "YAC chair"; no rule, role or error-code changes). Works with any app build.
    - **Already live before 0024?** Run `0024_small_improvements.sql` once (after 0023) and deploy the app build with it: the **🏆 Game win** quick award in Admin → Events → Who came (needs 0024; until then it shows an error and nothing is awarded) and **RSVP reminders** about 1 hour before each event (in-app + email for people with email updates on). Nothing else to set up: reminders ride on the existing every-10-minutes `send-emails` cron job (see "RSVP reminders" below); no Edge Function redeploy. No point rules change.
+   - **Already live before 0025?** Run `0025_admin_tools.sql` once (after 0024) and deploy the app build with it: staff-only admin tools — event-day **Door mode**, **bulk approve** in Review, the **Stats** page, **CSV downloads** (Who came / Who's going for staff; all participants for YACquest Chairs), **announcement templates**, private **staff notes** on players and **Undo** for manual points changes. No point rules change and nothing changes for participants. Until 0025 is run those buttons show an error; everything else keeps working.
+
+   - **Already live before 0026?** Run `0026_participant_extras.sql` once (after 0025) and deploy the app build with it. **Nothing else to configure:** automatic event follow-ups ride on the existing `send-emails` cron job (every 10 minutes), and the photo wall uses the existing private `proofs` bucket plus one storage policy the migration adds (no bucket changes, no service key in the app). Until 0026 is run: no follow-ups, the tour is remembered per device only, photo walls are empty and My friends shows an error; everything else keeps working.
 
 ## 3. Turn on real logins
 **Authentication → Sign In / Providers → Email**
@@ -129,6 +132,21 @@ Participants never see any of this (not in the Wardrobe, Badges, character picke
 - **Check-in confirmation**: after checking in (password or QR), people see a full-screen **CHECKED IN ✓** pass with their name and character, the event, the check-in time, the points and a live ticking clock. Door staff can ask to see it; the moving seconds show it isn't a screenshot.
 - Also: a "📅 Today" chip on Home (and a dot on the bell) when you RSVP'd to an event today, a "N more points to <next checkpoint>" line under your points, "Start here" tips for brand-new players, and campus-color frames around avatars on Ranks and Adventurer of the Month.
 
+
+### Admin tools (0025, staff only)
+- **🚪 Door mode** (Admin → Events, or the dashboard's Next event card): a full-screen page for the door or a projector with a huge check-in QR, the password, a live "here" counter (updates every ~5 s), "N going / M here" and the last few arrivals. It keeps the screen awake where the browser allows it; **Full screen** and **Exit** are at the top.
+- **Bulk approve** (Admin → Review): tick cards (or "Select all on this page") → **Approve N** → confirm. Anything already reviewed is skipped and listed in the result. Rejecting stays one at a time.
+- **Stats** (new Admin tile): sign-ups per week, attendance per event, campuses, progress to the prize, where points come from and top badges, each with a **⬇ CSV** button. Participants only.
+- **CSV downloads**: Who came / Who's going (with emails) on each event; **All participants** on Stats for YACquest Chairs only. Files open in Excel/Sheets; cells that look like formulas are made safe.
+- **Templates ▾** in Announce (5 built-ins + the team's saved ones), **Staff notes** on players (never visible to the player) and **↩ Undo** on manual points changes (Players → Points history; Log for YACquest Chairs).
+
+### Participant extras (0026)
+- **Automatic follow-up after events**: when an event's check-in closes (end time + grace), everyone who checked in gets "Thanks for coming to <event>! 🐂" (with the event's **Survey link** if you added one — filling it out counts as the *Complete a Feedback Survey* quest, +5 with a screenshot), and everyone who RSVP'd but didn't come gets "Sorry we missed you" + the next event. Email too for people with email updates on. Once per event; only events that closed in the last 3 days go out automatically. Admin → Events → **Past** shows "Follow-up sent ✓ <time>" or a **✉ Send follow-up now** button (staff). Emails show as "event_followup" in the email log.
+- **Survey link**: optional field in the New/Edit event form (and kept by Duplicate). Must start with https:// (or http://).
+- **Welcome tour**: new players see a 4-step tour once after their first login (staff get a 5th step about the Admin tab). Replay it from Me (**🧭 Replay the tour**) or Help. Accounts made before 0026 see it once too.
+- **Event photo wall**: past events in Quests have **📸 Photos (N)**. Only approved event photos whose uploader ticked "Show my photo on the event photo wall" (off by default) and hasn't turned off "Show my approved event photos on photo walls" (Me → Settings). Staff can tap a photo → **Hide from wall** (logged). Storage stays private; see BACKEND.md 0026.
+- **My friends** (Me, or tap the friend code on Home): who joined with your code, whether they came to an event, X/3 bonuses used, **Copy** / **Share** (shares the sign-up link `…/#/signup?code=YAC-XXXX`, which prefills the code).
+
 ### Emergency: a YACquest Chair lost access
 In Supabase **SQL Editor**, run (replace the email):
 ```sql
@@ -145,4 +163,4 @@ Make sure no more than 6 people are YACquest Chairs afterwards.
 - Database tests: `bash supabase/tests/run_tests.sh` (needs local Postgres 16).
 - App tests: `npm test`. Contract between DB and app: `docs/BACKEND.md`.
 - Email sender: `supabase/functions/send-emails/index.ts` (Deno; not part of the app's TypeScript build). Deploy from the CLI with `supabase functions deploy send-emails` if you prefer.
-- Future database changes go in a new numbered file in `supabase/migrations/` (next after `0024_small_improvements.sql`, i.e. `0025_…`). Supabase grants new functions to everyone by default, so repeat the `revoke execute … from public, anon` lines for any new function.
+- Future database changes go in a new numbered file in `supabase/migrations/` (next after `0026_participant_extras.sql`, i.e. `0027_…`). Supabase grants new functions to everyone by default, so repeat the `revoke execute … from public, anon` lines for any new function.
