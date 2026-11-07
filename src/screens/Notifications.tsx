@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import * as api from '../api';
 import { PageHeader } from '../components/Layout';
 import { Sprite } from '../components/Sprite';
+import { TodayChip } from '../components/TodayEvent';
 import { Empty, ErrorText, Loading, Panel } from '../components/ui';
 import { timeAgo } from '../lib/format';
 import { useAsync } from '../lib/useAsync';
@@ -17,6 +18,8 @@ const KIND: Record<NotificationKind, { icon: string; color: string }> = {
   // staff only (0020)
   hero_crowned: { icon: '🦸', color: 'var(--gold-500)' },
   staff_reward: { icon: '👑', color: 'var(--purple)' },
+  // 0024: "⏰ Starts in 1 hour" (RSVP reminder)
+  event_reminder: { icon: '📅', color: 'var(--blue-500)' },
 };
 
 export default function Notifications() {
@@ -40,6 +43,7 @@ export default function Notifications() {
   return (
     <div className="stack">
       <PageHeader title="Notifications" back />
+      <TodayChip />
       {unread > 0 && (
         <button className="btn small blue" onClick={markAll} style={{ alignSelf: 'flex-start' }}>Mark all read ({unread})</button>
       )}

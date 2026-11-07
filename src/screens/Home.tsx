@@ -6,7 +6,11 @@ import { Avatar } from '../components/Avatar';
 import { InstallButton, showInstallButton } from '../components/InstallApp';
 import { Shoutout } from '../components/Shoutout';
 import { Sprite } from '../components/Sprite';
+import { StarterTips } from '../components/StarterTips';
+import { TodayChip } from '../components/TodayEvent';
 import { TreasureMap, checkpointsCrossed } from '../components/TreasureMap';
+import { nextStopText } from '../lib/checkpoints';
+import { isNewAdventurer } from '../lib/starterTips';
 import { ErrorText, Loading, Panel, StatusChip, useToast } from '../components/ui';
 import { getLastSeenPoints, setLastSeenPoints, takeCelebratedPoints, useCelebrate } from '../lib/celebrate';
 import { activityById } from '../lib/activities';
@@ -46,6 +50,7 @@ export default function Home() {
   if (!data) return null;
   const d = data;
   const toGo = Math.max(0, PRIZE.goal - d.points);
+  const isNew = isNewAdventurer(d);
 
   async function copy() {
     try {
@@ -58,6 +63,7 @@ export default function Home() {
 
   return (
     <div className="stack">
+      <TodayChip />
       <div className="row">
         <Avatar id={d.user.avatar} look={d.user.look} campus={d.user.campus} size={56} hero={isHero} />
         <div>
@@ -102,9 +108,13 @@ export default function Home() {
             <span className="chip streak" title="Months in a row with an event check-in">🔥 {d.streak.current}-month streak</span>
           )}
         </div>
-        {d.streak.current >= 1 && !d.streak.checkedInThisMonth && (
-          <p className="streak-hint" style={{ margin: '-4px 0 10px' }}>🔥 Check in this month to keep your streak!</p>
-        )}
+        {/* At most two short lines: the next treasure-map stop, then the streak nudge. */}
+        <div className="points-lines">
+          <p className="next-stop">{nextStopText(d.points, { claimSpot: d.myClaim?.spot, prizesLeft: d.prize.remaining })}</p>
+          {d.streak.current >= 1 && !d.streak.checkedInThisMonth && (
+            <p className="streak-hint">🔥 Check in this month to keep your streak!</p>
+          )}
+        </div>
         <TreasureMap points={d.points} avatar={d.user.avatar} look={{ ...d.user.look, background: undefined }} />
         <p style={{ margin: '10px 0 0', fontSize: 18 }}>
           {d.myClaim ? (
@@ -140,41 +150,47 @@ export default function Home() {
         <Link className="btn block blue" to="/earn">Submit a quest</Link>
       </div>
 
-      <Panel title="Recent proofs">
-        {d.recentSubmissions.length === 0 ? (
-          <p className="muted" style={{ margin: 0 }}>Nothing yet. Pick a quest to get started!</p>
-        ) : (
-          <ul className="list">
-            {d.recentSubmissions.map((s) => (
-              <li key={s.id}>
-                <div className="spread">
-                  <span>{activityById(s.activityId)?.title ?? 'Quest'}</span>
-                  <StatusChip status={s.status} />
-                </div>
-                <div className="muted">{fmtDate(s.createdAt)}</div>
-                {s.status === 'rejected' && s.reviewReason && <div className="field-error">Reason: {s.reviewReason}</div>}
-              </li>
-            ))}
-          </ul>
-        )}
-      </Panel>
+      {isNew ? (
+        <StarterTips />
+      ) : (
+        <>
+        <Panel title="Recent proofs">
+          {d.recentSubmissions.length === 0 ? (
+            <p className="muted" style={{ margin: 0 }}>Nothing yet. Pick a quest to get started!</p>
+          ) : (
+            <ul className="list">
+              {d.recentSubmissions.map((s) => (
+                <li key={s.id}>
+                  <div className="spread">
+                    <span>{activityById(s.activityId)?.title ?? 'Quest'}</span>
+                    <StatusChip status={s.status} />
+                  </div>
+                  <div className="muted">{fmtDate(s.createdAt)}</div>
+                  {s.status === 'rejected' && s.reviewReason && <div className="field-error">Reason: {s.reviewReason}</div>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Panel>
 
-      <Panel title="Recent points">
-        {d.recentLedger.length === 0 ? (
-          <p className="muted" style={{ margin: 0 }}>No points yet. Your first quest is waiting!</p>
-        ) : (
-          <ul className="list">
-            {d.recentLedger.map((l) => (
-              <li key={l.id} className="spread">
-                <span>{l.reason}<div className="muted">{fmtDate(l.createdAt)}</div></span>
-                <b style={{ color: l.amount < 0 ? 'var(--red)' : 'var(--green)' }}>{fmtPts(l.amount)}</b>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Panel>
+        <Panel title="Recent points">
+          {d.recentLedger.length === 0 ? (
+            <p className="muted" style={{ margin: 0 }}>No points yet. Your first quest is waiting!</p>
+          ) : (
+            <ul className="list">
+              {d.recentLedger.map((l) => (
+                <li key={l.id} className="spread">
+                  <span>{l.reason}<div className="muted">{fmtDate(l.createdAt)}</div></span>
+                  <b style={{ color: l.amount < 0 ? 'var(--red)' : 'var(--green)' }}>{fmtPts(l.amount)}</b>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Panel>
+        </>
+      )}
 
-      <Panel title="Your friend code">
+      <Panel title="Your friend code" className="friend-code">
         <div className="spread">
           <b style={{ fontFamily: 'var(--font-num)', fontWeight: 800, fontSize: 22 }}>{d.user.friendCode}</b>
           <button className="btn small" onClick={copy}>Copy</button>

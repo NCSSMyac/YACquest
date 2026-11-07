@@ -63,7 +63,7 @@ export function CelebrateProvider({ children }: { children: ReactNode }) {
 export const useCelebrate = () => useContext(Ctx);
 
 /** Pixel coins flying out from the center. Hidden entirely under prefers-reduced-motion (CSS). */
-function Burst({ count, spread }: { count: number; spread: number }) {
+export function Burst({ count, spread }: { count: number; spread: number }) {
   const coins = Array.from({ length: count }, (_, i) => {
     const a = (i / count) * Math.PI * 2 + (i % 2 ? 0.25 : -0.1);
     const r = spread * (0.65 + ((i * 37) % 10) / 28);

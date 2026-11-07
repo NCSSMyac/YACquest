@@ -1435,3 +1435,21 @@ export async function councilBoard(): Promise<CouncilMember[]> {
     legendary: Boolean(r.legendary),
   }));
 }
+
+// ───────────────────────────── 0024: quick game-win award ─────────────────────────────
+
+/**
+ * award_game_win(p_event_id, p_user_id, p_note) (0024) → {points}. Admins + chairs. The person must have
+ * checked in to the event (`not_checked_in`); once per (event, person) (`duplicate`).
+ */
+export async function awardGameWin(eventId: string, userId: string, note = ''): Promise<{ points: number }> {
+  const r = one(await rpc<AnyRow | AnyRow[] | null>('award_game_win', { p_event_id: eventId, p_user_id: userId, p_note: note.trim() })) ?? {};
+  emitChange();
+  return { points: num(r.points) };
+}
+
+/** Who already got a game win at this event: ledger rows (manual, game_win, ref = the event). Admins can read the ledger. */
+export async function adminEventGameWins(eventId: string): Promise<string[]> {
+  const res = rows(await sb().from('ledger').select('user_id').eq('source', 'manual').eq('activity_id', 'game_win').eq('ref_id', eventId).limit(500)) as AnyRow[];
+  return [...new Set((res ?? []).map((r) => str(r.user_id)))];
+}

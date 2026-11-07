@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import * as api from '../api';
 import { INSTAGRAM_HANDLE, INSTAGRAM_URL, TIER_POINTS, UPLOAD, campusName, type Tier } from '../config';
 import { ACTIVITIES, activityById } from '../lib/activities';
 import { useAuth } from '../lib/auth';
 import { downloadIcs, googleCalendarUrl, type CalEvent } from '../lib/calendar';
-import { noteCelebratedPoints, useCelebrate } from '../lib/celebrate';
+import { noteCelebratedPoints } from '../lib/celebrate';
 import { siteUrl } from '../lib/supabase';
 import { kindTier } from '../lib/eventKinds';
 import { fmtDate, fmtDateTime } from '../lib/format';
@@ -12,6 +13,9 @@ import { prepareImage } from '../lib/image';
 import { errorMessage, useAsync } from '../lib/useAsync';
 import { Empty, ErrorText, Loading, Modal, Panel, StatusChip, TierChip, useToast } from '../components/ui';
 import { RsvpRow } from '../components/Rsvp';
+import { CheckInConfirm, type CheckInPass } from '../components/CheckInConfirm';
+import { StarterTips } from '../components/StarterTips';
+import { isNewAdventurer } from '../lib/starterTips';
 import type { Activity } from '../types';
 
 type Ev = Awaited<ReturnType<typeof api.listEvents>>[number];
@@ -26,9 +30,15 @@ const OPEN_BEFORE_MIN = 30;
 
 export default function Earn() {
   const [tab, setTab] = useState<TabId>('events');
+  // `#/earn?event=<id>` (Home's "Today" chip): jump to that event's card.
+  const [params] = useSearchParams();
+  const focusId = params.get('event') ?? undefined;
+  const dash = useAsync(() => api.getDashboard(), [], { live: true });
+  const isNew = isNewAdventurer(dash.data);
   return (
     <div className="stack">
       <h1 className="pixel" style={{ margin: 0 }}>Quest Board</h1>
+      {isNew && <StarterTips title="🧭 New here? Start with these" />}
       <div className="tabs" role="tablist" aria-label="Quest board sections">
         {TABS.map((t) => (
           <button key={t.id} role="tab" id={`earn-tab-${t.id}`} aria-selected={tab === t.id} aria-controls="earn-panel" onClick={() => setTab(t.id)}>
@@ -37,7 +47,7 @@ export default function Earn() {
         ))}
       </div>
       <div id="earn-panel" role="tabpanel" aria-labelledby={`earn-tab-${tab}`} className="stack">
-        {tab === 'events' && <Events />}
+        {tab === 'events' && <Events focusId={focusId} />}
         {tab === 'quests' && <Quests goEvents={() => setTab('events')} />}
         {tab === 'subs' && <Submissions />}
       </div>
@@ -46,12 +56,23 @@ export default function Earn() {
 }
 
 // ── Events ──────────────────────────────────────────
-function Events() {
+function Events({ focusId }: { focusId?: string }) {
   const up = useAsync(() => api.listEvents('upcoming'), [], { live: true });
   const past = useAsync(() => api.listEvents('past'), [], { live: true });
   const [showPast, setShowPast] = useState(false);
-  const celebrate = useCelebrate();
+  const [pass, setPass] = useState<CheckInPass | null>(null);
   const { user } = useAuth();
+  const scrolled = useRef(false);
+  const hasData = !!up.data;
+  useEffect(() => {
+    if (!focusId || !hasData || scrolled.current) return;
+    scrolled.current = true;
+    const el = document.getElementById(`event-${focusId}`);
+    if (el) {
+      el.scrollIntoView({ block: 'center', behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+      el.querySelector<HTMLInputElement>('input')?.focus({ preventScroll: true });
+    }
+  }, [focusId, hasData]);
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const i = setInterval(() => setNow(Date.now()), 30_000);
@@ -64,11 +85,13 @@ function Events() {
       <ErrorText error={up.error} />
       {up.data && up.data.length === 0 && <Empty>No upcoming events yet. Check back soon, adventurer!</Empty>}
       {up.data?.map((e) => (
-        <EventCard key={e.id} e={e} now={now} onDone={(pts) => {
-          celebrate({ title: 'Quest complete!', subtitle: e.title, points: pts, size: 'small' });
+        <EventCard key={e.id} e={e} now={now} focused={e.id === focusId} onDone={(pts) => {
+          // Full-screen confirmation (with coins) instead of the small pop.
+          setPass({ eventTitle: e.title, points: pts, checkedInAt: new Date() });
           if (user) noteCelebratedPoints(user.id, pts);
         }} />
       ))}
+      {pass && <CheckInConfirm pass={pass} onDone={() => setPass(null)} />}
       <button className="btn ghost small" aria-expanded={showPast} onClick={() => setShowPast((s) => !s)}>
         {showPast ? '▼' : '▶'} Past events
       </button>
@@ -94,7 +117,7 @@ function Events() {
   );
 }
 
-function EventCard({ e, now, onDone }: { e: Ev; now: number; onDone: (pts: number) => void }) {
+function EventCard({ e, now, focused, onDone }: { e: Ev; now: number; focused?: boolean; onDone: (pts: number) => void }) {
   const [pw, setPw] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -120,6 +143,7 @@ function EventCard({ e, now, onDone }: { e: Ev; now: number; onDone: (pts: numbe
   }
 
   return (
+    <div id={`event-${e.id}`} className={focused ? 'event-focus' : undefined}>
     <Panel tone={live && !e.checkedIn ? 'gold' : undefined}>
       <div className="stack">
         <div className="spread">
@@ -153,6 +177,7 @@ function EventCard({ e, now, onDone }: { e: Ev; now: number; onDone: (pts: numbe
         )}
       </div>
     </Panel>
+    </div>
   );
 }
 

@@ -7,28 +7,10 @@ import type { AvatarId, Look } from '../types';
 import { Avatar } from './Avatar';
 import { Sprite } from './Sprite';
 
-export interface Checkpoint {
-  points: number;
-  label: string;
-}
+import { CHECKPOINTS, nextCheckpoint } from '../lib/checkpoints';
 
-export const CHECKPOINTS: Checkpoint[] = [
-  { points: 50, label: 'Trailhead' },
-  { points: 100, label: 'Camp' },
-  { points: Math.ceil(PRIZE.goal / 2), label: 'Halfway' },
-  // About ¾ of the goal, rounded down to a multiple of 25 (350 → 250).
-  { points: Math.floor((PRIZE.goal * 0.75) / 25) * 25, label: 'Summit' },
-];
-
-/** Checkpoints (plus the treasure itself) passed when going from `prev` to `now` points. */
-export function checkpointsCrossed(prev: number, now: number, goal: number = PRIZE.goal): Checkpoint[] {
-  const all = [...CHECKPOINTS, { points: goal, label: 'Treasure' }];
-  return all.filter((c) => prev < c.points && now >= c.points);
-}
-
-export function nextCheckpoint(points: number, goal: number = PRIZE.goal): Checkpoint | undefined {
-  return [...CHECKPOINTS, { points: goal, label: 'the treasure' }].find((c) => points < c.points);
-}
+// The checkpoint list lives in src/lib/checkpoints.ts (Home's "next stop" line uses it too).
+export { CHECKPOINTS, checkpointsCrossed, nextCheckpoint, type Checkpoint } from '../lib/checkpoints';
 
 // Map coordinates (viewBox 320 × 176). A board-game snake: bottom row → right bend → middle row → left bend → top row.
 const W = 320;

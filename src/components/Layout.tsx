@@ -5,12 +5,25 @@ import { isStaff, useAuth } from '../lib/auth';
 import { BellIcon, ChestIcon, HomeIcon, ShieldIcon, SwordIcon, TrophyIcon, UserIcon } from './Icons';
 import { NotificationPopups } from './NotificationPopups';
 import { Sprite } from './Sprite';
+import { TodayEventProvider, useTodayEvent } from './TodayEvent';
 
 /** App chrome for signed-in users: top bar + bottom tab bar. */
 export function Layout() {
+  return (
+    <TodayEventProvider>
+      <Shell />
+    </TodayEventProvider>
+  );
+}
+
+function Shell() {
   const { user } = useAuth();
   const [unread, setUnread] = useState(api.unreadCountSync());
   useEffect(() => api.subscribe(() => setUnread(api.unreadCountSync())), []);
+  // An RSVP'd event today counts as one more thing on the bell.
+  const today = useTodayEvent();
+  const count = unread + (today ? 1 : 0);
+  const label = `Notifications${unread ? `, ${unread} unread` : ''}${today ? `, event today: ${today.title}` : ''}`;
 
   return (
     <div className="app-shell">
@@ -20,9 +33,9 @@ export function Layout() {
           <span className="sprite-badge"><Sprite id="yak" size={30} /></span>
           YACquest
         </Link>
-        <Link to="/notifications" className="icon-btn" aria-label={`Notifications${unread ? `, ${unread} unread` : ''}`}>
+        <Link to="/notifications" className="icon-btn" aria-label={label}>
           <BellIcon />
-          {unread > 0 && <span className="badge-dot">{unread > 9 ? '9+' : unread}</span>}
+          {count > 0 && <span className="badge-dot">{count > 9 ? '9+' : count}</span>}
         </Link>
       </header>
       <main>

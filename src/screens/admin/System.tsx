@@ -284,6 +284,7 @@ const KIND_LABEL: Record<string, string> = {
   prize_info: 'Prize: winner info',
   test: 'Test',
   announcement: 'Announcement',
+  event_reminder: 'Event reminder',
 };
 
 const STATUS_CHIP: Record<EmailLogRow['status'], string> = { sent: 'approved', failed: 'rejected', pending: 'pending', sending: 't2' };

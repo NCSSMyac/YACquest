@@ -10,7 +10,7 @@ This takes about 30–45 minutes, done once. Dashboard menu names can differ sli
 ## 2. Create the database
 1. Open **SQL Editor → New query**.
 2. Paste the whole of `supabase/migrations/0001_init.sql` and click **Run**. It should finish with "Success". It is safe to run again.
-3. Then do the same for every later file in `supabase/migrations/` **in number order** (`0002_event_kinds.sql`, … through `0023_yacquest_chair_wording.sql`). Each new migration only needs to be run once, but re-running is safe.
+3. Then do the same for every later file in `supabase/migrations/` **in number order** (`0002_event_kinds.sql`, … through `0024_small_improvements.sql`). Each new migration only needs to be run once, but re-running is safe.
    - **Already live before 0013?** Run `0013_launch_extras.sql` once (anonymous feedback, the sign-up email checkbox, and Admin → Events → **Who came**).
    - **Already live before 0014?** Run `0014_goal_350.sql` once (prize goal 650 → 350, Halfway badge 175, Sparkle Aura at 300, "close to the prize" range 75). Deploy the new app build at the same time so the app shows the same goal.
    - **Already live before 0015?** Run `0015_yak_puns.sql` once (adds a "Yak of the week" line to the weekly committee email and admin prize alerts).
@@ -22,6 +22,7 @@ This takes about 30–45 minutes, done once. Dashboard menu names can differ sli
    - **Already live before 0021?** Run `0021_council_board.sql` once (after 0020) for the staff-only Admin → Council team board, and deploy the app build with it.
    - **Already live before 0022?** Run `0022_rsvp_streaks.sql` once (after 0021) and deploy the app build with it: event RSVPs ("I'm going" on Quests, "N going · M came" and **Who's going** on Admin → Events, an RSVP line in the weekly email), monthly check-in streaks + the **Hot Streak** badge, and the shareable **My Quest Card** (Prize → Treasure). No point rules change. Until 0022 is run, the new app build still works; RSVP counts and streaks just show as 0.
    - **Already live before 0023?** Run `0023_yacquest_chair_wording.sql` once (wording only: server messages and notifications say "YACquest Chair" instead of "chair" / "YAC chair"; no rule, role or error-code changes). Works with any app build.
+   - **Already live before 0024?** Run `0024_small_improvements.sql` once (after 0023) and deploy the app build with it: the **🏆 Game win** quick award in Admin → Events → Who came (needs 0024; until then it shows an error and nothing is awarded) and **RSVP reminders** about 1 hour before each event (in-app + email for people with email updates on). Nothing else to set up: reminders ride on the existing every-10-minutes `send-emails` cron job (see "RSVP reminders" below); no Edge Function redeploy. No point rules change.
 
 ## 3. Turn on real logins
 **Authentication → Sign In / Providers → Email**
@@ -121,6 +122,13 @@ Participants never see any of this (not in the Wardrobe, Badges, character picke
 - **Monthly streaks**: months in a row (Eastern time, this cycle) with at least one event check-in. Shown as a small 🔥 chip on Home (2+ months) and on Me. The **Hot Streak** badge = 3 months in a row.
 - **My Quest Card**: Prize → Treasure → **🎴 Share my quest card** makes a 1080×1920 story-sized image (character + look, points, badges, events, best streak, ranks for participants / Council badges for staff). **Share** opens the phone's share sheet (pick Instagram → Story); otherwise **Save image** and post it from Photos.
 
+### Small improvements (0024)
+- **RSVP reminders**: about 1 hour before an event starts, everyone who tapped **I'm going** (staff too) and hasn't checked in yet gets "⏰ Starts in 1 hour: <event> at <place>" in the app, plus an email ("Reminder: <event> starts at 2:00 PM") if their email updates are on (Me → Settings). Each person gets one reminder per event. **How it runs:** the `send-emails` cron job you set up above (every 10 minutes) already calls the database each run; since 0024 that call also queues the reminders, so there is **no new dashboard setup and no Edge Function redeploy**. If emails aren't set up yet, the in-app reminder still appears once the cron job runs; without the cron job there are no reminders. Reminder emails show as "Event reminder" in Admin → System → Email delivery log.
+- **Quick game-win award**: Admin → Events → **Who came** → **🏆 Game win +20** next to anyone who checked in → check/edit the note ("Won a game at <event>") → **Award +20**. Once per person per event (the row then shows **✓ awarded**). Logged in Admin → **Log** like every award.
+- **Duplicate event**: Admin → Events → **Duplicate** on any event opens the New event form with the same title, tier, campus, location, length and grace, one week later, and a new password. Nothing is saved until you press **Save**.
+- **Check-in confirmation**: after checking in (password or QR), people see a full-screen **CHECKED IN ✓** pass with their name and character, the event, the check-in time, the points and a live ticking clock. Door staff can ask to see it; the moving seconds show it isn't a screenshot.
+- Also: a "📅 Today" chip on Home (and a dot on the bell) when you RSVP'd to an event today, a "N more points to <next checkpoint>" line under your points, "Start here" tips for brand-new players, and campus-color frames around avatars on Ranks and Adventurer of the Month.
+
 ### Emergency: a YACquest Chair lost access
 In Supabase **SQL Editor**, run (replace the email):
 ```sql
@@ -137,4 +145,4 @@ Make sure no more than 6 people are YACquest Chairs afterwards.
 - Database tests: `bash supabase/tests/run_tests.sh` (needs local Postgres 16).
 - App tests: `npm test`. Contract between DB and app: `docs/BACKEND.md`.
 - Email sender: `supabase/functions/send-emails/index.ts` (Deno; not part of the app's TypeScript build). Deploy from the CLI with `supabase functions deploy send-emails` if you prefer.
-- Future database changes go in a new numbered file in `supabase/migrations/` (next after `0023_yacquest_chair_wording.sql`, i.e. `0024_…`). Supabase grants new functions to everyone by default, so repeat the `revoke execute … from public, anon` lines for any new function.
+- Future database changes go in a new numbered file in `supabase/migrations/` (next after `0024_small_improvements.sql`, i.e. `0025_…`). Supabase grants new functions to everyone by default, so repeat the `revoke execute … from public, anon` lines for any new function.

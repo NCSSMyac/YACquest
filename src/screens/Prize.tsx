@@ -7,12 +7,14 @@ import { CLAIM_LIMITS, claimContactError } from '../lib/validate';
 import { errorMessage, useAsync } from '../lib/useAsync';
 import { Sprite } from '../components/Sprite';
 import { Empty, ErrorText, Loading, Panel, ProgressBar, useToast } from '../components/ui';
-import type { PrizeClaim } from '../types';
+import type { BadgeProgress, PrizeClaim } from '../types';
 import { useAuth } from '../lib/auth';
 import { useCelebrate } from '../lib/celebrate';
 import { badgeById } from '../lib/badges';
 import { cosmeticById } from '../lib/cosmetics';
 import { BadgesPanel } from '../components/cosmetics/BadgesPanel';
+import { StarterTips } from '../components/StarterTips';
+import { isNewAdventurer } from '../lib/starterTips';
 import { WardrobePanel } from '../components/cosmetics/WardrobePanel';
 import { QuestCardButton } from '../components/QuestCard';
 import { takeNew } from '../components/cosmetics/seen';
@@ -87,9 +89,20 @@ export default function Prize() {
       </div>
       <div id="hub-panel" role="tabpanel" aria-labelledby={`hub-tab-${tab}`}>
         {tab === 'treasure' && <Treasure />}
-        {tab === 'badges' && <BadgesPanel badges={badges.data} error={badges.error} staffBadges={staff?.badges} />}
+        {tab === 'badges' && <BadgesTab badges={badges} staffBadges={staff?.badges} />}
         {tab === 'wardrobe' && <WardrobePanel unlocks={unlocks.data} error={unlocks.error} staff={staff} />}
       </div>
+    </div>
+  );
+}
+
+/** Badges, with "Start here" tips on top while the player has no activity yet. */
+function BadgesTab({ badges, staffBadges }: { badges: { data: BadgeProgress[] | null; error: string | null }; staffBadges?: BadgeProgress[] | null }) {
+  const dash = useAsync(() => api.getDashboard(), [], { live: true });
+  return (
+    <div className="stack">
+      {isNewAdventurer(dash.data) && <StarterTips title="🧭 Earn your first badge" />}
+      <BadgesPanel badges={badges.data} error={badges.error} staffBadges={staffBadges} />
     </div>
   );
 }

@@ -146,7 +146,9 @@ export type NotificationKind =
   /** 0020, staff only: "You're Hero of the Week!" */
   | 'hero_crowned'
   /** 0020, staff only: a chair granted a Council wardrobe item / Council MVP. */
-  | 'staff_reward';
+  | 'staff_reward'
+  /** 0024: "⏰ Starts in 1 hour: <title> at <location>" for an event you RSVP'd to. */
+  | 'event_reminder';
 
 export interface AppNotification {
   id: string;
@@ -225,7 +227,7 @@ export interface WeeklyReport {
   recipients: string[];
 }
 
-export type EmailKind = 'weekly_report' | 'prize_qualified' | 'prize_info' | 'test' | 'announcement';
+export type EmailKind = 'weekly_report' | 'prize_qualified' | 'prize_info' | 'test' | 'announcement' | 'event_reminder';
 export type EmailStatus = 'pending' | 'sending' | 'sent' | 'failed';
 
 export interface EmailLogRow {

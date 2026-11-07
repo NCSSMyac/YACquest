@@ -2406,5 +2406,144 @@ end $$;
 rollback;
 
 -- =============================================================================
+-- 28. 0024 — RSVP reminders (fixed dates) + quick game-win award (everything rolled back afterwards)
+-- =============================================================================
+:as_super
+begin;
+update profiles set role = 'participant' where id in (t.u('alice'), t.u('carol'), t.u('erin'), t.u('bob'));
+update profiles set role = 'admin' where id = t.u('admin');
+update profiles set role = 'chair' where id = t.u('chair1');
+update profiles set email_opt_in = true  where id in (t.u('alice'), t.u('carol'), t.u('chair1'), t.u('bob'));
+update profiles set email_opt_in = false where id = t.u('erin');
+insert into events (id, cycle_id, title, campus, kind, location, starts_at, ends_at, activity_id) values
+  ('00000000-0000-0000-0000-0000000024e1', active_cycle_id(), 'Pickleball', 'duke', 'active', 'Wilson Courts', '2030-03-14 14:00-04', '2030-03-14 16:00-04', 'home_event'),
+  ('00000000-0000-0000-0000-0000000024e2', active_cycle_id(), 'Late Gala',  'all',  'high_impact', 'Durham', '2030-03-14 15:30-04', '2030-03-14 18:00-04', 'cross_campus_event'),
+  ('00000000-0000-0000-0000-0000000024e3', active_cycle_id(), 'Started Mixer', 'unc', 'active', 'Pit', '2030-03-14 12:30-04', '2030-03-14 14:30-04', 'home_event'),
+  ('00000000-0000-0000-0000-0000000024e4', active_cycle_id(), 'Gone Social', 'unc', 'active', 'Pit', '2030-03-14 15:40-04', '2030-03-14 17:00-04', 'home_event');
+insert into event_rsvps (event_id, user_id) values
+  ('00000000-0000-0000-0000-0000000024e1', t.u('alice')),
+  ('00000000-0000-0000-0000-0000000024e1', t.u('carol')),
+  ('00000000-0000-0000-0000-0000000024e1', t.u('chair1')),
+  ('00000000-0000-0000-0000-0000000024e1', t.u('erin')),
+  ('00000000-0000-0000-0000-0000000024e2', t.u('alice')),
+  ('00000000-0000-0000-0000-0000000024e3', t.u('alice')),
+  ('00000000-0000-0000-0000-0000000024e4', t.u('bob'));
+-- carol already checked in to Pickleball (check-in opens 30 min early)
+insert into ledger (cycle_id, user_id, amount, source, activity_id, ref_id, reason)
+values (active_cycle_id(), t.u('carol'), 20, 'checkin', 'home_event', '00000000-0000-0000-0000-0000000024e1', 'Checked in: Pickleball');
+
+:as_alice
+do $$ begin
+  perform t.denied('select queue_event_reminders(''2030-03-14 13:00-04'')', '0024: participants can''t run the reminder job');
+end $$;
+:as_admin
+do $$ begin
+  perform t.denied('select queue_event_reminders()', '0024: admins can''t run the reminder job either');
+end $$;
+:as_service
+do $$ begin
+  perform t.eq(queue_event_reminders('2030-03-14 11:00-04'), 0, '0024: 90+ min before every event → too early, nothing queued');
+  perform t.eq(queue_event_reminders('2030-03-14 13:00-04'), 3, '0024: 1 h before → alice, erin and the chair (staff included); not carol (checked in)');
+  perform t.eq(queue_event_reminders('2030-03-14 13:00-04'), 0, '0024: same run again → no duplicates');
+  perform t.eq(queue_event_reminders('2030-03-14 13:10-04'), 0, '0024: 10 minutes later → still no duplicates');
+end $$;
+:as_super
+do $$ begin
+  perform t.eq((select count(*) from event_reminders_sent where event_id = '00000000-0000-0000-0000-0000000024e1'), 3::bigint, '0024: 3 reminders recorded for Pickleball');
+  perform t.eq((select count(*) from notifications where kind = 'event_reminder' and user_id = t.u('alice')), 1::bigint, '0024: alice: one reminder notification');
+  perform t.ok((select title = '⏰ Starts in 1 hour: Pickleball at Wilson Courts'
+                       and body = 'Pickleball starts at 2:00 PM at Wilson Courts. Check in at the event to earn 20 points.'
+                  from notifications where kind = 'event_reminder' and user_id = t.u('alice')), '0024: reminder title + body (Eastern time, event points)');
+  perform t.eq((select count(*) from notifications where kind = 'event_reminder' and user_id = t.u('carol')), 0::bigint, '0024: carol checked in → no reminder');
+  perform t.eq((select count(*) from notifications where kind = 'event_reminder' and user_id = t.u('chair1')), 1::bigint, '0024: staff who RSVP''d get one too');
+  perform t.eq((select count(*) from email_outbox where kind = 'event_reminder'), 2::bigint, '0024: emails only for alice + chair (erin has email updates off)');
+  perform t.ok((select to_emails = array['alice@example.edu'] and subject = 'Reminder: Pickleball starts at 2:00 PM'
+                       and body_text like '%Where: Wilson Courts%' and body_text like '%Check in at the event to earn 20 points.%'
+                       and body_text not ilike '%yak%' and body_html like '%Wilson Courts%' and status = 'pending'
+                  from email_outbox where kind = 'event_reminder' and dedupe_key = 'reminder:00000000-0000-0000-0000-0000000024e1:' || t.u('alice')),
+               '0024: reminder email: subject, location, points, no yak pun');
+  perform t.eq((select count(*) from notifications where kind = 'event_reminder' and body like 'Started Mixer%'), 0::bigint, '0024: an event that already started gets no reminder');
+end $$;
+-- a deleted event gets nothing (its RSVPs go with it)
+delete from events where id = '00000000-0000-0000-0000-0000000024e4';
+:as_service
+do $$ begin
+  perform t.eq(queue_event_reminders('2030-03-14 14:25-04'), 1, '0024: Late Gala 65 min ahead → alice; deleted event skipped');
+end $$;
+:as_super
+do $$ begin
+  perform t.eq((select title || ' | ' || body from notifications where kind = 'event_reminder' and user_id = t.u('alice') and title like '%Late Gala%'),
+               '⏰ Starts in 1 hour: Late Gala at Durham | Late Gala starts at 3:30 PM at Durham. Check in at the event to earn ' || tier_points(1) || ' points.',
+               '0024: high-impact event → Tier 1 points in the reminder');
+  perform t.eq((select count(*) from notifications where kind = 'event_reminder' and user_id = t.u('bob')), 0::bigint, '0024: no reminder for a deleted event');
+end $$;
+-- short notice: an event made 20 minutes ahead says "in 20 min"
+insert into events (id, cycle_id, title, campus, kind, location, starts_at, ends_at, activity_id) values
+  ('00000000-0000-0000-0000-0000000024e5', active_cycle_id(), 'Pop-up Trivia', 'duke', 'active', 'Bryan Center', '2030-03-15 19:20-04', '2030-03-15 20:00-04', 'home_event');
+insert into event_rsvps (event_id, user_id) values ('00000000-0000-0000-0000-0000000024e5', t.u('bob'));
+:as_service
+do $$ begin
+  perform t.eq(queue_event_reminders('2030-03-15 19:00-04'), 1, '0024: short-notice event reminded once');
+end $$;
+:as_super
+do $$ begin
+  perform t.eq((select title from notifications where kind = 'event_reminder' and user_id = t.u('bob')), '⏰ Starts in 20 min: Pop-up Trivia at Bryan Center', '0024: short notice → "in 20 min"');
+end $$;
+-- the send-emails run (enqueue_weekly_report_if_due, every 10 min) queues reminders on its own
+insert into events (id, cycle_id, title, campus, kind, location, starts_at, ends_at, activity_id) values
+  ('00000000-0000-0000-0000-0000000024e6', active_cycle_id(), 'Cron Social', 'duke', 'active', 'Quad', now() + interval '55 minutes', now() + interval '2 hours', 'home_event');
+insert into event_rsvps (event_id, user_id) values ('00000000-0000-0000-0000-0000000024e6', t.u('erin'));
+:as_service
+select enqueue_weekly_report_if_due() \g /dev/null
+:as_super
+do $$ begin
+  perform t.ok(exists (select 1 from event_reminders_sent where event_id = '00000000-0000-0000-0000-0000000024e6' and user_id = t.u('erin')), '0024: the every-10-minutes send-emails call queues reminders (no new cron)');
+  perform t.ok(position('queue_event_reminders' in pg_get_functiondef('public.enqueue_weekly_report_if_due()'::regprocedure)) > 0, '0024: enqueue_weekly_report_if_due calls queue_event_reminders');
+end $$;
+
+-- award_game_win
+:as_alice
+do $$ begin
+  perform t.throws('select award_game_win(''00000000-0000-0000-0000-0000000024e1'', ''00000000-0000-0000-0000-000000000ca0'')', 'forbidden', '0024: participants can''t award a game win');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied('select award_game_win(''00000000-0000-0000-0000-0000000024e1'', ''00000000-0000-0000-0000-000000000ca0'')', '0024: anon can''t call award_game_win');
+end $$;
+:as_admin
+do $$ declare r json; v_before int := (select points from profiles where id = t.u('carol'));
+begin
+  perform t.throws(format('select award_game_win(%L, %L)', '00000000-0000-0000-0000-0000000024e1', t.u('alice')), 'not_checked_in', '0024: game win needs a check-in at that event');
+  perform t.throws(format('select award_game_win(%L, %L)', gen_random_uuid(), t.u('carol')), 'not_found', '0024: unknown event');
+  perform t.throws(format('select award_game_win(%L, %L)', '00000000-0000-0000-0000-0000000024e1', gen_random_uuid()), 'not_found', '0024: unknown person');
+  r := award_game_win('00000000-0000-0000-0000-0000000024e1', t.u('carol'));
+  perform t.eq((r->>'points')::int, 20, '0024: game win = Tier 2 points');
+  perform t.eq((select points from profiles where id = t.u('carol')), v_before + 20, '0024: points added');
+  perform t.throws(format('select award_game_win(%L, %L, %L)', '00000000-0000-0000-0000-0000000024e1', t.u('carol'), 'again'), 'duplicate', '0024: no second game win for the same event');
+  perform t.throws(format('select award_game_win(%L, %L, %L)', '00000000-0000-0000-0000-0000000024e1', t.u('carol'), repeat('x', 121)), 'note', '0024: note max 120');
+end $$;
+:as_super
+insert into ledger (cycle_id, user_id, amount, source, activity_id, ref_id, reason)
+values (active_cycle_id(), t.u('erin'), 20, 'checkin', 'home_event', '00000000-0000-0000-0000-0000000024e1', 'Checked in: Pickleball');
+:as_chair1
+do $$ begin
+  perform t.eq((award_game_win('00000000-0000-0000-0000-0000000024e1', t.u('erin'), '  Cornhole champ ')->>'points')::int, 20, '0024: chairs can award too, with a custom note');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok((select created_by = t.u('admin') and amount = 20 and source = 'manual' and activity_id = 'game_win'
+                       and reason = 'Win a Game or Competition: Won a game at Pickleball'
+                  from ledger where user_id = t.u('carol') and activity_id = 'game_win' and ref_id = '00000000-0000-0000-0000-0000000024e1'),
+               '0024: ledger row: manual game_win, ref = event, default note');
+  perform t.ok(exists (select 1 from ledger where user_id = t.u('erin') and activity_id = 'game_win' and reason = 'Win a Game or Competition: Cornhole champ'), '0024: custom note trimmed into the reason');
+  perform t.ok(exists (select 1 from admin_actions where action = 'points_added' and actor_id = t.u('admin') and target_user_id = t.u('carol')
+                        and details->>'activityId' = 'game_win' and (details->>'amount')::int = 20), '0024: logged in the admin action log');
+  perform t.ok(exists (select 1 from notifications where user_id = t.u('carol') and kind = 'points_adjusted'
+                        and title = '+20 pts — Win a Game or Competition' and body = 'Won a game at Pickleball'), '0024: winner notified');
+  perform t.ok(exists (select 1 from pg_indexes where indexname = 'ledger_one_game_win'), '0024: unique index guards (person, event)');
+end $$;
+rollback;
+
+-- =============================================================================
 :as_super
 select 'PASSED: ' || current_setting('t.passed') || ' assertions' as result;

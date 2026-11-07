@@ -18,6 +18,7 @@ import { COSMETICS, cosmeticById, type UnlockRule } from '../lib/cosmetics';
 import { HERO_ITEMS, HOSTED_EVENT_MIN_CHECKINS, STAFF_BADGES, STAFF_COSMETICS, isLegendaryAvatar, staffCosmeticById, staffGrantById, type StaffRule } from '../lib/staffRewards';
 import { monthName } from '../lib/format';
 import { yakPunOfTheWeek } from '../lib/yakPuns';
+import { fmtEventTime, reminderTitle } from '../lib/todayEvent';
 import { announcementError, claimContactError, isEmail } from '../lib/validate';
 import type {
   Activity,
@@ -111,6 +112,8 @@ interface Db {
   normalAvatars: Record<string, AvatarId>;
   /** 0022: event RSVPs (the real one is event_rsvps). */
   rsvps: { eventId: string; userId: string; createdAt: string }[];
+  /** 0024: `${eventId}:${userId}` for every RSVP reminder already sent (the real one is event_reminders_sent). */
+  remindersSent: string[];
   seq: number;
 }
 
@@ -122,7 +125,7 @@ interface OutboxRow extends EmailLogRow {
 
 const DB_KEY = 'yacquest-db-v1';
 const SESSION_KEY = 'yacquest-session';
-const DB_VERSION = 10;
+const DB_VERSION = 11;
 
 let db: Db | null = null;
 
@@ -296,6 +299,7 @@ const strip = (e: YacEvent, includePassword: boolean): YacEvent => (includePassw
 // ───────────────────────────── auth ─────────────────────────────
 
 export async function currentUser(): Promise<User | null> {
+  queueEventReminders(); // 0024: the demo has no cron, so reminders go out when the app loads
   const id = sessionUserId();
   return load().users.find((u) => u.id === id) ?? null;
 }
@@ -403,6 +407,7 @@ export async function updateProfile(patch: Partial<Pick<User, 'displayName' | 'a
 
 export async function getDashboard(): Promise<Dashboard> {
   await delay();
+  queueEventReminders();
   const d = load();
   const user = me();
   const overall = rankedParticipants();
@@ -1008,6 +1013,7 @@ export function seed(): Db {
     announcementSenders: {},
     normalAvatars: {},
     rsvps: [],
+    remindersSent: [],
     seq: 1000,
   };
   db = d;
@@ -1184,12 +1190,22 @@ export function seed(): Db {
       if (title === 'Kickoff Mixer' || title === 'Fall Welcome Picnic') d.rsvps.push({ eventId: e.id, userId: demo.id, createdAt: new Date(start - 2 * D).toISOString() });
     }
   }
+  // 0024: the demo player RSVP'd to today's live Duke event (Home shows the "📅 Today" chip until they
+  // check in) and to a pickleball meetup starting in about 50 minutes (its "⏰ Starts in 1 hour" reminder
+  // goes out the first time the app loads).
+  {
+    const study = d.events.find((x) => x.title === 'Study Break Social');
+    if (study) d.rsvps.push({ eventId: study.id, userId: demo.id, createdAt: iso(-1 * D) });
+    d.events.push({ id: nextId('evt'), title: 'Pickleball Meetup', campus: 'duke', crossCampus: false, kind: 'active', location: 'Wilson Rec Courts', startsAt: iso(50 * 60_000), endsAt: iso(50 * 60_000 + 2 * H), password: 'DINK', activityId: 'home_event', attendeeCount: 0, checkInGraceMinutes: 60 });
+    const pb = d.events[d.events.length - 1];
+    d.rsvps.push({ eventId: pb.id, userId: demo.id, createdAt: iso(-2 * D) });
+  }
   d.actions.sort((a, b) => a.createdAt.localeCompare(b.createdAt)).forEach((a, i) => (a.id = i + 1));
   return d;
 }
 
 // Expose for tests
-export const __test = { load, pointsOf, rankedParticipants, setSession, addLedger, deliverOutbox, badgesFor, unlocksFor, shoutoutSync, staffStats, staffUnlocksFor, legendaryFor, streakFor };
+export const __test = { queueEventReminders, load, pointsOf, rankedParticipants, setSession, addLedger, deliverOutbox, badgesFor, unlocksFor, shoutoutSync, staffStats, staffUnlocksFor, legendaryFor, streakFor };
 
 // ───────────────────────────── team (chairs only) ─────────────────────────────
 
@@ -2194,4 +2210,76 @@ export async function councilBoard(): Promise<CouncilMember[]> {
       };
     })
     .sort((a, b) => Number(b.isHero) - Number(a.isHero) || Number(b.role === 'chair') - Number(a.role === 'chair') || a.displayName.localeCompare(b.displayName));
+}
+
+// ───────────────────────────── 0024: quick game-win award + RSVP reminders ─────────────────────────────
+
+/**
+ * SERVER RULE (award_game_win, 0024): admins + chairs; the person must have checked in to the event;
+ * once per (event, person). Awards the game_win activity (Tier 2) with ref = the event, notifies, logs.
+ */
+export async function awardGameWin(eventId: string, userId: string, note = ''): Promise<{ points: number }> {
+  await delay();
+  const admin = requireRole('admin', 'chair');
+  const d = load();
+  const e = d.events.find((x) => x.id === eventId);
+  if (!e) return fail('not_found', 'That event no longer exists.');
+  const u = d.users.find((x) => x.id === userId);
+  if (!u) return fail('not_found', 'That person wasn’t found.');
+  if (!checkedInAt(userId, eventId)) fail('not_checked_in', `${u.displayName} didn’t check in to this event.`);
+  if (d.ledger.some((l) => l.userId === userId && l.source === 'manual' && l.activityId === 'game_win' && l.refId === eventId))
+    fail('duplicate', `${u.displayName} already got a game win for this event.`);
+  const n = note.trim() || `Won a game at ${e.title}`;
+  if (n.length > 120) fail('note', 'Keep the note under 120 characters.');
+  const a = activityById('game_win')!;
+  const points = TIER_POINTS[a.tier];
+  const reason = `${a.title}: ${n}`;
+  addLedger({ userId, amount: points, source: 'manual', activityId: a.id, refId: e.id, reason, createdBy: admin.id });
+  logAction('points_added', u, { amount: points, reason, activityId: a.id }, admin);
+  notify(userId, 'points_adjusted', `+${points} pts — ${a.title}`, n);
+  save();
+  return { points };
+}
+
+/** Who already got a game win at this event (admins + chairs). */
+export async function adminEventGameWins(eventId: string): Promise<string[]> {
+  await delay(60);
+  requireRole('admin', 'chair');
+  return [...new Set(load().ledger.filter((l) => l.source === 'manual' && l.activityId === 'game_win' && l.refId === eventId).map((l) => l.userId))];
+}
+
+/**
+ * SERVER RULE (queue_event_reminders, 0024): for every RSVP to an event starting within the next
+ * 70 minutes, once per (event, person): an in-app notification, plus an email if they have email
+ * updates on. Skips people who already checked in. Safe to call any number of times.
+ */
+function queueEventReminders(nowMs: number = Date.now()): number {
+  const d = load();
+  if (!d.remindersSent) d.remindersSent = [];
+  let n = 0;
+  for (const e of d.events) {
+    const start = new Date(e.startsAt).getTime();
+    if (!(start > nowMs && start <= nowMs + 70 * 60_000)) continue;
+    const pts = TIER_POINTS[activityById(e.activityId)?.tier ?? 2];
+    for (const r of d.rsvps) {
+      if (r.eventId !== e.id) continue;
+      const key = `${e.id}:${r.userId}`;
+      if (d.remindersSent.includes(key) || checkedInAt(r.userId, e.id)) continue;
+      const u = d.users.find((x) => x.id === r.userId);
+      if (!u) continue;
+      d.remindersSent.push(key);
+      const time = fmtEventTime(e.startsAt);
+      const body = `${e.title} starts at ${time} at ${e.location}. Check in at the event to earn ${pts} points.`;
+      notify(u.id, 'event_reminder', reminderTitle(e, (start - nowMs) / 60_000), body);
+      if (u.emailOptIn) {
+        const subject = `Reminder: ${e.title} starts at ${time}`;
+        const text = `${e.title} starts at ${time}.\nWhere: ${e.location}\n\nCheck in at the event to earn ${pts} points.\n\nYou get this because you RSVP'd in YACquest and have email updates on.`;
+        const html = `<p style="font-size:16px;margin:0 0 8px"><b>${esc(e.title)}</b> starts at <b>${esc(time)}</b>.</p><p style="margin:0 0 8px">📍 ${esc(e.location)}</p><p style="margin:0 0 12px">Check in at the event to earn <b>${pts} points</b>.</p><p style="font-size:12px;color:#4a5672;margin:0">You get this because you RSVP’d in YACquest and have email updates on.</p>`;
+        enqueueEmail('event_reminder', [u.email], subject, text, html, `reminder:${key}`);
+      }
+      n++;
+    }
+  }
+  if (n) save();
+  return n;
 }

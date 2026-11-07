@@ -72,10 +72,12 @@ describe('event RSVPs', () => {
   it('lists upcoming events in the next 7 days with RSVP counts in the weekly email', async () => {
     asUser('iesha');
     const rep = await api.weeklyReportPreview();
-    expect(rep.text).toMatch(/📅 NEXT 7 DAYS \(RSVPs\): Mentorship Circle \([A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2}\) · 12 going/);
+    // 0024 seed: the demo player's Pickleball Meetup (in ~50 min) comes first.
+    expect(rep.text).toMatch(/📅 NEXT 7 DAYS \(RSVPs\): Pickleball Meetup \([A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2}\) · 1 going; Mentorship Circle \([A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2}\) · 12 going/);
     expect(rep.text).not.toContain('Winter Service Day');
     expect(rep.text.indexOf('NEXT 7 DAYS')).toBeLessThan(rep.text.indexOf('THIS WEEK'));
-    expect(rep.html).toContain('Next 7 days (RSVPs):</b> <b>Mentorship Circle</b>');
+    expect(rep.html).toContain('Next 7 days (RSVPs):</b> <b>Pickleball Meetup</b>');
+    expect(rep.html).toContain('<b>Mentorship Circle</b>');
   });
 });
 

@@ -320,3 +320,26 @@ The people with role `chair` run this app; they are not chairs of the YAC organi
 - Re-created from their latest definitions with new wording only: `require_chair()` (0001; `forbidden: Only a YACquest Chair can do that.`), `set_role()` and `transfer_chair()` (0019), `step_down_chair()` (0011), `crown_hero()` and `grant_staff_reward()` (0020), `admin_event_attendees()` (0013), `admin_event_rsvps()` (0022).
 - Notifications now say e.g. "You’re now a YACquest Chair", "You stepped down as YACquest Chair", "A YACquest Chair crowned you…".
 - Grants restated as before: revoked from `public, anon`, granted to `authenticated`.
+
+## 0024 — Small improvements (quick game-win award, RSVP reminders)
+Additive only: no point values, caps or prize rules change.
+
+### Quick game-win award (Admin → Events → Who came)
+- `award_game_win(p_event_id uuid, p_user_id uuid, p_note text default null)` (admins + YACquest Chairs; participants get `forbidden`) → json `{points, eventId, userId}`. Awards the `game_win` activity at its tier value (Tier 2 = `tier2_points`) through the ledger exactly like `award_activity`: `source = 'manual'`, `created_by` = the admin, plus `ref_id` = the event id; reason `"Win a Game or Competition: <note>"` (default note `"Won a game at <event title>"`, trimmed, max 120 → `note`). Notifies the winner (`points_adjusted`, "+20 pts — Win a Game or Competition", body = the note). Logged by the 0004 ledger trigger as `points_added` like every manual award.
+- Errors: `not_found` (unknown event / person), `not_checked_in` (no `checkin` ledger row for that event), `duplicate` (already awarded for that event — also enforced by the unique index `ledger_one_game_win` on `ledger (user_id, ref_id) where source = 'manual' and activity_id = 'game_win' and ref_id is not null`; older `award_activity` game wins have `ref_id` null and are unaffected).
+- The app reads who already got one with a plain ledger select (admins can read the ledger): `source = 'manual'`, `activity_id = 'game_win'`, `ref_id = <event id>`.
+
+### RSVP reminders (~1 hour before)
+- Table `event_reminders_sent (event_id → events on delete cascade, user_id → profiles on delete cascade, sent_at; PK (event_id, user_id))`. RLS on, no policies, no grants: written only by `queue_event_reminders()`.
+- `queue_event_reminders(p_now timestamptz default now())` → int (reminders queued). Service role / pg_cron only (`require_service_role`, execute revoked from everyone else). For every RSVP to an event with `p_now < starts_at <= p_now + 70 min`, not in `event_reminders_sent`, whose person has no `checkin` ledger row for it: inserts the `event_reminders_sent` row, then
+  - notification `kind = 'event_reminder'`, title `"⏰ Starts in 1 hour: <title> at <location>"` (`"⏰ Starts in N min: …"` if the event starts in under 45 minutes, e.g. it was created at short notice), body `"<title> starts at 2:00 PM at <location>. Check in at the event to earn N points."` (Eastern time; N = the event's activity tier points);
+  - if `profiles.email_opt_in` and the email is confirmed: `enqueue_email('event_reminder', [email], 'Reminder: <title> starts at 2:00 PM', …)` with dedupe key `reminder:<event_id>:<user_id>`. Short body: time, location, "Check in at the event to earn N points." No yak pun.
+  Staff are included like anyone who RSVP'd. Deleted events (hard delete) take their RSVPs and reminder rows with them. Idempotent: calling it again (or every 10 minutes) never duplicates.
+- **Trigger, no new setup:** `enqueue_weekly_report_if_due()` (which the `send-emails` Edge Function already calls at the start of every run, every 10 minutes via Supabase Cron) is re-created from 0012 with one extra first step: `perform queue_event_reminders()` inside its own `begin … exception` block (a reminder failure is logged as a warning and never blocks the weekly report or email sending). Reminders created in a run are claimed by `claim_email_batch` in the same run. Reminders go out 60–70 minutes before the start.
+- `email_outbox.kind` check now also allows `'event_reminder'` (Admin → System → Email delivery log shows "Event reminder").
+
+### Grants
+`award_game_win`: revoked from `public, anon`, granted to `authenticated` (the function checks for admins). `queue_event_reminders`, `enqueue_weekly_report_if_due`: revoked from everyone, granted to `service_role` only.
+
+### App-only changes (no SQL)
+Home "📅 Today" chip + bell dot (an RSVP'd event today, Eastern time, not yet checked in — from `listEvents()`), full-screen check-in confirmation with a live clock, the "N more points to <next checkpoint>" line, "Start here" tips for brand-new players, campus-color avatar frames on Ranks / Adventurer of the Month, and **Duplicate** on Admin → Events (prefills the New event form one week later with a new password; nothing is saved until Save).

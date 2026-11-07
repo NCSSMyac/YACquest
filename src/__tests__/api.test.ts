@@ -46,6 +46,13 @@ describe('event check-in', () => {
 });
 
 describe('anti-farming caps', () => {
+  // The demo seed may already give yak001 a digital quest this week (depends on today's date),
+  // so start these tests from a clean slate for yak001's submissions.
+  beforeEach(() => {
+    const d = load();
+    const me = d.users.find((u) => u.handle === 'yak001')!;
+    d.submissions = d.submissions.filter((s) => s.userId !== me.id);
+  });
   it('allows only one digital quest per week', async () => {
     asUser('yak001');
     const img = 'data:image/png;base64,AAAA';

@@ -7,6 +7,7 @@ import { campusName } from '../config';
 import { monthName } from '../lib/format';
 import { useAsync } from '../lib/useAsync';
 import { Avatar } from './Avatar';
+import { CampusFrame } from './CampusFrame';
 
 export function Shoutout({ meId }: { meId?: string }) {
   const { data } = useAsync(() => api.monthlyShoutout(), []);
@@ -18,9 +19,11 @@ export function Shoutout({ meId }: { meId?: string }) {
     <section className="panel gold shoutout" aria-label={title}>
       <h2 className="panel-title">⭐ {title}</h2>
       <div className="row">
-        <span className="shoutout-avatar">
-          <Avatar id={data.avatar} look={data.look} campus={data.campus} size={56} title={data.displayName} />
-        </span>
+        <CampusFrame campus={data.campus} label>
+          <span className="shoutout-avatar">
+            <Avatar id={data.avatar} look={data.look} campus={data.campus} size={56} title={data.displayName} />
+          </span>
+        </CampusFrame>
         <div style={{ minWidth: 0 }}>
           <b className="shoutout-name">{data.displayName}</b>
           <div className="shoutout-campus">{campusName(data.campus)}</div>

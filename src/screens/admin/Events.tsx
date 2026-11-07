@@ -1,11 +1,12 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import * as api from '../../api';
-import { CAMPUSES, campusName, type CampusId } from '../../config';
+import { CAMPUSES, TIER_POINTS, campusName, type CampusId } from '../../config';
 import { EVENT_KINDS, kindInfo, kindPoints, kindTier } from '../../lib/eventKinds';
 import { Empty, ErrorText, Loading, Modal, Panel, useToast } from '../../components/ui';
 import { useAuth } from '../../lib/auth';
 import { fmtDateTime } from '../../lib/format';
 import { checkInUrl } from '../../lib/pendingCheckin';
+import { duplicateForm, editForm, toLocalInput as toLocal, type EventForm as Form } from '../../lib/duplicateEvent';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 import type { AdminEventRsvpCounts, EventAttendee, EventRsvp, YacEvent } from '../../types';
 
@@ -13,11 +14,6 @@ type AdminEvent = YacEvent & AdminEventRsvpCounts;
 
 const WORDS = ['YAK', 'MOO', 'HORN', 'QUEST', 'GOLD', 'SHAGGY', 'FJORD', 'RIDGE'];
 const genPassword = () => `${WORDS[Math.floor(Math.random() * WORDS.length)]}-${1000 + Math.floor(Math.random() * 9000)}`;
-const pad = (n: number) => String(n).padStart(2, '0');
-const toLocal = (iso: string) => {
-  const d = new Date(iso);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-};
 
 function phase(e: YacEvent): 'LIVE' | 'Upcoming' | 'Past' {
   const now = Date.now();
@@ -25,8 +21,6 @@ function phase(e: YacEvent): 'LIVE' | 'Upcoming' | 'Past' {
   const end = new Date(e.endsAt).getTime() + e.checkInGraceMinutes * 60000;
   return now < s ? 'Upcoming' : now <= end ? 'LIVE' : 'Past';
 }
-
-interface Form { title: string; campus: CampusId | 'all'; kind: YacEvent['kind']; location: string; start: string; end: string; grace: number; password: string }
 
 export default function Events() {
   const { user } = useAuth();
@@ -40,22 +34,27 @@ export default function Events() {
   const [whoCame, setWhoCame] = useState<YacEvent | null>(null);
   const [whoGoing, setWhoGoing] = useState<AdminEvent | null>(null);
   const [qrFor, setQrFor] = useState<YacEvent | null>(null);
+  const [dupOf, setDupOf] = useState<string | null>(null);
 
   // Upcoming + live: soonest first. Past (kept forever): newest first.
   const current = (list.data ?? []).filter((e) => phase(e) !== 'Past').sort((a, b) => a.startsAt.localeCompare(b.startsAt));
   const past = (list.data ?? []).filter((e) => phase(e) === 'Past').sort((a, b) => b.startsAt.localeCompare(a.startsAt));
   const shown = tab === 'current' ? current : past;
 
-  function open(e: YacEvent | 'new') {
+  function open(e: YacEvent | 'new', duplicate = false) {
     setErr(null);
-    setEditing(e);
-    if (e === 'new') {
+    // Duplicate = the New event form, prefilled (one week later, fresh password). Nothing is saved until Save.
+    setEditing(duplicate ? 'new' : e);
+    setDupOf(duplicate && e !== 'new' ? e.title : null);
+    if (duplicate && e !== 'new') {
+      setForm(duplicateForm(e, genPassword()));
+    } else if (e === 'new') {
       const s = new Date(Date.now() + 86400000);
       s.setHours(18, 0, 0, 0);
       const en = new Date(s.getTime() + 2 * 3600000);
       setForm({ title: '', campus: user?.campus ?? 'duke', kind: 'active', location: '', start: toLocal(s.toISOString()), end: toLocal(en.toISOString()), grace: 60, password: genPassword() });
     } else {
-      setForm({ title: e.title, campus: e.campus, kind: e.kind, location: e.location, start: toLocal(e.startsAt), end: toLocal(e.endsAt), grace: e.checkInGraceMinutes, password: e.password ?? '' });
+      setForm(editForm(e));
     }
   }
 
@@ -125,6 +124,7 @@ export default function Events() {
                 <button className="btn small" onClick={() => setWhoCame(e)}>Who came ({e.attendeeCount})</button>
                 <button className="btn small navy" onClick={() => setQrFor(e)}>QR code</button>
                 <button className="btn small blue" onClick={() => open(e)}>Edit</button>
+                <button className="btn small ghost" onClick={() => open(e, true)} aria-label={`Duplicate ${e.title} one week later`}>Duplicate</button>
                 <button className="btn small red" onClick={() => del(e)}>Delete</button>
               </div>
             </Panel>
@@ -142,9 +142,12 @@ export default function Events() {
         {qrFor && <CheckInQr e={qrFor} onClose={() => setQrFor(null)} />}
       </Modal>
 
-      <Modal open={!!editing && !!form} onClose={() => setEditing(null)} title={editing === 'new' ? 'New event' : 'Edit event'}>
+      <Modal open={!!editing && !!form} onClose={() => setEditing(null)} title={editing === 'new' ? (dupOf ? 'New event (copy)' : 'New event') : 'Edit event'}>
         {form && (
           <form className="stack" onSubmit={save}>
+            {dupOf && editing === 'new' && (
+              <p className="muted" style={{ margin: 0 }}>Copied from “{dupOf}”, one week later with a new password. Check the details, then Save.</p>
+            )}
             <label className="field"><span>Title</span><input className="input" value={form.title} onChange={(e) => set('title', e.target.value)} required /></label>
             <label className="field">
               <span>Tier (sets the points)</span>
@@ -200,20 +203,66 @@ async function copyText(text: string, toast: ReturnType<typeof useToast>, what: 
 
 const csvCell = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
 
-/** Admin → Events → Who came: everyone who checked in, oldest first. */
+/** Admin → Events → Who came: everyone who checked in, oldest first, with a quick "🏆 Game win" award per person. */
 function Attendees({ e, onClose }: { e: YacEvent; onClose: () => void }) {
   const toast = useToast();
   const list = useAsync<EventAttendee[]>(() => api.adminEventAttendees(e.id), [e.id]);
+  const wins = useAsync<string[]>(() => api.adminEventGameWins(e.id), [e.id]);
+  const [awarded, setAwarded] = useState<Set<string>>(new Set());
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
   const rows = list.data ?? [];
+  const won = (id: string) => awarded.has(id) || !!wins.data?.includes(id);
   const csv = ['name,username,campus,checked_in', ...rows.map((a) => [a.displayName, '@' + a.handle, campusName(a.campus), fmtDateTime(a.checkedInAt)].map(csvCell).join(','))].join('\n');
+
+  function ask(userId: string) {
+    setConfirming(userId);
+    setNote(`Won a game at ${e.title}`);
+  }
+  async function award(a: EventAttendee) {
+    setBusy(true);
+    try {
+      const r = await api.awardGameWin(e.id, a.userId, note);
+      setAwarded((s) => new Set(s).add(a.userId));
+      setConfirming(null);
+      toast(`+${r.points} to ${a.displayName} for a game win.`, 'success');
+    } catch (x) {
+      toast(errorMessage(x), 'error');
+      if ((x as { code?: string }).code === 'duplicate') setAwarded((s) => new Set(s).add(a.userId));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="stack">
       {list.loading && !list.data ? <Loading lines={3} /> : list.error ? <ErrorText error={list.error} /> : !rows.length ? <Empty>Nobody has checked in yet.</Empty> : (
-        <ol className="list" style={{ maxHeight: '50vh', overflow: 'auto' }}>
+        <ol className="list" style={{ maxHeight: '55vh', overflow: 'auto' }}>
           {rows.map((a) => (
-            <li key={a.userId + a.checkedInAt} className="spread" style={{ gap: 8 }}>
-              <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}><b>{a.displayName}</b> <span className="muted">· {campusName(a.campus)}</span></span>
-              <small className="muted" style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(a.checkedInAt)}</small>
+            <li key={a.userId + a.checkedInAt} className="stack" style={{ gap: 6 }}>
+              <div className="spread" style={{ gap: 8 }}>
+                <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}><b>{a.displayName}</b> <span className="muted">· {campusName(a.campus)}</span></span>
+                <small className="muted" style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(a.checkedInAt)}</small>
+              </div>
+              {won(a.userId) ? (
+                <span className="chip approved" style={{ alignSelf: 'flex-start' }}>✓ awarded · game win</span>
+              ) : confirming === a.userId ? (
+                <div className="stack" style={{ gap: 6 }}>
+                  <label className="field">
+                    <span>Note (shown to {a.displayName})</span>
+                    <input className="input" value={note} maxLength={120} onChange={(x) => setNote(x.target.value)} />
+                  </label>
+                  <div className="btn-row">
+                    <button type="button" className="btn small ghost" disabled={busy} onClick={() => setConfirming(null)}>Cancel</button>
+                    <button type="button" className="btn small green" disabled={busy} onClick={() => award(a)}>{busy ? 'Awarding…' : `Award +${TIER_POINTS[2]}`}</button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" className="btn small ghost" style={{ alignSelf: 'flex-start' }} disabled={!!confirming} onClick={() => ask(a.userId)} aria-label={`Game win: award ${a.displayName} ${TIER_POINTS[2]} points`}>
+                  🏆 Game win +{TIER_POINTS[2]}
+                </button>
+              )}
             </li>
           ))}
         </ol>

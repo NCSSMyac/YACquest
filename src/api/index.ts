@@ -84,6 +84,9 @@ export const {
   adminEventRsvps,
   myStreak,
   myRecap,
+  // 0024: quick game-win award from Who came
+  awardGameWin,
+  adminEventGameWins,
   submitFeedback,
   listFeedback,
   markFeedbackReviewed,

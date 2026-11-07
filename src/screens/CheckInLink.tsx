@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, Navigate, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import * as api from '../api';
+import { CheckInConfirm } from '../components/CheckInConfirm';
 import { Sprite } from '../components/Sprite';
 import { ErrorText, Loading, Panel } from '../components/ui';
 import { useAuth } from '../lib/auth';
-import { noteCelebratedPoints, useCelebrate } from '../lib/celebrate';
+import { noteCelebratedPoints } from '../lib/celebrate';
 import { peekPendingCheckIn, savePendingCheckIn } from '../lib/pendingCheckin';
 import { errorMessage } from '../lib/useAsync';
 
-type Result = { ok: true; points: number } | { ok: false; error: string };
+type Result = { ok: true; points: number; at: Date } | { ok: false; error: string };
 
 /**
  * `#/checkin?event=<eventId>&code=<password>` — what an event's QR code opens (Admin → Events → QR code).
@@ -23,7 +24,8 @@ export default function CheckInLink() {
   const [title, setTitle] = useState(params.get('title')?.trim() || '');
   const [result, setResult] = useState<Result | null>(null);
   const started = useRef(false);
-  const celebrate = useCelebrate();
+  const nav = useNavigate();
+  const [showPass, setShowPass] = useState(true);
 
   useEffect(() => {
     if (!ready || !user || !eventId || !code || started.current) return;
@@ -37,21 +39,12 @@ export default function CheckInLink() {
     );
     api.checkIn(eventId, code).then(
       (r) => {
-        setResult({ ok: true, points: r.points });
+        setResult({ ok: true, points: r.points, at: new Date() });
         noteCelebratedPoints(user.id, r.points);
       },
       (e) => setResult({ ok: false, error: errorMessage(e) }),
     );
   }, [ready, user, eventId, code]);
-
-  // Pop the coins once we know both the points and (if we can) the title.
-  const popped = useRef(false);
-  useEffect(() => {
-    if (result?.ok && !popped.current) {
-      popped.current = true;
-      celebrate({ title: 'Checked in!', subtitle: title || undefined, points: result.points, size: 'small' });
-    }
-  }, [result, title, celebrate]);
 
   if (!ready) return <div className="app-shell"><Loading /></div>;
   if (eventId && code && !user) {
@@ -61,6 +54,16 @@ export default function CheckInLink() {
 
   return (
     <div className="app-shell" style={{ paddingTop: 24 }}>
+      {/* Full-screen "CHECKED IN ✓" pass with coins + a live clock (replaces the small pop). */}
+      {result?.ok && showPass && (
+        <CheckInConfirm
+          pass={{ eventTitle: title || 'YAC event', points: result.points, checkedInAt: result.at }}
+          onDone={() => {
+            setShowPass(false);
+            nav('/', { replace: true });
+          }}
+        />
+      )}
       <div className="stack">
         <div className="center">
           <Sprite id="yak" size={80} className="bob" />
