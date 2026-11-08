@@ -39,7 +39,7 @@ export default function CheckEmail() {
   }
 
   return (
-    <div className="app-shell" style={{ paddingTop: 24 }}>
+    <div className="app-shell" role="main" style={{ paddingTop: 24 }}>
       <div className="stack">
         <div className="center"><Sprite id="yak" size={72} className="bob" /></div>
         <Panel title="Check your inbox">

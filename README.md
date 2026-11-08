@@ -32,6 +32,8 @@ Any password works in the demo. Live demo events have passwords `BLUEDEVIL` (Duk
 | `npm run typecheck` | TypeScript only |
 | `npm test` | Rule tests for the API (check-in, caps, permissions, prize race) |
 
+The build stamps an app version (`package.json` version + short commit from `GITHUB_SHA`, or `dev`, + build date) into the app and into `dist/version.json`; Help shows it and open apps offer a refresh when a newer build is deployed.
+
 ## Where things live
 
 ```
@@ -50,7 +52,7 @@ scripts/simulate-points.py ← rerun the points model if YAC changes plans
 
 ## Features
 
-**Participants:** sign up (campus, character, friend code, rules accepted before account creation) · log in / forgot password · dashboard (points, progress to the prize, overall and campus rank, days left, recent activity, friend code) · Quest Board (event check-in with password, screenshot/photo quests with in-browser image shrinking, submission status) · Treasure Vault (live "N of 4 left" counter, spot grid, Winners' Circle, winner form (name, email, phone, mailing address, card preference) with reference number) · leaderboards (top 10, top 3 per campus, per-capita Campus Cup) · notifications · rules · profile, theme, prize suggestions.
+**Participants:** sign up (campus, character, friend code, rules accepted before account creation) · log in / forgot password · dashboard (points, progress to the prize, overall and campus rank, days left, recent activity, friend code) · Quest Board (event check-in with password, screenshot/photo quests with in-browser image shrinking, submission status) · Treasure Vault (live "N of 4 left" counter, spot grid, Winners' Circle, winner form (name, email, phone, mailing address, card preference) with reference number) · leaderboards (top 10, top 3 per campus, per-capita Campus Cup) · notifications · rules · profile, theme, prize suggestions · **privacy summary** (`#/privacy`, public: linked from Login, Sign-up, Help and Me) · **delete my account** (Me → Account) · **🐞 Report a problem** (Help, Me and the crash screen; attaches page, app version, browser, screen and recent errors, never emails or tokens) · offline banner and "New version available" refresh prompt · app version shown in Help.
 
 **Admins (all campuses):** overview · review queue (approve / reject with reason) · player search, quick "+20 game win", manual adjustments with required reason (+35 at most per entry) · create/edit events and passwords · announcements to everyone, a campus or one person (in the app and optionally by email).
 

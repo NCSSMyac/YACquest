@@ -12,8 +12,8 @@ import { useAsync } from '../lib/useAsync';
 import type { NotificationKind } from '../types';
 
 const KIND: Record<NotificationKind, { icon: string; color: string }> = {
-  submission_approved: { icon: '✔', color: 'var(--green)' },
-  submission_rejected: { icon: '✖', color: 'var(--red)' },
+  submission_approved: { icon: '✔', color: 'var(--green-text)' },
+  submission_rejected: { icon: '✖', color: 'var(--red-text)' },
   points_adjusted: { icon: '★', color: 'var(--gold-500)' },
   prize_qualified: { icon: '🏆', color: 'var(--gold-500)' },
   prize_update: { icon: '🎁', color: 'var(--purple)' },
@@ -24,7 +24,7 @@ const KIND: Record<NotificationKind, { icon: string; color: string }> = {
   // 0024: "⏰ Starts in 1 hour" (RSVP reminder)
   event_reminder: { icon: '📅', color: 'var(--blue-500)' },
   // 0026: "Thanks for coming" / "Sorry we missed you" after an event
-  event_followup: { icon: '🐂', color: 'var(--green)' },
+  event_followup: { icon: '🐂', color: 'var(--green-text)' },
 };
 
 const NOTE_STEP = 20;

@@ -62,7 +62,7 @@ export function QuickNav({ sections, badge, current, onPick }: { sections: Admin
   const btn = (p: AdminPage) => {
     const here = p.path === current;
     return (
-      <Link key={p.path} to={p.path} className={`qnav-btn${here ? ' current' : ''}`} title={`${p.label}: ${p.blurb}`} aria-label={p.short ? p.label : undefined} aria-current={here ? 'page' : undefined} onClick={onPick}>
+      <Link key={p.path} to={p.path} className={`qnav-btn${here ? ' current' : ''}`} title={`${p.label}: ${p.blurb}`} aria-label={p.short ? `${p.short}: ${p.label}` : undefined} aria-current={here ? 'page' : undefined} onClick={onPick}>
         <PixelGlyph name={p.icon} size={28} />
         <span className="qnav-label">{p.short ?? p.label}</span>
         <Badge page={p} value={badge(p)} />

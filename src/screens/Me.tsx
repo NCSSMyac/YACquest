@@ -18,6 +18,9 @@ import { LEGENDARY_AVATARS } from '../lib/staffRewards';
 import { useStaffRewards } from '../lib/useStaffRewards';
 import { MyFriends } from '../components/MyFriends';
 import { requestTour } from '../lib/tour';
+import { setDeletingAccount } from '../lib/goodbye';
+import { ReportProblemButton } from '../components/ReportProblem';
+import { CONTACT_EMAILS } from '../config';
 
 type Theme = 'light' | 'dark' | 'system';
 const THEME_KEY = 'yacquest-theme';
@@ -44,7 +47,7 @@ function applyTheme(t: Theme) {
 const ROLE = { participant: 'Adventurer', admin: 'Admin', chair: 'YACquest Chair' } as const;
 
 export default function Me() {
-  const { user, refresh, signOut } = useAuth();
+  const { user, refresh, signOut, setUser } = useAuth();
   const toast = useToast();
   const nav = useNavigate();
   const ledger = useAsync(() => api.myLedger(), [], { live: true });
@@ -64,9 +67,10 @@ export default function Me() {
   const [params] = useSearchParams();
   const section = params.get('section');
   useEffect(() => {
-    if (section !== 'friends') return;
+    if (section !== 'friends' && section !== 'account') return;
     const t = setTimeout(() => {
-      const el = document.getElementById('friends');
+      const el = document.getElementById(section);
+      if (el instanceof HTMLDetailsElement) el.open = true;
       el?.scrollIntoView({ block: 'start', behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     }, 50);
     return () => clearTimeout(t);
@@ -247,7 +251,7 @@ export default function Me() {
             <div className="muted" style={{ marginBottom: 6 }}>Theme</div>
             <div className="tabs" role="radiogroup" aria-label="Theme">
               {(['light', 'dark', 'system'] as Theme[]).map((t) => (
-                <button key={t} type="button" role="radio" aria-checked={theme === t} aria-selected={theme === t} onClick={() => pickTheme(t)}>
+                <button key={t} type="button" role="radio" aria-checked={theme === t} onClick={() => pickTheme(t)}>
                   {t[0].toUpperCase() + t.slice(1)}
                 </button>
               ))}
@@ -263,9 +267,21 @@ export default function Me() {
       <nav className="link-grid" aria-label="More">
         <Link className="btn small ghost" to="/rules">📜 Rules</Link>
         <Link className="btn small ghost" to="/help">❓ Help</Link>
-        <Link className="btn small ghost" to="/notifications" aria-label="Notifications">🔔 Alerts</Link>
+        <Link className="btn small ghost" to="/notifications"><span aria-hidden="true">🔔</span> Alerts</Link>
       </nav>
-      <button type="button" className="btn small ghost block" onClick={requestTour}>🧭 Replay the tour</button>
+      <div className="grid-2">
+        <button type="button" className="btn small ghost" onClick={requestTour}>🧭 Replay the tour</button>
+        <Link className="btn small ghost" to="/privacy">🔒 Privacy</Link>
+      </div>
+      <ReportProblemButton />
+
+      <DeleteAccount
+        handle={user.handle}
+        onDeleted={() => {
+          nav('/goodbye', { replace: true });
+          setUser(null);
+        }}
+      />
 
       <button className="btn block navy" onClick={async () => { await signOut(); nav('/login'); }}>Sign out</button>
       {api.isMock && <button className="btn block red small" onClick={() => setConfirmReset(true)}>Reset demo data</button>}
@@ -296,5 +312,71 @@ function SoundToggle() {
       />
       <span>Sound effects</span>
     </label>
+  );
+}
+
+/** 0027: Me → Account → Delete my account. The server checks the typed username, the last YACquest Chair and prizes on their way. */
+function DeleteAccount({ handle, onDeleted }: { handle: string; onDeleted: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState('');
+  const [sure, setSure] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [errCode, setErrCode] = useState<string | null>(null);
+  const matches = typed.trim().replace(/^@+/, '').toLowerCase() === handle.toLowerCase();
+
+  function close() {
+    if (busy) return;
+    setOpen(false);
+    setTyped('');
+    setSure(false);
+    setErr(null);
+    setErrCode(null);
+  }
+
+  async function del(e: FormEvent) {
+    e.preventDefault();
+    if (!matches || !sure) return;
+    setBusy(true);
+    setErr(null);
+    setDeletingAccount(true);
+    try {
+      await api.deleteMyAccount(typed);
+      onDeleted();
+    } catch (e2) {
+      setDeletingAccount(false);
+      setErr(errorMessage(e2));
+      setErrCode(e2 instanceof api.ApiError ? e2.code : null);
+      setBusy(false);
+    }
+  }
+
+  const mailChairs = `mailto:${CONTACT_EMAILS.join(',')}?subject=${encodeURIComponent('YACquest: my prize + deleting my account')}`;
+  return (
+    <Accordion icon="⚠️" title="Account" summary="Delete my account" className="acc-danger" id="account">
+      <div className="stack">
+        <p style={{ margin: 0 }}>
+          Deleting your account removes your login, profile, points history, check-ins, RSVPs, uploads, notifications and feedback. It can’t be undone. If you won a prize, the spot stays filled anonymously. <Link to="/privacy">Details in the Privacy summary</Link>.
+        </p>
+        <button type="button" className="btn red block" onClick={() => setOpen(true)}>Delete my account…</button>
+      </div>
+      <Modal open={open} onClose={close} title="Delete your account?">
+        <form className="stack" onSubmit={del}>
+          <p style={{ margin: 0 }}>This permanently deletes <b>@{handle}</b> and everything in it. Your points leave the leaderboard. This can’t be undone.</p>
+          <label className="field">
+            <span>Type your username to confirm</span>
+            <input className="input" value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={handle} autoCapitalize="none" autoComplete="off" spellCheck={false} />
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={sure} onChange={(e) => setSure(e.target.checked)} />
+            <span>I understand my account and points will be gone for good.</span>
+          </label>
+          <ErrorText error={err} />
+          {errCode === 'prize_pending' && <a className="btn navy block" href={mailChairs}>✉️ Email the YACquest Chairs</a>}
+          <button className="btn red block" disabled={!matches || !sure || busy}>{busy ? 'Deleting…' : 'Delete my account forever'}</button>
+          <button type="button" className="btn ghost block" onClick={close} disabled={busy}>Keep my account</button>
+        </form>
+      </Modal>
+    </Accordion>
   );
 }

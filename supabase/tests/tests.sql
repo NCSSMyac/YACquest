@@ -105,6 +105,8 @@ end $$;
 \set as_erin   'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-000000000e70''; set role authenticated;'
 \set as_anon   'reset role; set request.jwt.claim.role = ''anon''; set request.jwt.claim.sub = ''''; set role anon;'
 \set as_dave    'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-000000000da0''; set role authenticated;'
+\set as_zed   'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-00000000027a''; set role authenticated;'
+\set as_yuri  'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-00000000027b''; set role authenticated;'
 -- Edge Function with the service_role key:
 \set as_service 'reset role; set request.jwt.claim.role = ''service_role''; set request.jwt.claim.sub = ''''; set role service_role;'
 -- pg_cron / SQL Editor: database superuser, no API user, no JWT:
@@ -3114,6 +3116,166 @@ do $$ begin
   perform t.ok((select bool_and(json_typeof(j->'joined_at') = 'string' and j->>'campus' in ('duke','unc','ncsu') and j->>'avatar' is not null)
                   from json_array_elements(current_setting('t.friends')::json) j), '0026 friends: campus, character and joined date included');
   perform t.ok(pg_get_function_result('public.my_friends()'::regprocedure) !~* '(email|handle|user_id|friend_code|points)', '0026 friends: only safe fields (no email, handle, id, code or points)');
+end $$;
+rollback;
+
+-- =============================================================================
+-- 0027. PRIVACY + RELIABILITY: bug reports with context, delete my account, storage purge
+-- =============================================================================
+:as_super
+begin;
+insert into t.users values ('zed', '00000000-0000-0000-0000-00000000027a'), ('yuri', '00000000-0000-0000-0000-00000000027b');
+insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data) values
+  (t.u('zed'),  'Zed@Example.edu',  now(), '{"handle":"zed","display_name":"Zed","campus":"unc","avatar":"yak"}'),
+  (t.u('yuri'), 'yuri@example.edu', now(), '{"handle":"yuri","display_name":"Yuri","campus":"duke","avatar":"knight"}');
+update profiles set role = 'admin' where role = 'chair';
+update profiles set role = 'chair' where id = t.u('chair1');
+update profiles set role = 'admin' where id = t.u('yuri');
+update profiles set role = 'participant' where id in (t.u('zed'), t.u('alice'));
+-- zed's stuff: 2 files (one by owner, one by folder), points added by yuri, a note, a rename, notifications
+insert into storage.objects (bucket_id, name, owner) values
+  ('proofs', t.u('zed') || '/a27.jpg', t.u('zed')),
+  ('proofs', t.u('zed') || '/b27.jpg', null),
+  ('proofs', t.u('alice') || '/keep27.jpg', t.u('alice'));
+insert into ledger (cycle_id, user_id, amount, source, reason, created_by) values
+  (active_cycle_id(), t.u('zed'), 35, 'manual', 'Game win', t.u('yuri')),
+  (active_cycle_id(), t.u('alice'), 20, 'manual', 'Helper bonus', t.u('yuri'));
+insert into player_notes (user_id, author_id, body) values (t.u('zed'), t.u('yuri'), 'Zed asked about prizes');
+do $$ begin
+  perform log_admin_action(t.u('yuri'), 'user_renamed', t.u('zed'), '{"from":"Zedd","to":"Zed"}');
+  perform notify(t.u('zed'), 'announcement', 'Hi Zed', 'Welcome');
+end $$;
+-- a delivered-or-not prize claim in its own (archived) cycle so spots never collide with earlier tests
+insert into cycles (id, name, starts_at, ends_at, is_active, archived_at)
+values ('00000000-0000-0000-0000-0000000027c0', 'Test 0027', '2029-01-01', '2029-06-01', false, '2029-06-02');
+insert into prize_claims (id, cycle_id, spot, user_id, display_name, campus, status, reference, contact) values
+  ('00000000-0000-0000-0000-0000000027c1', '00000000-0000-0000-0000-0000000027c0', 1, t.u('zed'), 'Zed', 'unc', 'info_submitted', 'YAC-ZED1',
+   '{"fullName":"Zed Zee","email":"zed@example.edu","phone":"919-555-0100","address":"1 Main St"}');
+insert into email_outbox (kind, to_emails, subject, dedupe_key) values
+  ('prize_info', array['iesha.landis.yac@ncssm.edu'], 'Winner info: Zed', 'prize_info:00000000-0000-0000-0000-0000000027c1:abc'),
+  ('event_followup', array['zed@example.edu'], 'Thanks for coming', 'test27:followup'),
+  ('test', array['ZED@example.edu', 'iesha.landis.yac@ncssm.edu'], 'Two people', 'test27:two');
+
+-- ---- report a problem ----
+:as_zed
+do $$ declare v_id uuid; begin
+  perform t.throws('select submit_bug_report(''x'')', 'message', '0027 bug: message 3+ characters');
+  v_id := (submit_bug_report('The Prize page froze', jsonb_build_object(
+    'route', '/prize?token=abc.def&x=1', 'trying', 'Open my claim, email me at zed@example.edu', 'version', '0.1.0+abc1234 (2026-11-07)',
+    'browser', 'Chrome 130 · Android', 'screen', '390×844', 'online', false, 'theme', 'dark', 'time', '2026-11-07T15:00:00Z',
+    'errors', jsonb_build_array('TypeError: x is undefined', 'fetch failed eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig', '', 'e3', 'e4', 'e5', 'e6'),
+    'email', 'zed@example.edu', 'access_token', 'secret')) ->> 'id')::uuid;
+  perform set_config('t.bug27', v_id::text, false);
+  perform t.eq((select count(*) from feedback), 0::bigint, '0027 bug: participants can''t read feedback rows (context included)');
+  perform t.throws('select * from feedback_details(array[''' || v_id || '''::uuid])', 'forbidden', '0027 bug: participants can''t read technical details');
+end $$;
+:as_yuri
+do $$ declare c jsonb; v_id uuid; begin
+  c := (select context from feedback_details(array[current_setting('t.bug27')::uuid]));
+  perform t.eq((select category from feedback where id = current_setting('t.bug27')::uuid), 'bug', '0027 bug: saved as a Bug / problem feedback row');
+  perform t.eq(c->>'route', '/prize?token=[hidden]&x=1', '0027 bug: tokens in the route are hidden');
+  perform t.eq(c->>'trying', 'Open my claim, email me at [email]', '0027 bug: emails are scrubbed');
+  perform t.eq(c->'errors'->>1, 'fetch failed [token]', '0027 bug: JWTs are scrubbed');
+  perform t.eq(jsonb_array_length(c->'errors'), 5, '0027 bug: at most 5 errors, blanks dropped');
+  perform t.ok(not (c ? 'email') and not (c ? 'access_token'), '0027 bug: unknown keys (email, tokens) dropped');
+  perform t.eq(c->>'online', 'false', '0027 bug: online flag kept');
+  perform t.eq(c->>'version', '0.1.0+abc1234 (2026-11-07)', '0027 bug: app version kept');
+  perform t.eq((select count(*) from feedback_details(array[current_setting('t.bug27')::uuid, gen_random_uuid()])), 1::bigint, '0027 bug: details only for rows that have them');
+  v_id := (submit_feedback('idea', 'More events please') ->> 'id')::uuid;
+  perform t.ok((select context is null from feedback where id = v_id), '0027 bug: normal feedback has no context');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied('select submit_bug_report(''hello there'')', '0027 bug: anon can''t send bug reports');
+  perform t.denied('select delete_my_account(''zed'')', '0027 delete: anon can''t call it');
+end $$;
+:as_alice
+do $$ begin
+  perform submit_bug_report('Ranks page is blank', '{"route":"/ranks","online":true}');
+  perform t.denied('select * from claim_storage_purge(10)', '0027 purge: participants can''t claim the purge queue');
+  perform t.denied('select finish_storage_purge(array[1::bigint])', '0027 purge: participants can''t finish it');
+end $$;
+:as_super
+do $$ declare n int := (select count(*) from feedback where category = 'bug' and created_at >= now() - interval '7 days');
+               k int := (select count(*) from feedback where category = 'bug' and context is not null and created_at >= now() - interval '7 days'); begin
+  perform t.ok(k = 2 and n >= 2, '0027 weekly email: both reports carry context');
+  perform t.ok(build_weekly_report()->>'text' like format('%%Bug reports this week: %s (2 with technical details in Admin → Feedback)%%', n), '0027 weekly email: bug count line');
+  perform t.ok(build_weekly_report()->>'html' like format('%%🐞 <b>Bug reports this week: %s</b>%%', n), '0027 weekly email: bug count in the HTML');
+end $$;
+
+-- ---- delete my account: blocked branches ----
+:as_zed
+do $$ begin
+  perform t.throws('select delete_my_account(''nope'')', 'confirm', '0027 delete: wrong username → confirm');
+  perform t.throws('select delete_my_account(null)', 'confirm', '0027 delete: nothing typed → confirm');
+  perform t.throws('select delete_my_account(''@ZED'')', 'prize_pending', '0027 delete: blocked while a prize is on its way');
+end $$;
+:as_chair1
+do $$ begin
+  perform t.throws('select delete_my_account(''iesha'')', 'last_chair', '0027 delete: the last YACquest Chair can''t delete their account');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok(exists (select 1 from profiles where id = t.u('chair1')), '0027 delete: …and nothing was deleted');
+  perform t.ok(exists (select 1 from profiles where id = t.u('zed')), '0027 delete: blocked → zed still here');
+end $$;
+update prize_claims set status = 'fulfilled', fulfilled_at = now() where id = '00000000-0000-0000-0000-0000000027c1';
+
+-- ---- delete my account: success ----
+:as_zed
+do $$ declare r json; begin
+  r := delete_my_account(' @Zed ');
+  perform t.eq(r->>'deleted', 'true', '0027 delete: delivered prize → allowed (username, any case, with @)');
+  perform t.eq((r->>'files')::int, 2, '0027 delete: both of zed''s files queued');
+end $$;
+:as_super
+do $$ declare c prize_claims; begin
+  perform t.ok(not exists (select 1 from auth.users where id = t.u('zed')), '0027 delete: login gone');
+  perform t.ok(not exists (select 1 from profiles where id = t.u('zed')), '0027 delete: profile gone');
+  perform t.eq((select count(*) from ledger where user_id = t.u('zed')), 0::bigint, '0027 delete: points ledger gone');
+  perform t.eq((select count(*) from feedback where user_id = t.u('zed')), 0::bigint, '0027 delete: feedback + bug reports gone');
+  perform t.eq((select count(*) from notifications where user_id = t.u('zed')), 0::bigint, '0027 delete: notifications gone');
+  perform t.eq((select count(*) from player_notes where user_id = t.u('zed')), 0::bigint, '0027 delete: staff notes about them gone');
+  select * into c from prize_claims where id = '00000000-0000-0000-0000-0000000027c1';
+  perform t.ok(c.user_id is null and c.display_name = 'Deleted account' and c.contact is null and c.reference is null and c.status = 'fulfilled',
+               '0027 delete: prize claim kept as an anonymous row, delivery info erased');
+  perform t.eq((select array_agg(name order by name) from storage_purge_queue), array[t.u('zed') || '/a27.jpg', t.u('zed') || '/b27.jpg'],
+               '0027 delete: exactly zed''s files are queued for removal');
+  perform t.ok(not exists (select 1 from email_outbox where dedupe_key like 'prize_info:00000000-0000-0000-0000-0000000027c1%'), '0027 delete: prize alert email with their address removed');
+  perform t.ok(not exists (select 1 from email_outbox where dedupe_key = 'test27:followup'), '0027 delete: emails only to them removed');
+  perform t.eq((select to_emails from email_outbox where dedupe_key = 'test27:two'), array['iesha.landis.yac@ncssm.edu'], '0027 delete: their address removed from shared emails');
+  perform t.ok(not exists (select 1 from admin_actions where target_user_id = t.u('zed') or target_name = 'Zed'), '0027 delete: no action-log row names them');
+  perform t.ok(exists (select 1 from admin_actions where action = 'user_renamed' and target_name = 'Deleted account' and details = '{}'::jsonb),
+               '0027 delete: rename row anonymized (old/new name removed)');
+  perform t.ok(exists (select 1 from admin_actions where action = 'points_added' and target_name = 'Deleted account' and details->>'reason' = 'Game win'),
+               '0027 delete: points row kept, anonymized');
+  perform t.ok(exists (select 1 from admin_actions where action = 'account_deleted' and actor_id is null and actor_name = 'System'
+                        and target_user_id is null and target_name is null and details = '{}'::jsonb), '0027 delete: one anonymous "account deleted" row');
+  perform t.throws('update admin_actions set target_name = ''x''', 'forbidden', '0027: the action log is still append-only');
+  perform t.throws('update ledger set reason = ''x''', 'forbidden', '0027: the ledger is still append-only');
+end $$;
+
+-- staff member who added points for others can delete their account too (ledger.created_by → null)
+:as_yuri
+do $$ begin
+  perform t.eq(delete_my_account('yuri')->>'deleted', 'true', '0027 delete: an admin can delete their account');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok(exists (select 1 from ledger where user_id = t.u('alice') and reason = 'Helper bonus' and amount = 20 and created_by is null),
+               '0027 delete: points they gave others stay (created_by cleared)');
+  perform t.ok(exists (select 1 from admin_actions where action = 'user_renamed' and actor_name = 'Deleted account' and actor_id is null),
+               '0027 delete: their own staff actions anonymized');
+  perform t.ok(exists (select 1 from storage.objects where name = t.u('alice') || '/keep27.jpg'), '0027 delete: other people''s files untouched');
+end $$;
+
+-- ---- the Edge Function removes queued files ----
+:as_service
+do $$ declare v_ids bigint[]; begin
+  v_ids := (select array_agg(id) from claim_storage_purge(100));
+  perform t.eq(cardinality(v_ids), 2, '0027 purge: service role gets the queued files');
+  perform t.eq(finish_storage_purge(v_ids), 2, '0027 purge: …and clears them when done');
+  perform t.eq((select count(*) from claim_storage_purge(100)), 0::bigint, '0027 purge: queue empty');
 end $$;
 rollback;
 

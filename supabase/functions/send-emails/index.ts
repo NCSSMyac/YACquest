@@ -12,7 +12,7 @@
  *      SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are provided automatically.
  *   3. Integrations → Cron: run it every 10 minutes (`*\/10 * * * *`), POST.
  *
- * Each run: queue this week's report if it's due → claim up to 20 waiting emails →
+ * Each run: remove files of deleted accounts (0027, storage_purge_queue) → queue this week's report if it's due → claim up to 20 waiting emails →
  * send each one (recipients in BCC so they don't see each other) → record sent/failed.
  * Failed emails are retried by later runs (up to 5 tries); chairs can also press Retry.
  */
@@ -43,6 +43,26 @@ Deno.serve(async () => {
   if (due.error) return json({ error: `enqueue_weekly_report_if_due: ${due.error.message}` }, 500);
   const enqueuedWeekly = due.data === true;
 
+  // 1b. (0027) Remove uploaded files of deleted accounts through the Storage API (plain SQL can't delete files).
+  //     Never blocks the emails: on any error it just tries again next run.
+  let purged = 0;
+  try {
+    const q = await db.rpc('claim_storage_purge', { p_limit: 100 });
+    const items = (q.error ? [] : (q.data ?? [])) as { id: number; bucket_id: string; name: string }[];
+    if (q.error && !/claim_storage_purge/.test(q.error.message)) console.error('claim_storage_purge', q.error.message);
+    const byBucket = new Map<string, typeof items>();
+    for (const it of items) byBucket.set(it.bucket_id, [...(byBucket.get(it.bucket_id) ?? []), it]);
+    for (const [bucket, list] of byBucket) {
+      const rm = await db.storage.from(bucket).remove(list.map((i) => i.name));
+      if (rm.error) { console.error('storage remove failed', bucket, rm.error.message); continue; }
+      const done = await db.rpc('finish_storage_purge', { p_ids: list.map((i) => i.id) });
+      if (done.error) console.error('finish_storage_purge', done.error.message);
+      else purged += list.length;
+    }
+  } catch (e) {
+    console.error('storage purge failed', e);
+  }
+
   // 2. Claim a batch of emails to send.
   const batch = await db.rpc('claim_email_batch', { p_limit: 20 });
   if (batch.error) return json({ error: `claim_email_batch: ${batch.error.message}` }, 500);
@@ -53,7 +73,7 @@ Deno.serve(async () => {
     if (res.error) console.error('mark_email_result failed', id, res.error.message);
   };
 
-  if (!rows.length) return json({ enqueuedWeekly, sent: 0, failed: 0 });
+  if (!rows.length) return json({ enqueuedWeekly, purged, sent: 0, failed: 0 });
 
   // 3. SMTP settings (Edge Function secrets).
   const host = Deno.env.get('SMTP_HOST') || 'smtp.gmail.com';
@@ -100,5 +120,5 @@ Deno.serve(async () => {
   }
   transport.close();
 
-  return json({ enqueuedWeekly, sent, failed });
+  return json({ enqueuedWeekly, purged, sent, failed });
 });

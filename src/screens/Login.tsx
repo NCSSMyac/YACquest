@@ -47,11 +47,11 @@ export default function Login() {
   }
 
   return (
-    <div className="app-shell" style={{ paddingTop: 24 }}>
+    <div className="app-shell" role="main" style={{ paddingTop: 24 }}>
       <div className="stack">
         <div className="center">
           <Sprite id="yak" size={96} className="bob" />
-          <h1 style={{ fontFamily: 'var(--font-pixel)', color: 'var(--gold-500)', textShadow: '2px 2px 0 var(--navy-900)', margin: '12px 0 4px' }}>YACquest</h1>
+          <h1 className="brand-title" style={{ margin: '12px 0 4px' }}>YACquest</h1>
           <p className="muted" style={{ margin: 0 }}>Earn points. Join the quest. Win prizes.</p>
           <p className="muted" style={{ margin: '2px 0 0', fontSize: 13, fontStyle: 'italic' }}>🐂 {yakPunOfTheDay()}</p>
         </div>
@@ -77,7 +77,7 @@ export default function Login() {
               <Link to="/signup">Create account</Link>
               <Link to="/forgot">Forgot password?</Link>
             </div>
-            <p className="center" style={{ margin: 0 }}><Link to="/help">Need help?</Link></p>
+            <p className="center" style={{ margin: 0 }}><Link to="/help">Need help?</Link> · <Link to="/privacy">Privacy</Link></p>
           </form>
         </Panel>
         {api.isMock && (

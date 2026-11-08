@@ -56,7 +56,7 @@ function RankBadge({ rank }: { rank: number }) {
 
 function Row({ r, me }: { r: LeaderRow; me: boolean }) {
   return (
-    <li className="row" style={{ background: me ? 'rgba(242,179,61,0.25)' : undefined, padding: '8px 6px' }} aria-current={me ? 'true' : undefined}>
+    <li className="row" style={{ background: me ? 'var(--me-row)' : undefined, padding: '8px 6px' }} aria-current={me ? 'true' : undefined}>
       <RankBadge rank={r.rank} />
       <CampusFrame campus={r.campus}><Avatar id={r.avatar} look={r.look} campus={r.campus} size={32} /></CampusFrame>
       <strong style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.displayName}{me ? ' (you)' : ''}</strong>

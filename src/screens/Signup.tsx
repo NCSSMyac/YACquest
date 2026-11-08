@@ -78,10 +78,10 @@ export default function Signup() {
   }
 
   return (
-    <div className="app-shell" style={{ paddingTop: 16 }}>
+    <div className="app-shell" role="main" style={{ paddingTop: 16 }}>
       <form className="stack" onSubmit={review} noValidate>
         <div className="center">
-          <h1 style={{ fontFamily: 'var(--font-pixel)', color: 'var(--gold-500)', textShadow: '2px 2px 0 var(--navy-900)', marginBottom: 4 }}>New player</h1>
+          <h1 className="brand-title" style={{ marginBottom: 4 }}>New player</h1>
           <p className="muted" style={{ margin: 0 }}>This year’s quest runs {fmtCycleRange(CYCLE.displayStart, CYCLE.end)}.</p>
         </div>
         <PendingCheckInBanner />
@@ -174,8 +174,11 @@ export default function Signup() {
           </label>
         </Panel>
         <ErrorText error={errors.form} />
+        <p className="muted center" style={{ margin: 0, fontSize: 14 }}>
+          By creating an account you agree to the Rules (next step) and the <a href="#/privacy" target="_blank" rel="noreferrer">Privacy summary</a>.
+        </p>
         <button className="btn block">Next: read the rules</button>
-        <p className="center">Already playing? <Link to="/login">Log in</Link></p>
+        <p className="center">Already playing? <Link to="/login">Log in</Link> · <Link to="/help">Help</Link> · <Link to="/privacy">Privacy</Link></p>
       </form>
 
       <Modal open={rulesOpen} onClose={() => !busy && setRulesOpen(false)} title="Quest rules">
@@ -184,7 +187,10 @@ export default function Signup() {
           <RulesContent expanded />
           <label className="check">
             <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
-            <span>I agree to the rules</span>
+            <span>
+              I agree to the rules above and the <a href="#/privacy" target="_blank" rel="noreferrer">Privacy summary</a>
+              <small className="muted" style={{ display: 'block' }}>By creating an account you agree to the Rules and Privacy summary.</small>
+            </span>
           </label>
           <button className="btn block green" disabled={!agreed || busy} onClick={create}>{busy ? 'Creating…' : 'Create account'}</button>
           <button className="btn block ghost" type="button" disabled={busy} onClick={() => setRulesOpen(false)}>Go back</button>

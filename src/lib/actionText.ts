@@ -44,6 +44,8 @@ export function describeAction(a: AdminAction): string {
   const reason = s(d.reason) ? ` — ${s(d.reason)}` : '';
   const amount = Number(d.amount);
   switch (a.action) {
+    case 'account_deleted':
+      return 'An account was deleted';
     case 'points_added':
       return `${actor} added +${Math.abs(amount) || '?'} to ${target}${reason}`;
     case 'points_removed':

@@ -8,6 +8,12 @@ import '@fontsource/nunito/latin-700.css';
 import '@fontsource/silkscreen/latin-400.css';
 import '@fontsource/silkscreen/latin-700.css';
 import './styles/theme.css';
+import { installErrorBuffer } from './lib/errorBuffer';
+import { installOnlineListeners } from './lib/online';
+
+// 0027: remember the last few errors (for "Report a problem") and watch online/offline.
+installErrorBuffer();
+installOnlineListeners();
 
 // Apply saved light/dark preference before first paint.
 try {

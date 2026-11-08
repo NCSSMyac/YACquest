@@ -4,6 +4,7 @@ import * as api from '../api';
 import { isStaff, useAuth } from '../lib/auth';
 import { BellIcon, ChestIcon, HomeIcon, ShieldIcon, SwordIcon, TrophyIcon, UserIcon } from './Icons';
 import { NotificationPopups } from './NotificationPopups';
+import { OfflineBannerInChrome, useRegisterChrome } from './OfflineBanner';
 import { Sprite } from './Sprite';
 import { TodayEventProvider, useTodayEvent } from './TodayEvent';
 import { localTourDone, setLocalTourDone, shouldAutoShowTour, useTourRequest } from '../lib/tour';
@@ -22,6 +23,7 @@ export function Layout() {
 
 function Shell() {
   const { user } = useAuth();
+  useRegisterChrome();
   const [unread, setUnread] = useState(api.unreadCountSync());
   useEffect(() => api.subscribe(() => setUnread(api.unreadCountSync())), []);
   // An RSVP'd event today counts as one more thing on the bell.
@@ -30,7 +32,10 @@ function Shell() {
   // The admin dashboard (and Admin → Stats, 0025) spread into two columns on wide screens; every other page keeps the phone-width column.
   // 0026: participant Home too (two columns like the admin dashboard).
   const wide = ['', '/admin', '/admin/stats'].includes(useLocation().pathname.replace(/\/+$/, ''));
-  const label = `Notifications${unread ? `, ${unread} unread` : ''}${today ? `, event today: ${today.title}` : ''}`;
+  // 0027: the visible badge number is part of the accessible name.
+  const label = count > 0
+    ? `${count > 9 ? '9+' : count} Notifications${unread ? `, ${unread} unread` : ''}${today ? `, event today: ${today.title}` : ''}`
+    : 'Notifications';
 
   // 0026 welcome tour: once after the first login (server flag, device fallback), or on "Replay the tour".
   const [autoTour, setAutoTour] = useState(false);
@@ -66,6 +71,7 @@ function Shell() {
           <BellIcon />
           {count > 0 && <span className="badge-dot">{count > 9 ? '9+' : count}</span>}
         </Link>
+        <OfflineBannerInChrome />
       </header>
       <main>
         <Outlet />

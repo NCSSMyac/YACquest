@@ -85,9 +85,10 @@ export default function Home() {
   const messages = d.messages.slice(0, 2);
   const activity = recentActivity(d.recentLedger, d.recentSubmissions, 3);
   const kpis: [GlyphName, string, string, string | null, string][] = [
-    ['chest', `${d.prize.remaining}/${PRIZE.count}`, 'prizes left', '/prize', `${d.prize.remaining} of ${PRIZE.count} prizes left. Open the Treasure Vault.`],
-    ['trophy', `#${d.rankOverall}`, `#${d.rankCampus} at ${campusName(d.user.campus)}`, '/ranks', `Rank ${d.rankOverall} of ${d.participants}, ${d.rankCampus} at ${campusName(d.user.campus)}. Open the leaderboard.`],
-    ['calendar', String(d.daysLeft), d.daysLeft === 1 ? 'day left' : 'days left', null, `${d.daysLeft} ${d.daysLeft === 1 ? 'day' : 'days'} left in the quest`],
+    // 5th item: extra words for screen readers only (0027: the visible text stays part of the accessible name).
+    ['chest', `${d.prize.remaining}/${PRIZE.count}`, 'prizes left', '/prize', '. Open the Treasure Vault.'],
+    ['trophy', `#${d.rankOverall}`, `#${d.rankCampus} at ${campusName(d.user.campus)}`, '/ranks', ` overall of ${d.participants}. Open the leaderboard.`],
+    ['calendar', String(d.daysLeft), d.daysLeft === 1 ? 'day left' : 'days left', null, ' in the quest'],
   ];
 
   const greeting = (
@@ -155,12 +156,13 @@ export default function Home() {
             <>
               <PixelGlyph name={g} size={20} />
               <b className="kpi-num">{n}</b>
-              <span className="kpi-lbl">{l}{to ? ' ›' : ''}</span>
+              <span className="kpi-lbl">{l}{to ? <span aria-hidden="true"> ›</span> : ''}</span>
+              <span className="sr-only">{aria}</span>
             </>
           );
           return (
             <li key={g}>
-              {to ? <Link to={to} className="panel kpi home-kpi" aria-label={aria}>{inner}</Link> : <div className="panel kpi home-kpi" aria-label={aria}>{inner}</div>}
+              {to ? <Link to={to} className="panel kpi home-kpi">{inner}</Link> : <div className="panel kpi home-kpi">{inner}</div>}
             </li>
           );
         })}
@@ -178,7 +180,7 @@ export default function Home() {
 
   const quickLinks = (
     <div className="quick-links" key="links">
-      <a className="btn blue block" href={INSTAGRAM_URL} target="_blank" rel="noreferrer" aria-label={`YAC on Instagram, ${INSTAGRAM_HANDLE}`}>📷 Insta</a>
+      <a className="btn blue block" href={INSTAGRAM_URL} target="_blank" rel="noreferrer"><span aria-hidden="true">📷 </span>Insta<span className="sr-only"> (YAC on Instagram, {INSTAGRAM_HANDLE})</span></a>
       <Link className="btn block" to="/help">❓ Help</Link>
       {showInstallButton() && <InstallButton />}
     </div>
@@ -218,8 +220,8 @@ export default function Home() {
   const friendRow = (
     <section className="panel dash-card friend-row" aria-label="Your friend code" key="friend">
       <PixelGlyph name="userplus" size={22} />
-      <Link to="/me?section=friends" className="friend-text" aria-label={`My friends: friend code ${d.user.friendCode}, ${d.referralsUsed} of ${CAPS.referralsPerCycle} friend bonuses used`}>
-        <span className="dash-eyebrow" style={{ fontSize: 10 }}>Friend code · My friends ›</span>
+      <Link to="/me?section=friends" className="friend-text">
+        <span className="dash-eyebrow" style={{ fontSize: 10 }}>Friend code · My friends<span aria-hidden="true"> ›</span></span>
         <span className="friend-code">{d.user.friendCode}</span>
         Bring a friend: you both get +{TIER_POINTS[1]} at their first event ({d.referralsUsed}/{CAPS.referralsPerCycle} used)
       </Link>

@@ -132,8 +132,8 @@ export default function Events() {
                 {p === 'Past' && <FollowupRow e={e} onSent={() => void list.reload()} />}
                 <Link to={`/admin/door/${e.id}`} state={{ from: '/admin/events' }} className="btn small block door-btn" aria-label={`Door mode for ${e.title}`}>🚪 Door mode</Link>
                 <div className="btn-row three">
-                  <button className="btn small blue" onClick={() => setWhoGoing(e)} aria-label={`Who’s going (${e.goingCount})`}>Going {e.goingCount}</button>
-                  <button className="btn small" onClick={() => setWhoCame(e)} aria-label={`Who came (${e.attendeeCount})`}>Came {e.attendeeCount}</button>
+                  <button className="btn small blue" onClick={() => setWhoGoing(e)} aria-label={`Going ${e.goingCount}: see who’s going`}>Going {e.goingCount}</button>
+                  <button className="btn small" onClick={() => setWhoCame(e)} aria-label={`Came ${e.attendeeCount}: see who came`}>Came {e.attendeeCount}</button>
                   <button className="btn small navy" onClick={() => setQrFor(e)}>QR code</button>
                   <button className="btn small ghost" onClick={() => open(e)}>Edit</button>
                   <button className="btn small ghost" onClick={() => open(e, true)} aria-label={`Duplicate ${e.title} one week later`}>Duplicate</button>

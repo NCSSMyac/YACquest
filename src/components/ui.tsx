@@ -67,20 +67,69 @@ export function ErrorText({ error }: { error?: string | null }) {
   );
 }
 
+let modalSeq = 0;
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
+
+/**
+ * Dialog: focus moves into it on open, Tab/Shift+Tab stay inside (focus trap), Escape closes, and focus
+ * returns to whatever opened it (0027 accessibility pass).
+ */
 export function Modal({ open, onClose, title, children, tone }: { open: boolean; onClose: () => void; title?: string; children: ReactNode; tone?: 'gold' | 'navy' }) {
   const ref = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  const [titleId] = useState(() => `modal-title-${++modalSeq}`);
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const opener = document.activeElement as HTMLElement | null;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        closeRef.current();
+        return;
+      }
+      if (e.key !== 'Tab' || !ref.current) return;
+      const items = Array.from(ref.current.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.offsetParent !== null || el === document.activeElement);
+      if (!items.length) {
+        e.preventDefault();
+        ref.current.focus();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || active === ref.current)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      } else if (!ref.current.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
     document.addEventListener('keydown', onKey);
     ref.current?.focus();
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      if (opener && typeof opener.focus === 'function' && document.contains(opener)) opener.focus();
+    };
+  }, [open]);
   if (!open) return null;
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div ref={ref} tabIndex={-1} className={`panel modal ${tone ?? ''}`} role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
-        {title && <h2 className="panel-title">{title}</h2>}
+    <div className="modal-backdrop" onClick={() => closeRef.current()}>
+      <div
+        ref={ref}
+        tabIndex={-1}
+        className={`panel modal ${tone ?? ''}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={title ? titleId : undefined}
+        aria-label={title ? undefined : 'Dialog'}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {title && <h2 className="panel-title" id={titleId}>{title}</h2>}
         {children}
       </div>
     </div>
@@ -101,9 +150,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastCtx.Provider value={push}>
       {children}
-      <div className="toast-wrap" aria-live="polite">
+      {/* 0027: a live region so screen readers announce toasts (errors politely interrupt). */}
+      <div className="toast-wrap" role="status" aria-live="polite" aria-atomic="false">
         {toasts.map((t) => (
-          <div key={t.id} className={`toast ${t.kind}`}>
+          <div key={t.id} className={`toast ${t.kind}`} role={t.kind === 'error' ? 'alert' : undefined}>
             {t.text}
           </div>
         ))}

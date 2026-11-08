@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { subscribe } from '../api';
+import { recordError } from './errorBuffer';
+import { subscribeOnline } from './online';
 
 /**
  * Load data from the API. Re-runs when `deps` change, and (optionally) whenever
@@ -19,6 +21,7 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[], opts: { live?
       setError(null);
       setData(await run());
     } catch (e) {
+      recordError(e);
       setError(errorMessage(e));
     } finally {
       setLoading(false);
@@ -29,6 +32,9 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[], opts: { live?
     setLoading(true);
     reload();
   }, [reload]);
+
+  // 0027: back online → refresh whatever is on screen.
+  useEffect(() => subscribeOnline((on) => void (on && reload())), [reload]);
 
   useEffect(() => {
     if (!opts.live) return;

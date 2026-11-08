@@ -7,6 +7,7 @@ import { campusName } from '../../config';
 import { fmtDateTime } from '../../lib/format';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 import type { FeedbackItem } from '../../types';
+import { contextLines } from '../../lib/bugContext';
 
 type Filter = 'new' | 'reviewed' | 'all';
 
@@ -53,6 +54,13 @@ export default function Feedback() {
                 <small className="muted">{fmtDateTime(f.createdAt)}</small>
               </div>
               <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{f.message}</p>
+              {f.context?.trying && <p style={{ margin: 0 }}><span className="muted">Trying to:</span> {f.context.trying}</p>}
+              {f.context && (
+                <details className="tech-details">
+                  <summary>Technical details</summary>
+                  <pre className="tech-pre">{contextLines(f.context).join('\n')}</pre>
+                </details>
+              )}
               <small className="muted">{f.anonymous || !f.campus ? 'Anonymous' : `${f.displayName} · @${f.handle} · ${campusName(f.campus)}`}</small>
               {f.status === 'reviewed' ? (
                 <small className="muted">✓ Reviewed{f.reviewedByName ? ` by ${f.reviewedByName}` : ''}{f.reviewedAt ? ` · ${fmtDateTime(f.reviewedAt)}` : ''}</small>

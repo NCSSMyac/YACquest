@@ -75,6 +75,7 @@ import type {
 
 // ───────────────────────────── errors ─────────────────────────────
 
+import { scrubText, type BugContext } from '../lib/bugContext';
 import { ApiError, emitChange, subscribe } from './shared';
 import { NAME_NOT_ALLOWED, nameIsClean } from '../lib/nameFilter';
 export { subscribe } from './shared';
@@ -108,7 +109,7 @@ interface Db {
   /** Admin announcements (the real one is the announcements table). */
   announcements: Announcement[];
   /** General feedback (the real one is the feedback table). */
-  feedback: { id: string; userId: string; category: FeedbackCategory; message: string; anonymous?: boolean; status: 'new' | 'reviewed'; reviewedBy?: string; reviewedAt?: string; createdAt: string }[];
+  feedback: { id: string; userId: string; category: FeedbackCategory; message: string; anonymous?: boolean; status: 'new' | 'reviewed'; reviewedBy?: string; reviewedAt?: string; createdAt: string; context?: BugContext }[];
   // ── staff-only rewards (0020) ──
   /** Hero of the Week reigns, oldest first (the real one is hero_reigns). endedAt unset = current. */
   heroReigns: { id: string; userId: string; note: string; crownedAt: string; crownedBy: string; endedAt?: string }[];
@@ -1825,6 +1826,7 @@ export async function listFeedback(status?: 'new' | 'reviewed', limit = 50): Pro
         ? { displayName: 'Anonymous', handle: '', campus: undefined }
         : { displayName: who(f.userId)?.displayName ?? 'Unknown', handle: who(f.userId)?.handle ?? '', campus: who(f.userId)?.campus ?? 'duke' }),
       reviewedByName: name(f.reviewedBy), reviewedAt: f.reviewedAt, createdAt: f.createdAt,
+      ...(f.context ? { context: f.context } : {}),
     })),
     ...d.suggestions.map((s) => {
       const x = s as typeof s & { status?: 'new' | 'reviewed'; reviewedBy?: string; reviewedAt?: string };
@@ -1839,6 +1841,81 @@ export async function listFeedback(status?: 'new' | 'reviewed', limit = 50): Pro
     .filter((i) => !status || i.status === status)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .slice(0, limit);
+}
+
+/** SERVER RULE (submit_bug_report + clean_bug_context in 0027): 3–1000 chars, shares the 10-a-day feedback limit, context scrubbed. */
+export async function submitBugReport(message: string, context: BugContext): Promise<void> {
+  await delay();
+  const user = me();
+  const d = load();
+  if (message.trim().length < 3 || message.trim().length > 1000) fail('message', 'Tell us what happened (3–1000 characters).');
+  if (d.feedback.filter((f) => f.userId === user.id && Date.now() - new Date(f.createdAt).getTime() < 86_400_000).length >= 10)
+    fail('limit', 'Thanks for all the reports! Please try again tomorrow.');
+  d.feedback.unshift({ id: nextId('fb'), userId: user.id, category: 'bug', message: message.trim(), anonymous: false, status: 'new', createdAt: now(), context: cleanContext(context) });
+  save();
+}
+
+/** Mirror of clean_bug_context(): known keys only, scrubbed and trimmed. */
+function cleanContext(c: BugContext): BugContext {
+  const out: BugContext = {
+    route: scrubText(c.route, 200),
+    version: scrubText(c.version, 80),
+    browser: scrubText(c.browser, 120),
+    screen: scrubText(c.screen, 40),
+    online: !!c.online,
+    theme: (['light', 'dark', 'system'] as const).includes(c.theme) ? c.theme : 'system',
+    time: scrubText(c.time, 40),
+    errors: (Array.isArray(c.errors) ? c.errors : []).map((e) => scrubText(String(e), 300)).filter((e) => e.trim()).slice(0, 5),
+  };
+  const trying = scrubText(c.trying, 500);
+  if (trying) out.trying = trying;
+  return out;
+}
+
+/**
+ * SERVER RULE (delete_my_account in 0027): type your username; blocked for the last YACquest Chair and
+ * while a prize is on its way. Deletes everything that belongs to the account; delivered/revoked prize
+ * claims stay as anonymous rows; action-log rows are anonymized; one anonymous "account deleted" row is logged.
+ */
+export async function deleteMyAccount(confirmUsername: string): Promise<void> {
+  await delay();
+  const user = me();
+  const d = load();
+  if (confirmUsername.trim().replace(/^@+/, '').toLowerCase() !== user.handle.toLowerCase())
+    fail('confirm', 'Type your username exactly (without the @) to confirm.');
+  if (user.role === 'chair' && d.users.filter((u) => u.role === 'chair').length <= 1)
+    fail('last_chair', 'You’re the only YACquest Chair. Make someone else a YACquest Chair first (Admin → Team), then delete your account.');
+  if (d.claims.some((c) => c.userId === user.id && (c.status === 'qualified' || c.status === 'info_submitted')))
+    fail('prize_pending', 'Your prize is still on its way! Please email the YACquest Chairs before deleting your account, so we can finish delivering your gift card.');
+  const uid = user.id;
+  const email = user.email.toLowerCase();
+  d.outbox = d.outbox.filter((r) => !(r.kind.startsWith('prize_') && r.dedupeKey.includes(uid)));
+  for (const c of d.claims) if (c.userId === uid) Object.assign(c, { userId: '', displayName: 'Deleted account', contact: undefined, reference: undefined });
+  for (const r of d.outbox) r.toEmails = r.toEmails.filter((e) => e.toLowerCase() !== email);
+  d.outbox = d.outbox.filter((r) => r.toEmails.length > 0);
+  for (const a of d.actions) {
+    if (a.targetName === user.displayName) {
+      a.targetName = 'Deleted account';
+      for (const k of ['from', 'to', 'message', 'note', 'body']) delete a.details[k];
+    }
+    if (a.actorName === user.displayName) a.actorName = 'Deleted account';
+  }
+  d.users = d.users.filter((u) => u.id !== uid);
+  for (const u of d.users) if (u.referredBy === uid) u.referredBy = undefined;
+  d.submissions = d.submissions.filter((x) => x.userId !== uid);
+  d.ledger = d.ledger.filter((x) => x.userId !== uid);
+  d.notifications = d.notifications.filter((x) => x.userId !== uid);
+  d.suggestions = d.suggestions.filter((x) => x.userId !== uid);
+  d.feedback = d.feedback.filter((x) => x.userId !== uid);
+  d.heroReigns = d.heroReigns.filter((x) => x.userId !== uid);
+  d.staffGrants = d.staffGrants.filter((x) => x.userId !== uid);
+  d.rsvps = d.rsvps.filter((x) => x.userId !== uid);
+  d.remindersSent = d.remindersSent.filter((k) => !k.endsWith(`:${uid}`));
+  if (d.playerNotes) d.playerNotes = d.playerNotes.filter((x) => x.userId !== uid);
+  delete d.normalAvatars[uid];
+  logAction('account_deleted', undefined, {}, null);
+  setSession(null);
+  save();
 }
 
 export async function markFeedbackReviewed(kind: FeedbackItem['kind'], id: string): Promise<void> {

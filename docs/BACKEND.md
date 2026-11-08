@@ -409,3 +409,42 @@ Participant/staff RPCs: `revoke … from public, anon; grant … to authenticate
 
 ### App-only (no SQL)
 Welcome tour (lazy `src/components/WelcomeTour.tsx`), photo wall modal (lazy `src/components/PhotoWall.tsx`), `#/signup?code=YAC-XXXX` prefills the friend code, links in notification bodies are clickable, participant Home restyled like the admin dashboard.
+
+## 0027 — Privacy + reliability (report a problem, delete my account, storage purge)
+Safe to re-run, **no points-rule changes**. Requires re-deploying the `send-emails` Edge Function (file purge).
+
+### Report a problem
+- `feedback.context jsonb` (null except bug reports). `submit_bug_report(p_message, p_context default null)` → `{id}`: signed-in users; message 3–1000 (`message`), shares the 10-a-day feedback limit (`limit`); saved as category `bug`, `anonymous = false`.
+- `clean_bug_context(p)` keeps only `route` (≤200), `trying` (≤500), `version` (≤80), `browser` (≤120), `screen` (≤40), `online` (boolean), `theme` (`light|dark|system`), `time` (≤40), `errors` (array, first 5 non-empty, ≤300 each); every string goes through `scrub_text()` (emails → `[email]`, JWT-looking strings → `[token]`, `token=/code=/password=/key=…` values → `[hidden]`). Unknown keys are dropped. The app scrubs the same way first (`src/lib/bugContext.ts`).
+- `feedback_details(p_ids uuid[])` → `(id, context)` for rows that have context. Staff (`require_admin`). `list_feedback` is unchanged (the app calls both). `feedback` RLS is unchanged: staff read, nobody else.
+- `build_weekly_report()`: exact copy of 0022 + one line under Feedback: "Bug reports this week: N (M with technical details in Admin → Feedback)".
+
+### Delete my account — `delete_my_account(p_confirm text)` → `{deleted: true, files}`
+Signed-in users only. Checks, in order: `confirm` (the typed text, trimmed, leading `@` removed, case-insensitive, must equal the username), `last_chair` (the only YACquest Chair), `prize_pending` (a claim in `qualified` or `info_submitted`: email the chairs first so delivery isn't broken). Then:
+1. `storage.objects` in bucket `proofs` owned by them or under `<uid>/` → `storage_purge_queue` (uploads are named `<uid>/<file>`).
+2. Their prize claims (delivered or revoked) stay as rows with `user_id = null`, `display_name = 'Deleted account'`, `contact = null`, `reference = null`; the `prize_qualified` / `prize_info` emails for those claims are deleted from `email_outbox`.
+3. Their address is removed from `email_outbox.to_emails`; rows left with no recipients are deleted.
+4. `admin_actions` rows about them: `target_user_id = null`, `target_name = 'Deleted account'`, details keys `from/to/message/note/body` removed; rows by them: `actor_id = null`, `actor_name = 'Deleted account'`. (The append-only trigger allows this one update while `yacquest.anonymize_log = 'on'` is set inside the function.)
+5. `delete from auth.users where id = auth.uid()` → cascades to `profiles` and everything with `on delete cascade`: ledger, submissions, prize suggestions, feedback (incl. bug reports), notifications, RSVPs, reminders sent, hero reigns, staff grants, player notes about them. `on delete set null`: things they did for others (ledger `created_by`, reviews, events, announcements, notes they wrote, referrals).
+6. Logs `account_deleted` (actor System, no target, `{}`) — "An account was deleted".
+
+**Removed vs kept:** removed = login, email, username, display name, campus, character, points history, check-ins, RSVPs, streak, uploads, notifications, feedback, prize ideas, badges/unlocks, staff notes about them, their address in the email log. Kept anonymously = a delivered prize spot ("Deleted account"), anonymized action-log rows, points staff gave other people. Their points leave the leaderboard and Campus Cup (totals are recomputed from the ledger). Copies of emails already delivered (e.g. a weekly report naming them) can't be recalled.
+
+### FK changes so deletion always works
+- `ledger_append_only()` lets exactly one UPDATE through: `created_by` → null with every other column unchanged (the `on delete set null` when a staff member deletes their account). Everything else still raises `forbidden`.
+- `prize_claims.user_id` is nullable, FK `on delete set null` (was cascade), so spots taken stay right.
+
+### Storage purge (files of deleted accounts)
+- `storage_purge_queue (id, bucket_id, name, queued_at, unique(bucket_id, name))`. RLS on, no policies, no grants.
+- `claim_storage_purge(p_limit default 100)` → `(id, bucket_id, name)` and `finish_storage_purge(p_ids bigint[])` → int. **Service role only.**
+- The `send-emails` Edge Function calls them on every run (before sending emails) and removes the files with `storage.from(bucket).remove(names)`. Supabase blocks deleting storage files with plain SQL (and that would leave the file data behind), so the database only queues them. Until removed, the files stay private (only staff could read them by path; nothing in the app links to them).
+
+### Grants
+`submit_bug_report`, `feedback_details`, `delete_my_account`: `revoke … from public, anon; grant … to authenticated`. Purge RPCs: service_role only. `scrub_text`, `clean_bug_context`, `build_weekly_report`: not callable through the API.
+
+### App-only (no SQL)
+- Public `#/privacy` (Login, Sign-up, Help, Me link to it) and `#/goodbye` (after deleting an account).
+- Offline banner (`src/lib/online.ts`): `navigator.onLine` events + the API's central error mapper (`toApiError` in `live.ts`: network failures → code `network`, one friendly message, banner on; any successful call → banner off). Back online → every `useAsync` reloads.
+- App version: `vite.config.ts` defines `__APP_VERSION__` = `{version (package.json), sha (GITHUB_SHA[0:7] or 'dev'), builtAt}` and writes `dist/version.json`; Help shows "App version X (built DATE)"; the app re-fetches `./version.json` (no cache) on focus at most every 30 min and shows "New version available — Refresh" when a newer build is live (never for `dev` builds).
+- Error buffer (`src/lib/errorBuffer.ts`): `window.onerror` + `unhandledrejection` + failed screen loads, last 5 messages in memory only, scrubbed; attached to problem reports. Global crash screen (`ErrorBoundary`) with Reload and Report a problem.
+- Accessibility pass: Modal focus trap + Escape + focus return + `aria-labelledby`; toasts in a `role=status` live region (errors `role=alert`); `role=main` on pages outside the app chrome; contrast tokens (`--green`, `--red`, `--link`, chip text colors, new `--red-text` / `--green-text` / `--me-row`); 44px tap targets; accessible names include the visible text.

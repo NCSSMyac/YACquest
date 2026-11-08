@@ -1,3 +1,4 @@
+import type { BugContext } from './lib/bugContext';
 /**
  * Shared data shapes. These match the "YACquest: Data Model & API Contract" doc,
  * so the backend team and the front end agree on field names.
@@ -256,6 +257,7 @@ export interface EmailLogRow {
 }
 
 export type AdminActionKind =
+  | 'account_deleted'
   | 'points_added'
   | 'points_removed'
   | 'submission_approved'
@@ -332,6 +334,8 @@ export interface FeedbackItem {
   reviewedByName?: string;
   reviewedAt?: string;
   createdAt: string;
+  /** 0027: "Report a problem" technical details (bug reports only; staff only). */
+  context?: BugContext;
 }
 
 /** One check-in at an event (0013: admin_event_attendees). Admins + chairs only. */

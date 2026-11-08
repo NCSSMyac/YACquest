@@ -10,7 +10,7 @@ This takes about 30–45 minutes, done once. Dashboard menu names can differ sli
 ## 2. Create the database
 1. Open **SQL Editor → New query**.
 2. Paste the whole of `supabase/migrations/0001_init.sql` and click **Run**. It should finish with "Success". It is safe to run again.
-3. Then do the same for every later file in `supabase/migrations/` **in number order** (`0002_event_kinds.sql`, … through `0026_participant_extras.sql`). Each new migration only needs to be run once, but re-running is safe.
+3. Then do the same for every later file in `supabase/migrations/` **in number order** (`0002_event_kinds.sql`, … through `0027_privacy_reliability.sql`). Each new migration only needs to be run once, but re-running is safe.
    - **Already live before 0013?** Run `0013_launch_extras.sql` once (anonymous feedback, the sign-up email checkbox, and Admin → Events → **Who came**).
    - **Already live before 0014?** Run `0014_goal_350.sql` once (prize goal 650 → 350, Halfway badge 175, Sparkle Aura at 300, "close to the prize" range 75). Deploy the new app build at the same time so the app shows the same goal.
    - **Already live before 0015?** Run `0015_yak_puns.sql` once (adds a "Yak of the week" line to the weekly committee email and admin prize alerts).
@@ -26,6 +26,7 @@ This takes about 30–45 minutes, done once. Dashboard menu names can differ sli
    - **Already live before 0025?** Run `0025_admin_tools.sql` once (after 0024) and deploy the app build with it: staff-only admin tools — event-day **Door mode**, **bulk approve** in Review, the **Stats** page, **CSV downloads** (Who came / Who's going for staff; all participants for YACquest Chairs), **announcement templates**, private **staff notes** on players and **Undo** for manual points changes. No point rules change and nothing changes for participants. Until 0025 is run those buttons show an error; everything else keeps working.
 
    - **Already live before 0026?** Run `0026_participant_extras.sql` once (after 0025) and deploy the app build with it. **Nothing else to configure:** automatic event follow-ups ride on the existing `send-emails` cron job (every 10 minutes), and the photo wall uses the existing private `proofs` bucket plus one storage policy the migration adds (no bucket changes, no service key in the app). Until 0026 is run: no follow-ups, the tour is remembered per device only, photo walls are empty and My friends shows an error; everything else keeps working.
+   - **Already live before 0027?** Run `0027_privacy_reliability.sql` once (after 0026), deploy the app build with it, and **re-deploy the `send-emails` Edge Function** with the new `supabase/functions/send-emails/index.ts` (paste the whole file again in Supabase → Edge Functions → send-emails → Code → Deploy). Adds: **Delete my account** (Me → Account), **🐞 Report a problem** with technical details for staff (Admin → Feedback), the bug count in the weekly email, and the public **Privacy** page. The Edge Function now also removes the uploaded files of deleted accounts on each 10-minute run (Supabase doesn't let SQL delete storage files). Until 0027 is run, deleting an account and sending a problem report show an error; everything else keeps working. Until the Edge Function is re-deployed, deleted accounts' files wait in `storage_purge_queue` (still private).
 
 ## 3. Turn on real logins
 **Authentication → Sign In / Providers → Email**
@@ -147,6 +148,12 @@ Participants never see any of this (not in the Wardrobe, Badges, character picke
 - **Event photo wall**: past events in Quests have **📸 Photos (N)**. Only approved event photos whose uploader ticked "Show my photo on the event photo wall" (off by default) and hasn't turned off "Show my approved event photos on photo walls" (Me → Settings). Staff can tap a photo → **Hide from wall** (logged). Storage stays private; see BACKEND.md 0026.
 - **My friends** (Me, or tap the friend code on Home): who joined with your code, whether they came to an event, X/3 bonuses used, **Copy** / **Share** (shares the sign-up link `…/#/signup?code=YAC-XXXX`, which prefills the code).
 
+### Privacy, account deletion and problem reports (0027)
+- **Privacy page** (`#/privacy`): a plain-language summary, public (Login, Sign-up, Help and Me link to it). It is **pending review by the NCSSM Foundation**; if anything about how data is handled changes, update `src/screens/Privacy.tsx` and its "Last updated" date.
+- **Delete my account** (Me → Account, red): the person types their username and confirms. Blocked for the **last YACquest Chair** (make someone else a chair first) and while their **prize is on its way** (qualified or info sent: they're asked to email the chairs; mark it delivered, then they can delete). Everything that belongs to the account is deleted; a delivered prize spot stays filled as "Deleted account" with the delivery info erased; the action log anonymizes them and shows "An account was deleted". Details in BACKEND.md 0027.
+- **🐞 Report a problem** (Help, Me, and the "Oops, a glitch!" screen): saved as *Bug / problem* feedback with **Technical details** (page, app version, browser, screen size, online/offline, theme, time, last errors) in Admin → Feedback. Logged-out people get an email draft to the YACquest Chairs instead. The weekly email shows how many bug reports came in.
+- **Offline banner + refresh prompt**: the app shows "You're offline…" and refreshes the screen when the connection is back; after a deploy, open apps show "New version available — Refresh". Nothing to configure.
+
 ### Emergency: a YACquest Chair lost access
 In Supabase **SQL Editor**, run (replace the email):
 ```sql
@@ -163,4 +170,4 @@ Make sure no more than 6 people are YACquest Chairs afterwards.
 - Database tests: `bash supabase/tests/run_tests.sh` (needs local Postgres 16).
 - App tests: `npm test`. Contract between DB and app: `docs/BACKEND.md`.
 - Email sender: `supabase/functions/send-emails/index.ts` (Deno; not part of the app's TypeScript build). Deploy from the CLI with `supabase functions deploy send-emails` if you prefer.
-- Future database changes go in a new numbered file in `supabase/migrations/` (next after `0026_participant_extras.sql`, i.e. `0027_…`). Supabase grants new functions to everyone by default, so repeat the `revoke execute … from public, anon` lines for any new function.
+- Future database changes go in a new numbered file in `supabase/migrations/` (next after `0027_privacy_reliability.sql`, i.e. `0028_…`). Supabase grants new functions to everyone by default, so repeat the `revoke execute … from public, anon` lines for any new function.

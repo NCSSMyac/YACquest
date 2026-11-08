@@ -8,6 +8,8 @@ import { useAuth } from '../lib/auth';
 import { fmtCycleRange } from '../lib/format';
 import { serverInfo } from '../lib/supabase';
 import { requestTour } from '../lib/tour';
+import { versionLabel } from '../lib/version';
+import { ReportProblemButton } from '../components/ReportProblem';
 
 /** Lets a long email address wrap after the @ instead of mid-word. */
 const breakableEmail = (email: string) => {
@@ -68,7 +70,7 @@ export default function Help() {
   ];
 
   return (
-    <div className="app-shell" style={{ paddingTop: 16 }}>
+    <div className="app-shell" role="main" style={{ paddingTop: 16 }}>
       <div className="stack">
         <PageHeader title="Help" back />
 
@@ -116,7 +118,17 @@ export default function Help() {
           </Panel>
         )}
 
-        <p className="muted center" style={{ fontSize: 12, margin: 0 }}>App server: {serverInfo}</p>
+        <Panel title="🐞 Something not working?">
+          <p style={{ margin: '0 0 10px' }}>Tell us what happened. We’ll attach a few technical details (page, app version, browser) so we can fix it faster.</p>
+          <ReportProblemButton className="btn blue block" />
+        </Panel>
+
+        <p className="center" style={{ margin: 0 }}><Link to="/privacy">🔒 Privacy summary</Link></p>
+        <p className="muted center" style={{ fontSize: 13, margin: 0 }}>
+          {versionLabel()}
+          <br />
+          App server: {serverInfo}
+        </p>
       </div>
     </div>
   );

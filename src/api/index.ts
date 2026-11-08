@@ -108,6 +108,9 @@ export const {
   hideEventPhoto,
   myFriends,
   submitFeedback,
+  // 0027: report a problem, delete my account
+  submitBugReport,
+  deleteMyAccount,
   listFeedback,
   markFeedbackReviewed,
   listAnnouncements,

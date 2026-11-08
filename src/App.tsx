@@ -17,8 +17,14 @@ import Me from './screens/Me';
 import Notifications from './screens/Notifications';
 import Rules from './screens/Rules';
 import Help from './screens/Help';
+import Privacy from './screens/Privacy';
+import Goodbye from './screens/Goodbye';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { OfflineBanner } from './components/OfflineBanner';
+import { UpdateToast } from './components/UpdateToast';
 import CheckInLink from './screens/CheckInLink';
 import { takePendingCheckIn } from './lib/pendingCheckin';
+import { isDeletingAccount } from './lib/goodbye';
 import AdminLayout from './screens/admin/AdminLayout';
 import AdminHome from './screens/admin/AdminHome';
 import Review from './screens/admin/Review';
@@ -41,7 +47,7 @@ const lazyPage = (el: JSX.Element) => <Suspense fallback={<Loading lines={3} />}
 function RequireAuth() {
   const { user, ready } = useAuth();
   if (!ready) return <div className="app-shell"><Loading /></div>;
-  return user ? <Outlet /> : <Navigate to="/login" replace />;
+  return user ? <Outlet /> : <Navigate to={isDeletingAccount() ? '/goodbye' : '/login'} replace />;
 }
 
 function RequireStaff({ chairOnly = false }: { chairOnly?: boolean }) {
@@ -130,6 +136,10 @@ export default function App() {
         <HashRouter>
           <EmailLinkRedirects />
           <PendingCheckInRedirect />
+          {/* 0027: offline banner, "New version available" and a friendly fallback if a screen crashes. */}
+          <OfflineBanner />
+          <UpdateToast />
+          <ErrorBoundary>
           <Routes>
             <Route element={<PublicOnly />}>
               <Route path="/login" element={<Login />} />
@@ -138,6 +148,9 @@ export default function App() {
               <Route path="/check-email" element={<CheckEmail />} />
             </Route>
             <Route path="/help" element={<Help />} />
+            {/* 0027: public privacy summary + the page shown after deleting an account. */}
+            <Route path="/privacy" element={<Privacy />} />
+            <Route path="/goodbye" element={<Goodbye />} />
             {/* Event QR codes open this; it handles logged-in and logged-out visitors itself. */}
             <Route path="/checkin" element={<CheckInLink />} />
             <Route element={<RequireAuth />}>
@@ -178,6 +191,7 @@ export default function App() {
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+          </ErrorBoundary>
         </HashRouter>
         </CelebrateProvider>
       </ToastProvider>

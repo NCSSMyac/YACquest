@@ -68,6 +68,8 @@ import type {
   Friend,
 } from '../types';
 import { ApiError, emitChange } from './shared';
+import { isNetworkErrorMessage, OFFLINE_MESSAGE, reportNetworkFailure, reportNetworkSuccess } from '../lib/online';
+import type { BugContext } from '../lib/bugContext';
 import type { AdminOverview, AdminUserRow, EventInput, QueueItem, SignupInput, SignupResult, TeamMember } from './shared';
 
 export { subscribe } from './shared';
@@ -95,7 +97,11 @@ function toApiError(err: unknown): ApiError {
   if (e.code === 'PGRST301' || /jwt expired|invalid jwt/i.test(msg)) return new ApiError('unauthenticated', 'Your session expired. Please log in again.');
   if (e.code === '42501' || /permission denied|row-level security/i.test(msg)) return new ApiError('forbidden', 'You do not have access to that.');
   console.error('[YACquest] backend error', err);
-  if (/failed to fetch|network|load failed/i.test(msg)) return new ApiError('network', 'Can’t reach the server. Check your connection and try again.');
+  // 0027: network failures show the offline banner and one friendly message (central error mapper).
+  if (isNetworkErrorMessage(msg) || /network/i.test(msg) || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
+    reportNetworkFailure();
+    return new ApiError('network', OFFLINE_MESSAGE);
+  }
   return new ApiError('network', 'Something went wrong talking to the server. Please try again.');
 }
 
@@ -107,12 +113,14 @@ async function rpc<T = unknown>(fn: string, args?: Record<string, unknown>): Pro
     throw toApiError(e);
   }
   if (res.error) throw toApiError(res.error);
+  reportNetworkSuccess();
   return res.data as T;
 }
 
 /** Unwraps a PostgREST `{ data, error }` result. */
 function rows<T>(res: { data: T | null; error: unknown }): T {
   if (res.error) throw toApiError(res.error);
+  reportNetworkSuccess();
   return res.data as T;
 }
 
@@ -132,7 +140,10 @@ function authError(err: unknown, fallbackCode = 'auth'): ApiError {
   if (/database error saving new user/i.test(msg) || code === 'unexpected_failure')
     return new ApiError('form', 'We couldn’t create your account. Check your username and friend code and try again.');
   console.error('[YACquest] auth error', err);
-  if (/failed to fetch|network|load failed/i.test(msg)) return new ApiError('network', 'Can’t reach the server. Check your connection and try again.');
+  if (isNetworkErrorMessage(msg)) {
+    reportNetworkFailure();
+    return new ApiError('network', OFFLINE_MESSAGE);
+  }
   return new ApiError(fallbackCode, msg || 'Something went wrong. Please try again.');
 }
 
@@ -1315,7 +1326,7 @@ export async function submitFeedback(category: FeedbackCategory, message: string
 }
 
 export async function listFeedback(status?: 'new' | 'reviewed', limit = 50): Promise<FeedbackItem[]> {
-  return ((await rpc<AnyRow[]>('list_feedback', { p_status: status ?? null, p_limit: limit })) ?? []).map((r) => ({
+  const items: FeedbackItem[] = ((await rpc<AnyRow[]>('list_feedback', { p_status: status ?? null, p_limit: limit })) ?? []).map((r) => ({
     id: str(r.id),
     kind: str(r.kind) as FeedbackItem['kind'],
     category: str(r.category) as FeedbackItem['category'],
@@ -1329,6 +1340,43 @@ export async function listFeedback(status?: 'new' | 'reviewed', limit = 50): Pro
     reviewedAt: opt(pick(r, 'reviewed_at')),
     createdAt: str(pick(r, 'created_at')),
   }));
+  // 0027: technical details of bug reports (staff only). Older databases without 0027 just show none.
+  const bugIds = items.filter((i) => i.kind === 'feedback' && i.category === 'bug').map((i) => i.id);
+  if (bugIds.length) {
+    try {
+      const det = (await rpc<AnyRow[] | null>('feedback_details', { p_ids: bugIds })) ?? [];
+      const byId = new Map(det.map((d) => [str(d.id), d.context as BugContext]));
+      for (const i of items) if (byId.has(i.id)) i.context = byId.get(i.id);
+    } catch (e) {
+      console.warn('[YACquest] feedback_details unavailable (run migration 0027)', e);
+    }
+  }
+  return items;
+}
+
+/** 0027 "🐞 Report a problem": a Bug / problem feedback row with technical details (scrubbed again by the database). */
+export async function submitBugReport(message: string, context: BugContext): Promise<void> {
+  if (message.trim().length < 3) fail('message', 'Tell us what happened (at least 3 characters).');
+  if (message.length > 1000) fail('message', 'Keep it under 1000 characters.');
+  await rpc('submit_bug_report', { p_message: message.trim(), p_context: context });
+  emitChange();
+}
+
+/**
+ * 0027: delete my account. The database checks the typed username, the last YACquest Chair and
+ * prizes on their way, then deletes everything (see docs/BACKEND.md). Signs out afterwards.
+ */
+export async function deleteMyAccount(confirmUsername: string): Promise<void> {
+  await rpc('delete_my_account', { p_confirm: confirmUsername });
+  try {
+    // The login no longer exists; clear the local session without asking the server.
+    await sb().auth.signOut({ scope: 'local' });
+  } catch (e) {
+    console.error('[YACquest] local sign out failed', e);
+  }
+  me = null;
+  unread = 0;
+  emitChange();
 }
 
 export async function markFeedbackReviewed(kind: FeedbackItem['kind'], id: string): Promise<void> {

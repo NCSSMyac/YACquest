@@ -46,14 +46,14 @@ export default function CheckInLink() {
     );
   }, [ready, user, eventId, code]);
 
-  if (!ready) return <div className="app-shell"><Loading /></div>;
+  if (!ready) return <div className="app-shell" role="main"><Loading /></div>;
   if (eventId && code && !user) {
     savePendingCheckIn({ eventId, code, title: title || undefined });
     return <Navigate to="/login" replace />;
   }
 
   return (
-    <div className="app-shell" style={{ paddingTop: 24 }}>
+    <div className="app-shell" role="main" style={{ paddingTop: 24 }}>
       {/* Full-screen "CHECKED IN ✓" pass with coins + a live clock (replaces the small pop). */}
       {result?.ok && showPass && (
         <CheckInConfirm

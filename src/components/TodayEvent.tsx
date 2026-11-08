@@ -29,11 +29,11 @@ export function TodayChip() {
   const e = useTodayEvent();
   if (!e) return null;
   return (
-    <Link to={`/earn?event=${encodeURIComponent(e.id)}`} className="today-chip" aria-label={`Today: ${e.title} at ${fmtEventTime(e.startsAt)}. Check in.`}>
-      <span className="today-chip-fixed">📅 Today:</span>
+    <Link to={`/earn?event=${encodeURIComponent(e.id)}`} className="today-chip">
+      <span className="today-chip-fixed"><span aria-hidden="true">📅 </span>Today:</span>
       <b className="today-chip-title">{e.title}</b>
       <span className="today-chip-fixed">at {fmtEventTime(e.startsAt)}</span>
-      <span className="today-chip-cta">· Check in ▶</span>
+      <span className="today-chip-cta">· Check in<span aria-hidden="true"> ▶</span></span>
     </Link>
   );
 }
