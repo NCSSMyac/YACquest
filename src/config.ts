@@ -133,7 +133,7 @@ export const WRAPPED = {
   mockAlwaysOpen: false,
 } as const;
 
-export type SeasonalHolidayId = 'indigenous_peoples_day' | 'dia_de_muertos' | 'diwali' | 'thanksgiving';
+export type SeasonalHolidayId = 'indigenous_peoples_day' | 'dia_de_muertos' | 'diwali' | 'thanksgiving' | 'heritage_month';
 
 export interface SeasonalHoliday {
   id: SeasonalHolidayId;
@@ -149,6 +149,10 @@ export interface SeasonalHoliday {
   /** What the holiday's items honor (shown in Wardrobe → Seasonal → About this item). */
   about: string;
   learnMore?: { label: string; url: string };
+  /** 0031: more links for the About modal (each opens in a new tab). */
+  links?: { label: string; url: string }[];
+  /** 0031: word used in the "New limited-time … for …" notification/toast (default 'item'). Mirrors seasonal_holidays.item_noun. */
+  noun?: 'item' | 'background';
 }
 
 /**
@@ -157,7 +161,7 @@ export interface SeasonalHoliday {
  *
  * ⚠️ VERIFY THESE DATES EVERY YEAR (Diwali follows the lunar calendar; Thanksgiving is the 4th Thursday of
  * November) and keep the database copy in sync: seasonal_windows in supabase/migrations/0028_pace_wrapped_seasonal.sql
- * (add a new migration with the next year's rows). Descriptions and art should be reviewed by members of
+ * and 0031_seasonal_november.sql (add a new migration with the next year's rows). Descriptions and art should be reviewed by members of
  * these communities (e.g. campus cultural organizations) before they go live — see docs/SETUP.md.
  */
 export const SEASONAL: SeasonalHoliday[] = [
@@ -184,9 +188,10 @@ export const SEASONAL: SeasonalHoliday[] = [
     id: 'diwali',
     name: 'Diwali',
     emoji: '🪔',
-    // 7 days before through 7 days after. Diwali 2026 = Sunday, Nov 8, 2026 (Lakshmi Puja; confirmed).
-    // Diwali 2027 = Oct 29, 2027: VERIFY before Oct 2027 (lunar calendar).
-    windows: { 2026: ['2026-11-01', '2026-11-15'], 2027: ['2027-10-22', '2027-11-05'] },
+    // 0031: all of November. Diwali 2026 = Sunday, Nov 8, 2026 (Lakshmi Puja; confirmed) → Nov 1–30.
+    // Diwali 2027 = Friday, Oct 29, 2027: VERIFY before Oct 2027 (lunar calendar) → Oct 22 – Nov 30, so the
+    // window covers the festival week and all of November.
+    windows: { 2026: ['2026-11-01', '2026-11-30'], 2027: ['2027-10-22', '2027-11-30'] },
     about:
       'Diwali, the Festival of Lights, is celebrated by Hindus, Sikhs, Jains and some Buddhists around the world. Homes are lit with diyas (clay oil lamps) and decorated with rangoli (colorful floor designs) to celebrate the victory of light over darkness.',
   },
@@ -194,9 +199,23 @@ export const SEASONAL: SeasonalHoliday[] = [
     id: 'thanksgiving',
     name: 'Thanksgiving',
     emoji: '🍂',
-    // 4th Thursday of November (Nov 26, 2026; Nov 25, 2027): the week before through the Monday after.
-    windows: { 2026: ['2026-11-19', '2026-11-30'], 2027: ['2027-11-18', '2027-11-29'] },
+    // 0031: all of November (Thanksgiving = 4th Thursday: Nov 26, 2026; Nov 25, 2027).
+    windows: { 2026: ['2026-11-01', '2026-11-30'], 2027: ['2027-11-01', '2027-11-30'] },
     about:
       'Thanksgiving is a U.S. holiday about gratitude and sharing a meal with family and friends. This cozy scarf celebrates the harvest season and saying thank you.',
+  },
+  {
+    id: 'heritage_month',
+    name: 'Native American Heritage Month',
+    emoji: '🌽',
+    // 0031: all of November every year.
+    windows: { 2026: ['2026-11-01', '2026-11-30'], 2027: ['2027-11-01', '2027-11-30'] },
+    noun: 'background',
+    about:
+      'November is Native American Heritage Month in the United States, a time to honor the histories, cultures and continuing presence of Native peoples. Many people also mark Thanksgiving week as “Truthsgiving” — a time to learn the full history behind the holiday and center Indigenous voices. Since 1970, Native people have gathered in Plymouth, Massachusetts on Thanksgiving Day for a National Day of Mourning. The Three Sisters — corn, beans and squash planted together so each helps the others grow — are Indigenous agricultural knowledge practiced by many Native nations for generations. This background celebrates that knowledge; it isn’t a costume.',
+    links: [
+      { label: 'Learn about North Carolina’s tribes', url: 'https://ncadmin.nc.gov/divisions/american-indian-affairs' },
+      { label: 'Whose land are you on?', url: 'https://native-land.ca/' },
+    ],
   },
 ];

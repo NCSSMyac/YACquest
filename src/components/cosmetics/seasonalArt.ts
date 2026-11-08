@@ -25,6 +25,16 @@ export const SEASONAL_PALETTE: Record<string, string> = {
   '$': '#fff7d6', // lamp glow
   '?': '#5e3a22', // dark wood / bark
   ':': '#c79a5b', // dry corn stalk
+  // 0031 Three Sisters Garden (golden hour over the NC Piedmont)
+  '^': '#9cc3ea', // golden-hour upper sky
+  ';': '#f9d39a', // low peach glow
+  '<': '#8aa58c', // far Piedmont treeline (haze)
+  '>': '#5f8a58', // near rolling hill
+  '/': '#3f8a3c', // corn leaf / stalk green
+  '|': '#7fbf4a', // sunlit leaf edge
+  ',': '#245a2b', // bean vine (dark green)
+  '"': '#6b4527', // garden soil
+  "'": '#8a5c33', // soil mound top
 };
 
 // ───────────── Hat: Cempasúchil Crown (marigolds) ─────────────
@@ -282,10 +292,113 @@ export function landOfLongleaf(): Grid {
   return g;
 }
 
+/**
+ * Three Sisters Garden (Native American Heritage Month, 0031): corn, beans and squash growing together at
+ * golden hour, NC Piedmont horizon behind. Tall corn stalks with bean vines climbing them at both edges,
+ * broad squash leaves and a few squash on the mounds at their feet. Plants and landscape only: this
+ * honors Indigenous agricultural knowledge; nothing here is clothing, regalia or a person.
+ * The middle stays open (sky + soft hills) so every character, incl. the Golden Yak, reads clearly.
+ */
+export function threeSisters(): Grid {
+  const g = blank('^');
+  // golden-hour sky: soft blue overhead warming to peach and gold at the horizon (2-row dither at each seam)
+  const bands = ['^', '^', '0', ';', '4'];
+  const rows = 20, step = rows / bands.length;
+  for (let y = 0; y < rows; y++)
+    for (let x = 0; x < W; x++) {
+      const i = Math.min(bands.length - 1, Math.floor(y / step));
+      const toEdge = (i + 1) * step - y;
+      const next = bands[Math.min(bands.length - 1, i + 1)];
+      g[y][x] = toEdge <= 1 && (x + y) % 2 === 0 ? next : toEdge <= 2 && toEdge > 1 && (x + 2 * y) % 4 === 0 ? next : bands[i];
+    }
+  // low sun setting behind the treeline on the right, with a dithered halo
+  for (let y = 9; y < 20; y++) for (let x = 0; x < W; x++) {
+    const d = (x - 26) ** 2 + (y - 17) ** 2;
+    if (d <= 8) g[y][x] = '9';
+    else if (d <= 18 && (x + y) % 2 === 0) g[y][x] = '9';
+  }
+  // Piedmont horizon: a soft far treeline of rounded crowns, then gentle rolling hills (no mountains)
+  for (let x = 0; x < W; x++) {
+    const top = 18 - Math.round(Math.max(0, Math.sin(x * 1.25)) * 1 + Math.sin(x / 5) * 0.8);
+    for (let y = top; y < H; y++) g[y][x] = '<';
+  }
+  for (let x = 0; x < W; x++) {
+    const top = 22 + Math.round(Math.sin(x / 5 + 1) * 1.2);
+    for (let y = top; y < H; y++) g[y][x] = y === top ? '|' : '>';
+  }
+  // garden ground: planting mounds (hills of soil) in rows
+  for (let y = 27; y < H; y++) for (let x = 0; x < W; x++) g[y][x] = '"';
+  for (const [mx, my] of [[3, 30], [17, 29], [32, 30], [10, 34], [25, 34]] as [number, number][])
+    for (let y = my - 2; y <= my + 1; y++) for (let x = mx - 4; x <= mx + 4; x++)
+      if (((x - mx) / 4.5) ** 2 + ((y - my) / 2.2) ** 2 <= 1) set(g, x, y, y === my - 2 || ((x - mx) / 4.5) ** 2 + ((y - my + 1) / 2.2) ** 2 <= 0.35 ? "'" : 'o');
+  g[27] = g[27].map((c, x) => (x % 3 === 0 ? '>' : c)); // grass edge where the garden meets the hill
+  // small distant corn rows on the hill (texture, behind the character)
+  for (let x = 1; x < W; x += 3) {
+    const base = 26;
+    set(g, x, base, '/');
+    set(g, x, base - 1, '/');
+    set(g, x - 1, base - 2, x % 2 ? '/' : '|');
+    set(g, x + 1, base - 2, x % 2 ? '|' : '/');
+  }
+
+  // ── The sisters: corn stalk + bean vine climbing it ──
+  const corn = (x: number, top: number, bottom: number, flip: boolean) => {
+    for (let y = top + 2; y <= bottom; y++) set(g, x, y, y % 5 === 0 ? '3' : '/');
+    // golden tassel: a central spike with branches drooping to each side
+    stamp(g, ['.g.', 'gGg', 'G.G', 'G.G'], x - 1, top - 1);
+    set(g, x, top + 1, 'G');
+    // long arching leaves, alternating sides, every 4 rows
+    for (let y = top + 4, i = 0; y < bottom - 3; y += 4, i++) {
+      const dir = (i % 2 === 0) !== flip ? 1 : -1;
+      set(g, x + dir, y, '/');
+      set(g, x + 2 * dir, y - 1, '|');
+      set(g, x + 3 * dir, y - 1, '/');
+      set(g, x + 4 * dir, y, '/');
+    }
+    // an ear of corn: golden kernels peeking out of a green husk, silk on top
+    const ey = top + 9;
+    const ex = x + (flip ? -2 : 1);
+    stamp(g, ['.G', 'yg', 'gy', 'yg', 'E/', '.E'].map((r) => (flip ? [...r].reverse().join('') : r)), ex, ey);
+  };
+  // bean vine twining up a stalk: dark vine zig-zags left/right, little leaves, pods, a few flowers
+  const beans = (x: number, top: number, bottom: number, phase: number) => {
+    for (let y = bottom; y >= top + 5; y--) {
+      const side = Math.round(Math.sin((y + phase) * 0.9));
+      if (side !== 0) set(g, x + side, y, ',');
+      if ((y + phase) % 6 === 0) set(g, x - side * 2 || x + 2, y, 'e'); // leaf
+      if ((y + phase) % 9 === 4) { set(g, x + 2 * (side || 1), y, 'e'); set(g, x + 2 * (side || 1), y + 1, 'E'); } // hanging pod
+      if ((y + phase) % 11 === 7) set(g, x - 2 * (side || 1), y, 'P'); // bean flower
+    }
+  };
+  corn(1, 3, 30, false);
+  beans(1, 3, 30, 0);
+  corn(5, 7, 30, true);
+  beans(5, 7, 30, 3);
+  corn(34, 2, 30, true);
+  beans(34, 2, 30, 1);
+  corn(30, 8, 30, false);
+  beans(30, 8, 30, 4);
+
+  // ── Squash: broad leaves with pale veins along the mounds, and a few squash ──
+  const LEAF = ['.3/3.', '3/E/3', '/3E3/', '.3/3.'];
+  for (const [x, y] of [[-1, 28], [3, 30], [7, 31], [27, 30], [31, 28], [32, 32], [13, 33], [20, 33]] as [number, number][]) stamp(g, LEAF, x, y);
+  // vines running between the mounds
+  for (const [x, y] of [[8, 34], [9, 35], [12, 35], [22, 35], [25, 34], [26, 33]] as [number, number][]) set(g, x, y, ',');
+  const ROUND = ['.,.', 'OgO', 'gOg', '.O.']; // round orange squash with a stem
+  const LONG = [',..', 'gg.', '.gg', '.gG']; // golden crookneck
+  stamp(g, ROUND, 0, 32);
+  stamp(g, LONG, 6, 29);
+  stamp(g, ROUND, 29, 31);
+  stamp(g, LONG, 33, 33);
+  stamp(g, ['.,', 'gO'], 17, 34);
+  return g;
+}
+
 /** Background builders registered in backgrounds.ts. */
 export const SEASONAL_BACKGROUNDS: Record<string, () => Grid> = {
   papel_picado: papelPicado,
   rangoli_diyas: rangoliDiyas,
   autumn_harvest: autumnHarvest,
   land_of_longleaf: landOfLongleaf,
+  three_sisters: threeSisters,
 };

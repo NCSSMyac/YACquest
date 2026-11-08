@@ -1253,7 +1253,7 @@ values ((select id from cycles where not is_active order by starts_at limit 1), 
 do $$ begin
   perform t.denied('select * from my_badges()', 'anon cannot call my_badges');
   perform t.denied('select monthly_shoutout()', 'anon cannot call monthly_shoutout');
-  perform t.eq((select count(*) from cosmetics), 24::bigint, 'anon can read the cosmetics catalogue (17 + 7 seasonal from 0028)');
+  perform t.eq((select count(*) from cosmetics), 25::bigint, 'anon can read the cosmetics catalogue (17 + 7 seasonal from 0028 + Three Sisters Garden from 0031)');
 end $$;
 :as_gina
 do $$
@@ -3299,18 +3299,33 @@ do $$ begin
   perform t.eq(second_monday_of_october(2029), date '2029-10-08', '0028 seasonal: 2nd Monday of Oct 2029 = Oct 8 (Oct 1 is a Monday)');
   perform t.ok((select starts_on = '2026-10-05' and ends_on = '2026-10-19' from seasonal_windows where holiday = 'indigenous_peoples_day' and year = 2026),
                '0028 seasonal: Indigenous Peoples'' Day 2026 window Oct 5–19');
-  perform t.ok((select starts_on = '2026-11-01' and ends_on = '2026-11-15' from seasonal_windows where holiday = 'diwali' and year = 2026),
-               '0028 seasonal: Diwali 2026 window Nov 1–15 (Nov 8 ± 7)');
-  perform t.ok((select starts_on = '2027-10-22' and ends_on = '2027-11-05' from seasonal_windows where holiday = 'diwali' and year = 2027),
-               '0028 seasonal: Diwali 2027 window Oct 22 – Nov 5 (Oct 29 ± 7)');
-  perform t.ok((select starts_on = '2026-11-19' and ends_on = '2026-11-30' from seasonal_windows where holiday = 'thanksgiving' and year = 2026),
-               '0028 seasonal: Thanksgiving 2026 window Nov 19–30');
-  perform t.eq((select count(*) from cosmetics where rule_type = 'seasonal'), 7::bigint, '0028 seasonal: 7 seasonal items');
-  perform t.eq((select array_agg(holiday order by holiday) from seasonal_active('2026-11-05 12:00-05')), array['dia_de_muertos', 'diwali'],
-               '0028 seasonal: Nov 5, 2026 → Día de los Muertos + Diwali are open');
-  perform t.eq((select array_agg(holiday) from seasonal_active('2026-11-10 08:00-05')), array['diwali'], '0028 seasonal: Nov 10 → only Diwali');
-  perform t.eq((select array_agg(holiday) from seasonal_active('2026-11-16 03:00Z')), array['diwali'],
-               '0028 seasonal: 10 PM Nov 15 in New York (03:00Z Nov 16) still counts as Nov 15');
+  -- 0031: Diwali, Thanksgiving and Native American Heritage Month are open all of November
+  perform t.ok((select starts_on = '2026-11-01' and ends_on = '2026-11-30' from seasonal_windows where holiday = 'diwali' and year = 2026),
+               '0031 seasonal: Diwali 2026 window Nov 1–30');
+  perform t.ok((select starts_on = '2027-10-22' and ends_on = '2027-11-30' from seasonal_windows where holiday = 'diwali' and year = 2027),
+               '0031 seasonal: Diwali 2027 window Oct 22 – Nov 30 (Diwali Oct 29 + all of November)');
+  perform t.ok((select starts_on = '2026-11-01' and ends_on = '2026-11-30' from seasonal_windows where holiday = 'thanksgiving' and year = 2026),
+               '0031 seasonal: Thanksgiving 2026 window Nov 1–30');
+  perform t.ok((select starts_on = '2027-11-01' and ends_on = '2027-11-30' from seasonal_windows where holiday = 'thanksgiving' and year = 2027),
+               '0031 seasonal: Thanksgiving 2027 window Nov 1–30');
+  perform t.ok((select count(*) = 2 and bool_and(starts_on = make_date(year, 11, 1) and ends_on = make_date(year, 11, 30))
+                  from seasonal_windows where holiday = 'heritage_month'),
+               '0031 seasonal: Native American Heritage Month 2026 + 2027 windows Nov 1–30');
+  perform t.ok((select starts_on = '2026-10-25' and ends_on = '2026-11-09' from seasonal_windows where holiday = 'dia_de_muertos' and year = 2026),
+               '0031 seasonal: Día de los Muertos unchanged');
+  perform t.eq((select count(*) from cosmetics where rule_type = 'seasonal'), 8::bigint, '0031 seasonal: 8 seasonal items');
+  perform t.ok((select slot = 'background' and name = 'Three Sisters Garden' and rule_value = 'heritage_month' from cosmetics where id = 'three_sisters'),
+               '0031 seasonal: Three Sisters Garden is a Heritage Month background');
+  perform t.eq((select name || '|' || emoji || '|' || item_noun from seasonal_holidays where id = 'heritage_month'), 'Native American Heritage Month|🌽|background',
+               '0031 seasonal: Heritage Month holiday row');
+  perform t.eq((select array_agg(holiday order by holiday) from seasonal_active('2026-11-05 12:00-05')),
+               array['dia_de_muertos', 'diwali', 'heritage_month', 'thanksgiving'], '0031 seasonal: Nov 5, 2026 → all four November holidays open');
+  perform t.eq((select array_agg(holiday order by holiday) from seasonal_active('2026-11-20 12:00-05')), array['diwali', 'heritage_month', 'thanksgiving'],
+               '0031 seasonal: Nov 20 → Diwali + Heritage Month + Thanksgiving');
+  perform t.eq((select array_agg(holiday order by holiday) from seasonal_active('2026-12-01 03:00Z')), array['diwali', 'heritage_month', 'thanksgiving'],
+               '0031 seasonal: 10 PM Nov 30 in New York (03:00Z Dec 1) still counts as Nov 30');
+  perform t.ok(not exists (select 1 from seasonal_active('2026-12-01 12:00-05')), '0031 seasonal: Dec 1 → nothing open');
+  perform t.eq((select array_agg(holiday order by holiday) from seasonal_active('2027-10-22 12:00-04')), array['diwali'], '0031 seasonal: Oct 22, 2027 → Diwali opens');
   perform t.ok(not exists (select 1 from seasonal_active('2026-12-15 12:00-05')), '0028 seasonal: mid-December → nothing open');
   perform t.ok(position('queue_wrapped_notifications' in pg_get_functiondef('public.enqueue_weekly_report_if_due()'::regprocedure)) > 0,
                '0028: the every-10-minutes job also queues Wrapped');
@@ -3356,6 +3371,34 @@ end $$;
 :as_anon
 do $$ begin
   perform t.denied('select claim_seasonal_items()', '0028 seasonal: anon can''t claim');
+end $$;
+:as_super
+rollback;
+
+-- ---- 0031: Three Sisters Garden — claimed in November, kept forever ----
+begin;
+delete from seasonal_unlocks;
+update profiles set role = 'participant' where id in (t.u('alice'), t.u('bob'));
+do $$ declare v text[]; begin
+  v := claim_seasonal_for(t.u('alice'), '2026-11-20 12:00-05');
+  perform t.eq(v, array['autumn_harvest', 'diya', 'harvest_scarf', 'rangoli_diyas', 'three_sisters'], '0031 seasonal: Nov 20 → Diwali + Thanksgiving + Three Sisters Garden');
+  perform t.ok(exists (select 1 from notifications where user_id = t.u('alice') and kind = 'seasonal'
+                        and title = '🌽 New limited-time background for Native American Heritage Month — see what it honors'),
+               '0031 seasonal: Heritage Month notification text');
+  perform t.ok(exists (select 1 from notifications where user_id = t.u('alice') and kind = 'seasonal'
+                        and title = '🍂 New limited-time item for Thanksgiving — see what it honors'), '0031 seasonal: other holidays still say "item"');
+  perform t.eq(claim_seasonal_for(t.u('alice'), '2026-11-29 12:00-05'), '{}'::text[], '0031 seasonal: claiming again → nothing new');
+  perform t.eq(claim_seasonal_for(t.u('bob'), '2026-12-01 12:00-05'), '{}'::text[], '0031 seasonal: Dec 1 → too late');
+  delete from seasonal_windows; -- November is over
+end $$;
+:as_alice
+do $$ begin
+  perform t.ok('three_sisters' = any (my_unlocks()), '0031 seasonal: Three Sisters Garden stays owned after November');
+  perform t.eq(equip_look(null, null, 'three_sisters')->>'background', 'three_sisters', '0031 seasonal: owned → can wear it any time');
+end $$;
+:as_bob
+do $$ begin
+  perform t.throws('select equip_look(null, null, ''three_sisters'')', 'locked', '0031 seasonal: missed November → locked');
 end $$;
 :as_super
 rollback;

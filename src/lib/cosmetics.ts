@@ -51,6 +51,8 @@ export const COSMETICS: CosmeticDef[] = [
   { id: 'rangoli_diyas', slot: 'background', name: 'Rangoli & Diyas', rule: { type: 'seasonal', id: 'diwali' } },
   { id: 'harvest_scarf', slot: 'accessory', name: 'Harvest Scarf', rule: { type: 'seasonal', id: 'thanksgiving' } },
   { id: 'autumn_harvest', slot: 'background', name: 'Autumn Harvest', rule: { type: 'seasonal', id: 'thanksgiving' } },
+  // 0031 Native American Heritage Month (November): a background, never a costume.
+  { id: 'three_sisters', slot: 'background', name: 'Three Sisters Garden', rule: { type: 'seasonal', id: 'heritage_month' } },
 ];
 
 export const cosmeticById = (id?: string) => (id ? COSMETICS.find((c) => c.id === id) : undefined);

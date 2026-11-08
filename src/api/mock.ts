@@ -11,7 +11,7 @@
  * the front end checks are only for friendly error messages.
  */
 import { ADMIN_NEAR_GOAL_POINTS, CAPS, CAMPUSES, CYCLE, MAX_CHAIRS, PRIZE, SEASONAL, TIER_POINTS, WRAPPED, type CampusId } from '../config';
-import { activeHolidays, openWindow, nyDate, seasonalItems } from '../lib/seasonal';
+import { activeHolidays, openWindow, nyDate, seasonalItems, seasonalNoticeTitle } from '../lib/seasonal';
 import { wrappedWindow } from '../lib/wrapped';
 import { ACTIVITIES, ONCE_PER_CYCLE, activityById } from '../lib/activities';
 import { EVENT_KINDS, kindInfo } from '../lib/eventKinds';
@@ -3038,7 +3038,7 @@ function claimSeasonalFor(userId: string, nowMs: number = Date.now()): string[] 
       d.seasonalUnlocks.push({ userId, itemId: c.id, at: new Date(nowMs).toISOString() });
       fresh.push(c.id);
     }
-    notify(userId, 'seasonal', `${h.emoji} New limited-time item for ${h.name} — see what it honors`,
+    notify(userId, 'seasonal', seasonalNoticeTitle(h),
       'Free in Prize → Wardrobe → Seasonal while it lasts, and yours to keep. Tap “About this item” to learn what it celebrates.');
   }
   return fresh.sort();

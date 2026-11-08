@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as api from '../../api';
-import { SEASONAL, type SeasonalHoliday } from '../../config';
-import { holidayState, returnsLabel, seasonalItems, shortDate, untilText, type SeasonalState } from '../../lib/seasonal';
+import type { SeasonalHoliday } from '../../config';
+import { holidayState, returnsLabel, seasonalItems, seasonalOrder, shortDate, untilText, type SeasonalState } from '../../lib/seasonal';
 import { useAuth } from '../../lib/auth';
 import { badgeById } from '../../lib/badges';
 import { COSMETICS, type CosmeticDef, type UnlockRule } from '../../lib/cosmetics';
@@ -184,14 +184,6 @@ export function WardrobePanel({ unlocks, error, staff, initialCat }: { unlocks: 
 
 // ───────────── 0028 Seasonal ─────────────
 
-/** Active holidays first (soonest to end), then owned ones, then "Returns next year". */
-function seasonalOrder(have: Set<string>, now = Date.now()) {
-  const rank = (st: SeasonalState) => (st.kind === 'available' ? 0 : st.kind === 'owned' ? 1 : 2);
-  return SEASONAL.map((h, i) => {
-    const owned = seasonalItems(h.id).some((c) => have.has(c.id));
-    return { h, i, st: holidayState(h, owned, now) };
-  }).sort((a, b) => rank(a.st) - rank(b.st) || (a.st.kind === 'available' && b.st.kind === 'available' ? a.st.endsOn.localeCompare(b.st.endsOn) : 0) || a.i - b.i);
-}
 
 function StateChip({ st }: { st: SeasonalState }) {
   if (st.kind === 'available') return <span className="chip seasonal-chip">Limited time!</span>;
@@ -206,7 +198,7 @@ function SeasonalSection({ have, draft, campus, onToggle, onAbout }: {
   onToggle: (c: Pick<CosmeticDef, 'id' | 'slot'>) => void;
   onAbout: (h: SeasonalHoliday) => void;
 }) {
-  const groups = seasonalOrder(have);
+  const groups = seasonalOrder((h) => seasonalItems(h.id).some((c) => have.has(c.id)));
   return (
     <div className="stack seasonal">
       <p className="muted seasonal-intro">Limited-time looks that honor holidays and traditions. Free for everyone while they’re here, and yours to keep once you’ve opened the Wardrobe during that time. They never change your points.</p>
@@ -327,6 +319,11 @@ function AboutModal({ holiday, have, campus, onClose }: { holiday: SeasonalHolid
             Learn more: {holiday.learnMore.label}<span className="sr-only"> (opens in a new tab)</span> ↗
           </a>
         )}
+        {holiday.links?.map((l) => (
+          <a key={l.url} className="btn small blue seasonal-learn" href={l.url} target="_blank" rel="noopener noreferrer">
+            {l.label}<span className="sr-only"> (opens in a new tab)</span> ↗
+          </a>
+        ))}
         <p className="muted seasonal-about-fine">
           {st.kind === 'available' ? `${untilText(st.endsOn, st.daysLeft)}. Free for everyone, and yours to keep.` : st.kind === 'owned' ? 'You have this one. Wear it any time.' : returnsLabel(st) === 'Coming soon' && st.kind === 'returns' && st.next ? `Not here yet: free for everyone from ${shortDate(st.next[0])} to ${shortDate(st.next[1])}.` : 'Not available right now. It returns next year.'}
         </p>

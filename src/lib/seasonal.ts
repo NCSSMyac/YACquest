@@ -113,10 +113,26 @@ export function untilText(endsOn: string, left: number): string {
   return `Available until ${shortDate(endsOn)} · ${left} days left`;
 }
 
+/** "🌽 New limited-time background for Native American Heritage Month — see what it honors" (same text as the server notification). */
+export const seasonalNoticeTitle = (h: SeasonalHoliday) => `${h.emoji} New limited-time ${h.noun ?? 'item'} for ${h.name} — see what it honors`;
+
+/** The window used to order the Wardrobe: the open one, else the next one, else the latest listed. */
+export function sortWindow(h: SeasonalHoliday, at: Date | number = Date.now()): [string, string] | null {
+  const d = nyDate(at);
+  return openWindow(h, d) ?? nextWindow(h, d) ?? Object.values(h.windows).sort((a, b) => b[0].localeCompare(a[0]))[0] ?? null;
+}
+
+/** Wardrobe order: open now first, then owned, then "Returns next year"; within each, by window start, then name. */
+export function seasonalOrder(owns: (h: SeasonalHoliday) => boolean, at: Date | number = Date.now()) {
+  const rank = (st: SeasonalState) => (st.kind === 'available' ? 0 : st.kind === 'owned' ? 1 : 2);
+  return SEASONAL.map((h) => ({ h, st: holidayState(h, owns(h), at), start: sortWindow(h, at)?.[0] ?? '9999' }))
+    .sort((a, b) => rank(a.st) - rank(b.st) || a.start.localeCompare(b.start) || a.h.name.localeCompare(b.h.name));
+}
+
 /** Toast after a claim: one line per newly unlocked holiday. */
 export function claimToasts(claimed: string[]): string[] {
   const ids = new Set(claimed);
-  return SEASONAL.filter((h) => seasonalItems(h.id).some((c) => ids.has(c.id))).map((h) => `${h.emoji} New limited-time item for ${h.name} — see what it honors`);
+  return SEASONAL.filter((h) => seasonalItems(h.id).some((c) => ids.has(c.id))).map(seasonalNoticeTitle);
 }
 
 /** Label for a holiday that isn't open and isn't owned: "Coming soon" when it's later this year, else "Returns next year". */

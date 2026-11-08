@@ -503,3 +503,13 @@ Additive (no downtime): one table, one activity row, two widened CHECKs (added `
 - **Grants:** the two participant + two staff RPCs and `admin_stats` → authenticated (revoked from public/anon); `survey_window_open`, `survey_text`, `send_followup_for_event`, `build_weekly_report` → nobody.
 - **App:** `#/survey/<eventId>` (lazy), "📝 Rate this event (+5)" / "✓ Survey done" on past event cards (`listEvents` adds `surveyDone`; live reads own `event_surveys` rows), a line on the check-in pass, a button in the follow-up notification (`src/lib/linkify.ts` turns `#/survey/<id>` into a router link), Admin → Events "📊 Survey (N)" results modal (lazy, CSV via `src/lib/csv.ts`, anonymous rows without names), Stats "Event ratings" card. Rules in `src/lib/eventSurvey.ts`; mock mirrors everything (`surveys` in the demo DB, v13; four seeded Kickoff Mixer answers).
 
+## 0031 — Seasonal: Diwali + Thanksgiving all November, Native American Heritage Month
+
+Additive (no downtime): one new column with a default, new/upserted rows, one function re-created.
+- **Windows** (`seasonal_windows`, upserted; inclusive NY dates): `diwali` 2026 Nov 1–30 (Diwali = Sun Nov 8, 2026, confirmed), 2027 **Oct 22 – Nov 30** (Diwali = Oct 29, 2027 — verify before Oct 2027); `thanksgiving` 2026 + 2027 Nov 1–30; new `heritage_month` 2026 + 2027 Nov 1–30. Día de los Muertos and Indigenous Peoples' Day unchanged. Same dates as `SEASONAL` in `src/config.ts` (a unit test checks 0028 + 0031 against it, last upsert wins).
+- **Holiday** `seasonal_holidays` row `heritage_month` "Native American Heritage Month" 🌽 (sort 5). New column `seasonal_holidays.item_noun text not null default 'item'` ('background' for Heritage Month).
+- **Item** `three_sisters` "Three Sisters Garden" — background, `rule_type 'seasonal'`, `rule_value 'heritage_month'`, sort 108 (8 seasonal items, 25 cosmetics in all). Never a costume.
+- `claim_seasonal_for` re-created (copy of 0028; the notification uses `item_noun`: "🌽 New limited-time background for Native American Heritage Month — see what it honors"; others still say "item"). Still internal (revoked from everyone).
+- Re-running 0028 alone puts the old windows and text back; re-run 0031 after it.
+- **App:** `SEASONAL` gains `heritage_month` (About text + two links: NC Commission of Indian Affairs, native-land.ca), optional `links[]` and `noun`; `src/lib/seasonal.ts` `seasonalNoticeTitle()` + `seasonalOrder()` (Wardrobe: open now → owned → returns, each by window start then name); art `threeSisters()` in `seasonalArt.ts`. Mock mirrors (notification text, claims).
+

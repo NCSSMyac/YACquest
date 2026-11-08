@@ -5,20 +5,29 @@ import { CYCLE, SEASONAL, WRAPPED } from '../config';
 import { COSMETICS } from '../lib/cosmetics';
 import {
   activeHolidays, claimToasts, daysLeft, fourthThursdayOfNovember, holidayById, holidayState, nyDate,
-  secondMondayOfOctober, seasonalItems, untilText, windowFor,
+  secondMondayOfOctober, seasonalItems, seasonalOrder, untilText, windowFor,
 } from '../lib/seasonal';
 import { canOpenWrapped, personality, wrappedSlides, wrappedTiles, wrappedWindow } from '../lib/wrapped';
 import { wrappedCardModel } from '../lib/wrappedCard';
 import { ACCESSORY_ART, HAT_ART } from '../components/cosmetics/art';
 import { backgroundGrid } from '../components/cosmetics/backgrounds';
-import { composeLayers } from '../components/cosmetics/compose';
+import { composeLayers, paletteFor } from '../components/cosmetics/compose';
 import type { WrappedData } from '../types';
 
 const { load, setSession, addLedger, queueWrappedNotifications, claimSeasonalFor } = api.__test;
 const asUser = (handle: string) => setSession(load().users.find((u) => u.handle === handle)!.id);
 const code = async (p: Promise<unknown>) => p.then(() => 'ok', (e: { code?: string }) => e.code);
 const at = (iso: string) => vi.setSystemTime(Date.parse(iso));
-const MIGRATION = readFileSync(new URL('../../supabase/migrations/0028_pace_wrapped_seasonal.sql', import.meta.url), 'utf8');
+const MIGRATION_0028 = readFileSync(new URL('../../supabase/migrations/0028_pace_wrapped_seasonal.sql', import.meta.url), 'utf8');
+const MIGRATION_0031 = readFileSync(new URL('../../supabase/migrations/0031_seasonal_november.sql', import.meta.url), 'utf8');
+const MIGRATION = MIGRATION_0028 + '\n' + MIGRATION_0031;
+/** The windows the database ends up with after every migration ran in order: the last upsert per (holiday, year) wins. */
+function sqlWindows(): Map<string, [string, string]> {
+  const m = new Map<string, [string, string]>();
+  for (const sql of [MIGRATION_0028, MIGRATION_0031])
+    for (const r of sql.matchAll(/\('([a-z_]+)',\s+(\d{4}), '(\d{4}-\d\d-\d\d)', '(\d{4}-\d\d-\d\d)'\)/g)) m.set(`${r[1]}/${r[2]}`, [r[3], r[4]]);
+  return m;
+}
 
 // ───────────────────────────── seasonal: dates ─────────────────────────────
 
@@ -38,32 +47,57 @@ describe('seasonal dates', () => {
     const ipd = holidayById('indigenous_peoples_day')!;
     expect(windowFor(ipd, 2026)).toEqual(['2026-10-05', '2026-10-19']);
     expect(windowFor(ipd, 2028)).toEqual(['2028-10-02', '2028-10-16']);
-    expect(windowFor(holidayById('diwali')!, 2026)).toEqual(['2026-11-01', '2026-11-15']);
     expect(windowFor(holidayById('diwali')!, 2028)).toBeNull(); // must be added (and verified) each year
-    expect(windowFor(holidayById('thanksgiving')!, 2026)).toEqual(['2026-11-19', '2026-11-30']);
+  });
+  it('0031: Diwali, Thanksgiving and Native American Heritage Month are open all of November', () => {
+    for (const id of ['diwali', 'thanksgiving', 'heritage_month'])
+      expect(windowFor(holidayById(id)!, 2026), id).toEqual(['2026-11-01', '2026-11-30']);
+    expect(windowFor(holidayById('diwali')!, 2027)).toEqual(['2027-10-22', '2027-11-30']); // Diwali Oct 29, 2027 + all of November
+    expect(windowFor(holidayById('thanksgiving')!, 2027)).toEqual(['2027-11-01', '2027-11-30']);
+    expect(windowFor(holidayById('heritage_month')!, 2027)).toEqual(['2027-11-01', '2027-11-30']);
+    // unchanged
+    expect(windowFor(holidayById('dia_de_muertos')!, 2026)).toEqual(['2026-10-25', '2026-11-09']);
+    expect(windowFor(holidayById('indigenous_peoples_day')!, 2027)).toEqual(['2027-10-04', '2027-10-18']);
+    const ids = (iso: string) => activeHolidays(Date.parse(iso)).map((h) => h.id).sort();
+    expect(ids('2026-10-31T12:00:00-04:00')).toEqual(['dia_de_muertos']);
+    expect(ids('2026-11-01T00:30:00-04:00')).toEqual(['dia_de_muertos', 'diwali', 'heritage_month', 'thanksgiving']);
+    expect(ids('2026-11-20T12:00:00-05:00')).toEqual(['diwali', 'heritage_month', 'thanksgiving']);
+    expect(ids('2026-12-01T03:00:00Z')).toEqual(['diwali', 'heritage_month', 'thanksgiving']); // 10 PM Nov 30 in New York
+    expect(ids('2026-12-01T12:00:00-05:00')).toEqual([]);
+    expect(ids('2027-10-22T12:00:00-04:00')).toEqual(['diwali']);
+    expect(ids('2027-11-30T12:00:00-05:00')).toEqual(['diwali', 'heritage_month', 'thanksgiving']);
+    // countdown follows the window
+    expect(untilText('2026-11-30', daysLeft('2026-11-30', Date.parse('2026-11-20T12:00:00-05:00')))).toBe('Available until Nov 30 · 11 days left');
   });
   it('which holidays are open (New York calendar date)', () => {
     const ids = (iso: string) => activeHolidays(Date.parse(iso)).map((h) => h.id);
-    expect(ids('2026-11-05T12:00:00-05:00')).toEqual(['dia_de_muertos', 'diwali']);
-    expect(ids('2026-11-10T08:00:00-05:00')).toEqual(['diwali']);
+    expect(ids('2026-11-05T12:00:00-05:00')).toEqual(['dia_de_muertos', 'diwali', 'thanksgiving', 'heritage_month']);
     expect(nyDate(Date.parse('2026-11-16T03:00:00Z'))).toBe('2026-11-15'); // 10 PM in New York
-    expect(ids('2026-11-16T03:00:00Z')).toEqual(['diwali']);
-    expect(ids('2026-11-20T12:00:00-05:00')).toEqual(['thanksgiving']);
     expect(ids('2026-12-15T12:00:00-05:00')).toEqual([]);
     expect(ids('2027-10-11T12:00:00-04:00')).toEqual(['indigenous_peoples_day']);
   });
-  it('the database seeds the same windows as SEASONAL in config.ts', () => {
+  it('the database seeds the same windows as SEASONAL in config.ts (0028 + 0031, last upsert wins)', () => {
+    const sql = sqlWindows();
+    for (const h of SEASONAL)
+      for (const [year, w] of Object.entries(h.windows))
+        if (h.rule !== 'second_monday_october_pm7') expect(sql.get(`${h.id}/${year}`), `${h.id} ${year}`).toEqual(w);
+    // …and nothing in SQL that the app doesn't know about
+    for (const key of sql.keys()) {
+      const [id, year] = key.split('/');
+      expect(holidayById(id)?.windows[Number(year)], key).toBeTruthy();
+    }
+    expect(MIGRATION_0031).toContain("('three_sisters', 'background', 'Three Sisters Garden', 'seasonal', 'heritage_month', 108)");
     for (const h of SEASONAL)
       for (const [year, [from, to]] of Object.entries(h.windows)) {
         if (h.rule === 'second_monday_october_pm7') {
           expect(windowFor(h, Number(year))).toEqual([from, to]);
           expect(MIGRATION).toContain(`('${h.id}', ${year}, public.second_monday_of_october(${year}) - 7, public.second_monday_of_october(${year}) + 7)`);
-        } else expect(MIGRATION).toMatch(new RegExp(`\\('${h.id}',\\s+${year}, '${from}', '${to}'\\)`));
+        }
       }
   });
   it('every seasonal item has art and a holiday; descriptions are filled in', () => {
     const items = COSMETICS.filter((c) => c.rule.type === 'seasonal');
-    expect(items.map((c) => c.id).sort()).toEqual(['autumn_harvest', 'cempasuchil_crown', 'diya', 'harvest_scarf', 'land_of_longleaf', 'papel_picado', 'rangoli_diyas']);
+    expect(items.map((c) => c.id).sort()).toEqual(['autumn_harvest', 'cempasuchil_crown', 'diya', 'harvest_scarf', 'land_of_longleaf', 'papel_picado', 'rangoli_diyas', 'three_sisters']);
     for (const c of items) {
       if (c.slot === 'hat') expect(HAT_ART[c.id]).toBeTruthy();
       if (c.slot === 'accessory') expect(ACCESSORY_ART[c.id]).toBeTruthy();
@@ -71,6 +105,21 @@ describe('seasonal dates', () => {
       expect(MIGRATION).toContain(`('${c.id}',`);
     }
     expect(seasonalItems('indigenous_peoples_day').map((c) => c.slot)).toEqual(['background']); // no wearable item
+    expect(seasonalItems('heritage_month').map((c) => [c.id, c.slot, c.name])).toEqual([['three_sisters', 'background', 'Three Sisters Garden']]); // never a costume
+    const nahm = holidayById('heritage_month')!;
+    expect(nahm.name).toBe('Native American Heritage Month');
+    expect(nahm.about).toContain('Since 1970, Native people have gathered in Plymouth, Massachusetts on Thanksgiving Day for a National Day of Mourning.');
+    expect(nahm.about).toContain('This background celebrates that knowledge; it isn’t a costume.');
+    expect(nahm.links).toEqual([
+      { label: 'Learn about North Carolina’s tribes', url: 'https://ncadmin.nc.gov/divisions/american-indian-affairs' },
+      { label: 'Whose land are you on?', url: 'https://native-land.ca/' },
+    ]);
+    expect(claimToasts(['three_sisters'])).toEqual(['🌽 New limited-time background for Native American Heritage Month — see what it honors']);
+    // the art: 36×36 and only known palette colors
+    const ts = backgroundGrid('three_sisters')!;
+    expect(ts.length).toBe(36);
+    const pal = paletteFor();
+    for (const row of ts) for (const ch of row) expect(pal[ch], ch).toBeTruthy();
     for (const h of SEASONAL) expect(h.about.length).toBeGreaterThan(80);
     expect(holidayById('indigenous_peoples_day')!.learnMore!.url).toBe('https://ncadmin.nc.gov/divisions/american-indian-affairs');
     // the Diya sits beside the character
@@ -80,14 +129,30 @@ describe('seasonal dates', () => {
   it('what the Wardrobe shows: Limited time / yours to keep / Returns next year', () => {
     const diwali = holidayById('diwali')!;
     const nov8 = Date.parse('2026-11-08T12:00:00-05:00');
-    expect(holidayState(diwali, false, nov8)).toEqual({ kind: 'available', endsOn: '2026-11-15', daysLeft: 8, owned: false });
+    expect(holidayState(diwali, false, nov8)).toEqual({ kind: 'available', endsOn: '2026-11-30', daysLeft: 23, owned: false });
     expect(untilText('2026-11-15', 8)).toBe('Available until Nov 15 · 8 days left');
     expect(untilText('2026-11-15', 1)).toBe('Last day today!');
     expect(daysLeft('2026-11-15', Date.parse('2026-11-15T23:00:00-05:00'))).toBe(1);
     const dec = Date.parse('2026-12-15T12:00:00-05:00');
     expect(holidayState(diwali, true, dec)).toEqual({ kind: 'owned' });
-    expect(holidayState(diwali, false, dec)).toEqual({ kind: 'returns', next: ['2027-10-22', '2027-11-05'] });
+    expect(holidayState(diwali, false, dec)).toEqual({ kind: 'returns', next: ['2027-10-22', '2027-11-30'] });
     expect(claimToasts(['diya', 'rangoli_diyas'])).toEqual(['🪔 New limited-time item for Diwali — see what it honors']);
+  });
+});
+
+describe('0031 Wardrobe order (fixed dates)', () => {
+  it('open now first, then owned, then returns; each by window start then name', () => {
+    const nov20 = Date.parse('2026-11-20T12:00:00-05:00');
+    const owned = new Set(['dia_de_muertos']);
+    expect(seasonalOrder((h) => owned.has(h.id), nov20).map((g) => [g.h.id, g.st.kind])).toEqual([
+      ['diwali', 'available'], ['heritage_month', 'available'], ['thanksgiving', 'available'],
+      ['dia_de_muertos', 'owned'],
+      ['indigenous_peoples_day', 'returns'],
+    ]);
+    // Oct 2027: Indigenous Peoples' Day (Oct 4) before Diwali (Oct 22) before Día de los Muertos (Oct 25)
+    const oct25 = Date.parse('2027-10-25T12:00:00-04:00');
+    expect(seasonalOrder(() => false, oct25).filter((g) => g.st.kind === 'available').map((g) => g.h.id)).toEqual(['diwali', 'dia_de_muertos']);
+    expect(seasonalOrder(() => false, Date.parse('2027-10-11T12:00:00-04:00'))[0].h.id).toBe('indigenous_peoples_day');
   });
 });
 
@@ -105,11 +170,16 @@ describe('seasonal unlocks persist; equip rules (mock, fixed dates)', () => {
     asUser('yak001');
     const me = load().users.find((u) => u.handle === 'yak001')!;
     const r = await api.claimSeasonalItems();
-    expect(r.claimed).toEqual(['cempasuchil_crown', 'diya', 'papel_picado', 'rangoli_diyas']);
-    expect(r.active.map((a) => a.holiday)).toEqual(['dia_de_muertos', 'diwali']);
+    expect(r.claimed).toEqual(['autumn_harvest', 'cempasuchil_crown', 'diya', 'harvest_scarf', 'papel_picado', 'rangoli_diyas', 'three_sisters']);
+    expect(r.active.map((a) => a.holiday)).toEqual(['dia_de_muertos', 'diwali', 'thanksgiving', 'heritage_month']);
     expect((await api.claimSeasonalItems()).claimed).toEqual([]);
     const notes = load().notifications.filter((n) => n.userId === me.id && n.kind === 'seasonal').map((n) => n.title);
-    expect(notes.sort()).toEqual(['🌼 New limited-time item for Día de los Muertos — see what it honors', '🪔 New limited-time item for Diwali — see what it honors']);
+    expect(notes.sort()).toEqual([
+      '🌼 New limited-time item for Día de los Muertos — see what it honors',
+      '🌽 New limited-time background for Native American Heritage Month — see what it honors',
+      '🍂 New limited-time item for Thanksgiving — see what it honors',
+      '🪔 New limited-time item for Diwali — see what it honors',
+    ].sort());
   });
 
   it('owned items can be worn after the window; unowned ones outside their window are locked', async () => {
@@ -119,17 +189,37 @@ describe('seasonal unlocks persist; equip rules (mock, fixed dates)', () => {
     expect(await api.myUnlocks()).toEqual(expect.arrayContaining(['cempasuchil_crown', 'papel_picado', 'diya', 'rangoli_diyas']));
     const u = await api.equipLook({ hat: 'cempasuchil_crown', accessory: 'diya', background: 'papel_picado' });
     expect(u.look).toEqual({ hat: 'cempasuchil_crown', accessory: 'diya', background: 'papel_picado' });
-    expect(await code(api.equipLook({ accessory: 'harvest_scarf' }))).toBe('locked');
     expect(await code(api.equipLook({ background: 'land_of_longleaf' }))).toBe('locked');
+    asUser('alum002'); // never opened the app in a window
+    expect(await code(api.equipLook({ accessory: 'harvest_scarf' }))).toBe('locked');
     expect(await code(api.equipLook({ hat: 'papel_picado' }))).toBe('look');
   });
 
   it('staff get them too, and equipping during a window claims first', async () => {
-    at('2026-11-20T12:00:00-05:00'); // Thanksgiving window
+    at('2026-11-20T12:00:00-05:00'); // Diwali + Thanksgiving + Heritage Month windows
     asUser('iesha');
     const u = await api.equipLook({ accessory: 'harvest_scarf', background: 'autumn_harvest' });
     expect(u.look).toEqual({ accessory: 'harvest_scarf', background: 'autumn_harvest' });
     expect(claimSeasonalFor(u.id, Date.parse('2026-11-21T12:00:00-05:00'))).toEqual([]);
+  });
+
+  it('0031: Three Sisters Garden is claimed in November, kept forever, and wearable by everyone who opened the app', async () => {
+    at('2026-11-20T12:00:00-05:00');
+    asUser('yak001');
+    const me = load().users.find((u) => u.handle === 'yak001')!;
+    const r = await api.claimSeasonalItems();
+    expect(r.claimed).toEqual(['autumn_harvest', 'diya', 'harvest_scarf', 'rangoli_diyas', 'three_sisters']);
+    expect(r.active).toEqual([
+      { holiday: 'diwali', endsOn: '2026-11-30' }, { holiday: 'thanksgiving', endsOn: '2026-11-30' }, { holiday: 'heritage_month', endsOn: '2026-11-30' },
+    ]);
+    expect(load().notifications.filter((n) => n.userId === me.id && n.kind === 'seasonal').map((n) => n.title))
+      .toContain('🌽 New limited-time background for Native American Heritage Month — see what it honors');
+    at('2027-03-01T12:00:00-05:00');
+    expect(await api.myUnlocks()).toContain('three_sisters');
+    expect((await api.equipLook({ background: 'three_sisters' })).look).toEqual({ background: 'three_sisters' });
+    // someone who never opened the app in November can't wear it
+    asUser('alum002');
+    expect(await code(api.equipLook({ background: 'three_sisters' }))).toBe('locked');
   });
 
   it('missed the window → still locked next time', async () => {

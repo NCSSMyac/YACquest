@@ -1132,7 +1132,7 @@ a.friend-text:hover .dash-eyebrow { color: var(--link); }
 .seasonal-about-label { display: flex; flex-wrap: wrap; gap: 6px; }
 .seasonal-about-text { margin: 0; font-size: 15px; line-height: 1.5; }
 .seasonal-about-fine { margin: 0; font-size: 13px; }
-.seasonal-learn { align-self: flex-start; text-transform: none; }
+.seasonal-learn { align-self: stretch; justify-content: space-between; text-align: left; text-transform: none; }
 
 .pace-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 14px; font-weight: 700; }
 .pace-big { font-family: var(--font-num); font-size: 34px; line-height: 1; }
