@@ -509,3 +509,27 @@ describe('check-in QR links', () => {
     clearPendingCheckIn();
   });
 });
+
+describe('0029: reset keeps upcoming events', () => {
+  it('upcoming/live events stay listed after a reset; finished ones move to Older cycles', async () => {
+    asUser('iesha');
+    const day = 86_400_000;
+    const up = await api.createEvent({ title: 'Pickleball Nov 8', campus: 'duke', crossCampus: false, kind: 'active', location: 'Courts', startsAt: new Date(Date.now() + day).toISOString(), endsAt: new Date(Date.now() + day + 7200_000).toISOString(), checkInGraceMinutes: 60, password: 'DINK' });
+    const live = await api.createEvent({ title: 'Live now', campus: 'all', crossCampus: true, kind: 'active', location: 'Quad', startsAt: new Date(Date.now() - 600_000).toISOString(), endsAt: new Date(Date.now() + 3600_000).toISOString(), checkInGraceMinutes: 30, password: 'LIVE29' });
+    const done = await api.createEvent({ title: 'Long done', campus: 'duke', crossCampus: false, kind: 'active', location: 'Quad', startsAt: new Date(Date.now() - 5 * day).toISOString(), endsAt: new Date(Date.now() - 5 * day + 3600_000).toISOString(), checkInGraceMinutes: 30, password: 'DONE29' });
+    await api.resetCycle('RESET');
+    asUser('yak001');
+    const ids = (await api.listEvents()).map((e) => e.id);
+    expect(ids).toContain(up.id);
+    expect(ids).toContain(live.id);
+    expect(ids).not.toContain(done.id);
+    await api.setRsvp(up.id, true);
+    await expect(api.setRsvp(done.id, true)).rejects.toMatchObject({ code: 'not_found' });
+    const r = await api.checkIn(live.id, 'LIVE29');
+    expect(r.points).toBeGreaterThan(0);
+    asUser('iesha');
+    const admin = await api.adminListEvents();
+    expect(admin.find((e) => e.id === done.id)?.olderCycle).toBe(true);
+    expect(admin.find((e) => e.id === up.id)?.olderCycle).toBeUndefined();
+  });
+});

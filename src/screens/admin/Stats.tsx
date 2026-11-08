@@ -17,6 +17,10 @@ import { fmtCycleRange, fmtDate } from '../../lib/format';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 import type { AdminStats } from '../../types';
 import { useAdminContext } from './AdminLayout';
+import { PaceSection } from './PaceViews';
+import { useHashScroll } from '../../lib/useHashScroll';
+import { StarRow } from '../../components/PixelStars';
+import { fmtAverage, ratingLabel } from '../../lib/eventSurvey';
 import './stats.css';
 
 const EVENTS_SHOWN = 8;
@@ -49,6 +53,7 @@ function CsvButton({ name, headers, rows }: { name: string; headers: string[]; r
 export default function Stats() {
   const { isChair } = useAdminContext();
   const s = useAsync(() => api.adminStats(), []);
+  useHashScroll(!!s.data);
   if (!s.data) return s.error ? <ErrorText error={s.error} /> : <Loading lines={6} />;
   const d = s.data;
   return (
@@ -58,10 +63,13 @@ export default function Stats() {
         <button type="button" className="dash-more stats-refresh" onClick={() => void s.reload()}>Refresh</button>
       </p>
       <Kpis d={d} />
+      {/* 0028: how many will reach the goal at the current pace */}
+      <PaceSection />
       <div className="stats-cols">
         <div className="stack">
           <SignupsCard d={d} />
           <AttendanceCard d={d} />
+          {d.ratings && <RatingsCard d={d} />}
           <CampusCard d={d} />
         </div>
         <div className="stack">
@@ -195,6 +203,56 @@ function AttendanceCard({ d }: { d: AdminStats }) {
   );
 }
 
+// ───────────── 0030: Event ratings (in-app survey) ─────────────
+function RatingsCard({ d }: { d: AdminStats }) {
+  const [all, setAll] = useState(false);
+  const list = (d.ratings ?? []).slice().reverse();
+  const shown = all ? list : list.slice(0, EVENTS_SHOWN);
+  const answers = list.reduce((n, r) => n + r.responses, 0);
+  const overall = answers ? Math.round((list.reduce((n, r) => n + r.average * r.responses, 0) / answers) * 10) / 10 : null;
+  const csv = (
+    <CsvButton
+      name="event-ratings"
+      headers={['event', 'date', 'average_rating', 'responses', 'came', 'response_rate_percent']}
+      rows={(d.ratings ?? []).map((r) => [r.title, csvDateTime(r.startsAt), r.average, r.responses, r.came, pctOf(r.responses, r.came)])}
+    />
+  );
+  return (
+    <Card glyph="star" title="Event ratings" action={csv}>
+      {list.length === 0 ? (
+        <p className="muted">No survey answers yet. Attendees can rate an event in the app for 14 days after it ends (+5 points).</p>
+      ) : (
+        <>
+          <p className="stats-lede">
+            <b>{fmtAverage(overall)}★</b> average from {answers} answer{answers === 1 ? '' : 's'} · {list.length} event{list.length === 1 ? '' : 's'}
+          </p>
+          <ul className="rate-list">
+            {shown.map((r) => (
+              <li key={r.id}>
+                <div className="att-head">
+                  <span className="att-title">{r.title}</span>
+                  <span className="att-date">{fmtDate(r.startsAt)}</span>
+                </div>
+                <div className="rate-row">
+                  <StarRow value={r.average} size={16} label={`${r.title}: ${fmtAverage(r.average)} out of 5 (${ratingLabel(r.average)})`} />
+                  <b className="rate-num">{fmtAverage(r.average)}</b>
+                  <span className="rate-meta">{r.responses} of {r.came} · {pctOf(r.responses, r.came)}%</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {list.length > EVENTS_SHOWN && (
+        <button type="button" className="dash-more" onClick={() => setAll((v) => !v)} aria-expanded={all}>
+          {all ? 'Show fewer' : `Show all ${list.length} events`}
+        </button>
+      )}
+      <p className="muted stats-foot">Per-event results and comments: Events → 📊 Survey.</p>
+    </Card>
+  );
+}
+
 // ───────────── Campus breakdown ─────────────
 function CampusCard({ d }: { d: AdminStats }) {
   const color = (id: CampusId) => CAMPUSES.find((c) => c.id === id)?.color ?? 'var(--navy-800)';
@@ -302,6 +360,7 @@ function SourcesCard({ d }: { d: AdminStats }) {
     ['Proof uploads', 'digital', d.sources.digital],
     ['Referrals', 'referral', d.sources.referral],
     ['Staff awards', 'staff', d.sources.staff],
+    ...(d.sources.survey != null ? ([['Event surveys', 'survey', d.sources.survey]] as [string, string, number][]) : []),
     ...(d.sources.other ? ([['Earlier (demo)', 'other', d.sources.other]] as [string, string, number][]) : []),
   ];
   const total = parts.reduce((n, p) => n + p[2], 0);

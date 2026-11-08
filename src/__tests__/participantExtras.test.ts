@@ -36,10 +36,11 @@ describe('survey link validation (same rule as clean_survey_url)', () => {
 describe('follow-up texts', () => {
   it('thanks: with and without a survey link, naming the Feedback Survey quest', () => {
     expect(thanksTitle('Spring Social')).toBe('Thanks for coming to Spring Social! 🐂');
-    expect(thanksBody('https://forms.gle/abc123', 'Complete a Feedback Survey', 5)).toBe(
-      'Tell us how it went in the feedback survey: https://forms.gle/abc123 It counts as the “Complete a Feedback Survey” digital quest: send a screenshot of the confirmation in Quests for 5 points.',
+    // 0030: the in-app survey link first, then the external survey for the screenshot quest.
+    expect(thanksBody('evt_1', 'https://forms.gle/abc123', 'Complete a Feedback Survey', 5, 5)).toBe(
+      'How was it? Rate it in the app for +5 points (takes a minute): #/survey/evt_1 Or fill out the YAC survey here: https://forms.gle/abc123 It counts as the “Complete a Feedback Survey” digital quest: send a screenshot of the confirmation in Quests for 5 points.',
     );
-    expect(thanksBody(undefined, 'Complete a Feedback Survey', 5)).toContain('When YAC shares the feedback survey');
+    expect(thanksBody('evt_1', undefined, 'Complete a Feedback Survey', 5, 5)).toBe('How was it? Rate it in the app for +5 points (takes a minute): #/survey/evt_1');
   });
   it('missed you: the next event in Eastern time, or a generic line', () => {
     expect(missedTitle('Spring Social')).toBe('Sorry we missed you at Spring Social');
@@ -173,7 +174,7 @@ describe('automatic event follow-ups (mock, fixed dates)', () => {
     const mine = (u: { id: string }) => d.notifications.filter((n) => n.userId === u.id && n.kind === 'event_followup' && n.title.includes('Spring Social'));
     for (const u of [came1, came2]) {
       expect(mine(u).map((n) => n.title)).toEqual(['Thanks for coming to Spring Social! 🐂']);
-      expect(mine(u)[0].body).toBe(thanksBody('https://forms.gle/abc123', 'Complete a Feedback Survey', TIER_POINTS[3]));
+      expect(mine(u)[0].body).toBe(thanksBody(ev.id, 'https://forms.gle/abc123', 'Complete a Feedback Survey', TIER_POINTS[3], TIER_POINTS[3]));
     }
     expect(mine(noShow).map((n) => n.title)).toEqual(['Sorry we missed you at Spring Social']);
     expect(mine(noShow)[0].body).toContain('Next up: Panel Night'); // UNC player → the UNC event

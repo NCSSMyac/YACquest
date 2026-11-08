@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { Suspense, lazy, useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import * as api from '../../api';
 import { CAMPUSES, TIER_POINTS, campusName, type CampusId } from '../../config';
@@ -18,7 +18,10 @@ import { surveyUrlError } from '../../lib/validate';
 import { checkInClosesAt } from '../../lib/followups';
 import type { AdminEventRsvpCounts, EventAttendee, EventFollowupStatus, EventRsvp, YacEvent } from '../../types';
 
-type AdminEvent = YacEvent & AdminEventRsvpCounts & { followup?: EventFollowupStatus };
+type AdminEvent = YacEvent & AdminEventRsvpCounts & { followup?: EventFollowupStatus; olderCycle?: boolean; surveyCount?: number; surveyAverage?: number };
+
+// 0030: survey results (lazy: only loaded when a "📊 Survey" button is pressed).
+const SurveyResults = lazy(() => import('./SurveyResults'));
 
 const WORDS = ['YAK', 'MOO', 'HORN', 'QUEST', 'GOLD', 'SHAGGY', 'FJORD', 'RIDGE'];
 const genPassword = () => `${WORDS[Math.floor(Math.random() * WORDS.length)]}-${1000 + Math.floor(Math.random() * 9000)}`;
@@ -38,12 +41,18 @@ export default function Events() {
   const [whoCame, setWhoCame] = useState<YacEvent | null>(null);
   const [whoGoing, setWhoGoing] = useState<AdminEvent | null>(null);
   const [qrFor, setQrFor] = useState<YacEvent | null>(null);
+  const [surveyFor, setSurveyFor] = useState<AdminEvent | null>(null);
   const [dupOf, setDupOf] = useState<string | null>(null);
   const [limit, setLimit] = useState(EVENTS_STEP);
+  // 0029: admin_list_events returns every cycle. Show this cycle's by default; older cycles behind a toggle.
+  const [showOlder, setShowOlder] = useState(false);
+  const all = (list.data ?? []) as AdminEvent[];
+  const olderCount = all.filter((e) => e.olderCycle).length;
+  const visible = showOlder ? all : all.filter((e) => !e.olderCycle);
 
   // Upcoming + live: soonest first. Past (kept forever): newest first.
-  const current = (list.data ?? []).filter((e) => phase(e) !== 'Past').sort((a, b) => a.startsAt.localeCompare(b.startsAt));
-  const past = (list.data ?? []).filter((e) => phase(e) === 'Past').sort((a, b) => b.startsAt.localeCompare(a.startsAt));
+  const current = visible.filter((e) => phase(e) !== 'Past').sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+  const past = visible.filter((e) => phase(e) === 'Past').sort((a, b) => b.startsAt.localeCompare(a.startsAt));
   const shown = tab === 'current' ? current : past;
 
   function open(e: YacEvent | 'new', duplicate = false) {
@@ -111,6 +120,12 @@ export default function Events() {
         <button role="tab" aria-selected={tab === 'current'} onClick={() => { setTab('current'); setLimit(EVENTS_STEP); }}>Upcoming ({current.length})</button>
         <button role="tab" aria-selected={tab === 'past'} onClick={() => { setTab('past'); setLimit(EVENTS_STEP); }}>Past ({past.length})</button>
       </div>
+      {olderCount > 0 && (
+        <label className="check older-toggle">
+          <input type="checkbox" checked={showOlder} onChange={(x) => { setShowOlder(x.target.checked); setLimit(EVENTS_STEP); }} />
+          <span>Older cycles <span className="muted">· show {olderCount} event{olderCount === 1 ? '' : 's'} from before the last reset</span></span>
+        </label>
+      )}
       {list.loading && !list.data ? <Loading lines={3} /> : list.error ? <ErrorText error={list.error} /> : !shown.length ? <Empty>{tab === 'past' ? 'No past events yet.' : 'No upcoming events. Make one!'}</Empty> : (
         <>
           {shown.slice(0, limit).map((e) => {
@@ -119,7 +134,10 @@ export default function Events() {
               <Panel key={e.id} className="adm-item">
                 <div className="spread" style={{ alignItems: 'flex-start' }}>
                   <strong style={{ fontSize: 17, minWidth: 0, overflowWrap: 'anywhere' }}>{e.title}</strong>
-                  <span className={`chip ${p === 'LIVE' ? 'approved' : p === 'Upcoming' ? 'pending' : 'neutral'}`}>{p}</span>
+                  <span className="row" style={{ flex: 'none', gap: 6 }}>
+                    {e.olderCycle && <span className="chip neutral">Older cycle</span>}
+                    <span className={`chip ${p === 'LIVE' ? 'approved' : p === 'Upcoming' ? 'pending' : 'neutral'}`}>{p}</span>
+                  </span>
                 </div>
                 <div className="adm-meta">
                   🕒 {fmtDateTime(e.startsAt)} – {fmtDateTime(e.endsAt)}
@@ -130,6 +148,13 @@ export default function Events() {
                   {e.surveyUrl && <><br />📝 Survey: <a href={e.surveyUrl} target="_blank" rel="noreferrer noopener" className="adm-survey">{e.surveyUrl.replace(/^https?:\/\//i, '')}</a></>}
                 </div>
                 {p === 'Past' && <FollowupRow e={e} onSent={() => void list.reload()} />}
+                {/* 0030: in-app survey results (shown once the event has started; hidden on servers without 0030) */}
+                {p !== 'Upcoming' && e.surveyCount !== undefined && (
+                  <button type="button" className="btn small ghost block survey-btn" onClick={() => setSurveyFor(e)}>
+                    📊 Survey ({e.surveyCount}){e.surveyAverage != null ? ` · ★ ${e.surveyAverage.toFixed(1)}` : ''}
+                    <span className="sr-only"> results for {e.title}</span>
+                  </button>
+                )}
                 <Link to={`/admin/door/${e.id}`} state={{ from: '/admin/events' }} className="btn small block door-btn" aria-label={`Door mode for ${e.title}`}>🚪 Door mode</Link>
                 <div className="btn-row three">
                   <button className="btn small blue" onClick={() => setWhoGoing(e)} aria-label={`Going ${e.goingCount}: see who’s going`}>Going {e.goingCount}</button>
@@ -151,6 +176,13 @@ export default function Events() {
       </Modal>
       <Modal open={!!whoGoing} onClose={() => setWhoGoing(null)} title={whoGoing ? `Who’s going: ${whoGoing.title}` : undefined}>
         {whoGoing && <Going e={whoGoing} past={phase(whoGoing) === 'Past'} onClose={() => setWhoGoing(null)} />}
+      </Modal>
+      <Modal open={!!surveyFor} onClose={() => setSurveyFor(null)} title={surveyFor ? `Survey: ${surveyFor.title}` : undefined}>
+        {surveyFor && (
+          <Suspense fallback={<Loading lines={3} />}>
+            <SurveyResults eventId={surveyFor.id} onClose={() => setSurveyFor(null)} />
+          </Suspense>
+        )}
       </Modal>
       <Modal open={!!qrFor} onClose={() => setQrFor(null)} title="Check-in QR code">
         {qrFor && <CheckInQr e={qrFor} onClose={() => setQrFor(null)} />}

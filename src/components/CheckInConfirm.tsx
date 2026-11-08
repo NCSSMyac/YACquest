@@ -9,6 +9,7 @@ import { Burst } from '../lib/celebrate';
 import { playCoin } from '../lib/sound';
 import { QUEST_TZ } from '../lib/todayEvent';
 import { Avatar } from './Avatar';
+import { SURVEY_POINTS } from '../lib/eventSurvey';
 
 export interface CheckInPass {
   eventTitle: string;
@@ -59,6 +60,7 @@ export function CheckInConfirm({ pass, onDone }: { pass: CheckInPass; onDone: ()
           <span className="ci-live-dot" aria-hidden /> <time dateTime={now.toISOString()}>{fmtClock(now)}</time>
         </div>
         <p className="ci-pass-hint">Live clock: show this screen at the door if asked.</p>
+        <p className="ci-pass-survey">⭐ After the event, rate it for +{SURVEY_POINTS} points</p>
         <button ref={btn} type="button" className="btn block" onClick={() => done.current()}>Done</button>
       </div>
     </div>

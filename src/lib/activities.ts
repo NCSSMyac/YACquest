@@ -75,6 +75,15 @@ export const ACTIVITIES: Activity[] = [
     method: 'event_password',
   },
   {
+    // 0030: in-app, automatic points, tied to attendance → NOT part of the weekly digital limit.
+    id: 'event_survey',
+    tier: 3,
+    title: 'Event feedback survey',
+    description: 'Rate a YAC event you checked in to: a few stars and a few words, right in the app (Events → Past events). Points are automatic.',
+    method: 'event_survey',
+    limitLabel: 'Once per event you attended · not part of the digital limit',
+  },
+  {
     id: 'survey',
     tier: 3,
     title: 'Complete a Feedback Survey',

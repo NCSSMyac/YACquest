@@ -22,6 +22,9 @@ import { barPct, greetingFor, greetingName, needsAttention, pickNextEvent } from
 import type { HeroBoard, YacEvent } from '../../types';
 import { QuickNav, useAdminContext } from './AdminLayout';
 import { CheckInQr, Going } from './Events';
+import { PaceCard } from './PaceViews';
+import { EndOfYearCard } from './EndOfYear';
+import { wrappedWindow } from '../../lib/wrapped';
 
 const WIDE_QUERY = '(min-width: 820px)';
 
@@ -65,7 +68,12 @@ export default function AdminHome() {
     prize: <PrizeRace key="prize" o={o.data} />,
     cup: <CampusCupCard key="cup" />,
     star: <AdventurerCard key="star" />,
+    // 0028
+    pace: <PaceCard key="pace" />,
+    eoy: <EndOfYearCard key="eoy" isChair={isChair} />,
   };
+  // 0028: the End-of-year checklist shows during the wrap-up window (Wrapped opens → 14 days after the end).
+  const eoy = wrappedWindow().wrapUp ? [cards.eoy] : [];
 
   return (
     <div className="stack dash">
@@ -73,11 +81,11 @@ export default function AdminHome() {
       <QuickNav sections={sections} badge={badge} />
       {wide ? (
         <div className="dash-cols">
-          <div className="stack">{[cards.hero, cards.event, cards.cup]}</div>
-          <div className="stack">{[cards.todo, cards.kpis, cards.prize, cards.star]}</div>
+          <div className="stack">{[...eoy, cards.hero, cards.event, cards.cup]}</div>
+          <div className="stack">{[cards.todo, cards.kpis, cards.prize, cards.pace, cards.star]}</div>
         </div>
       ) : (
-        <div className="stack">{[cards.hero, cards.todo, cards.kpis, cards.event, cards.prize, cards.cup, cards.star]}</div>
+        <div className="stack">{[...eoy, cards.hero, cards.todo, cards.kpis, cards.event, cards.prize, cards.pace, cards.cup, cards.star]}</div>
       )}
       <EmailPreview isChair={isChair} />
     </div>

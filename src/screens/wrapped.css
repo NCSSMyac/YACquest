@@ -1,0 +1,105 @@
+/* 0028 YACquest Wrapped (src/screens/Wrapped.tsx, lazy-loaded). Its own dark pixel stage in light and dark mode. */
+.wrapped {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; flex-direction: column;
+  color: #fff; background: #0b2a5b;
+  font-family: var(--font-body);
+  --wr-a: #0b2a5b; --wr-b: #13306b; --wr-accent: #ffd27a;
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.035) 0 8px, transparent 8px 16px),
+    linear-gradient(180deg, var(--wr-a), var(--wr-b));
+  transition: background-color 0.3s;
+  overscroll-behavior: contain;
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none;
+}
+.wr-theme-intro { --wr-a: #071a3a; --wr-b: #3b2f63; --wr-accent: #ffd27a; }
+.wr-theme-points { --wr-a: #5a3304; --wr-b: #8a4b0c; --wr-accent: #ffe7a0; }
+.wr-theme-events { --wr-a: #0b2a5b; --wr-b: #1f4fa3; --wr-accent: #bfe3ff; }
+.wr-theme-badges { --wr-a: #3b1f6b; --wr-b: #5b2f9a; --wr-accent: #ffd27a; }
+.wr-theme-streak { --wr-a: #6b1d24; --wr-b: #9a3324; --wr-accent: #ffd27a; }
+.wr-theme-rank, .wr-theme-staff { --wr-a: #0f4a3a; --wr-b: #17694f; --wr-accent: #c8ffe4; }
+.wr-theme-personality { --wr-a: #5a1846; --wr-b: #8a2a6a; --wr-accent: #ffd27a; }
+.wr-theme-share { --wr-a: #071a3a; --wr-b: #0b2a5b; --wr-accent: #ffd27a; }
+
+/* progress bars */
+.wr-bars { display: flex; gap: 4px; padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 0; }
+.wr-bar { flex: 1; height: 6px; background: rgba(255, 255, 255, 0.3); overflow: hidden; }
+.wr-fill { display: block; height: 100%; width: 0; background: #fff; }
+.wr-fill.done { width: 100%; }
+.wr-fill.run { width: 100%; transform-origin: left; animation: wr-fill linear forwards; }
+@keyframes wr-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+.wr-top { display: flex; align-items: center; gap: 8px; padding: 6px 8px 0 14px; }
+.wr-count { font-family: var(--font-pixel); font-size: 12px; opacity: 0.9; flex: 1; }
+.wr-preview { font-family: var(--font-pixel); font-size: 11px; background: #ffd27a; color: #071a3a; padding: 2px 6px; }
+.wr-icon {
+  width: 44px; height: 44px; display: grid; place-items: center;
+  background: rgba(0, 0, 0, 0.25); color: #fff; border: 2px solid rgba(255, 255, 255, 0.6);
+  font-size: 16px; font-weight: 800; cursor: pointer;
+}
+.wr-icon:focus-visible, .wr-navbtn:focus-visible { outline: 3px solid #ffd27a; outline-offset: 2px; }
+
+.wr-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 8px 20px; overflow-y: auto; outline: none; touch-action: pan-y; }
+.wr-slide { width: 100%; max-width: 440px; text-align: center; animation: wr-in 0.45s ease-out both; }
+@keyframes wr-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+
+.wr-body { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); }
+.wr-avatar { border: var(--px) solid #071a3a; box-shadow: 0 0 0 var(--px) var(--wr-accent), 0 8px 0 rgba(0, 0, 0, 0.35); line-height: 0; background: #bfe3ff; margin-bottom: 10px; }
+.wr-eyebrow { margin: 0; font-family: var(--font-pixel); font-size: 15px; letter-spacing: 1px; color: var(--wr-accent); text-transform: uppercase; }
+.wr-big {
+  margin: 4px 0 0; font-family: var(--font-pixel); font-weight: 700; color: #fff;
+  font-size: clamp(44px, 16vw, 76px); line-height: 1.05; text-shadow: 4px 4px 0 rgba(0, 0, 0, 0.45);
+  overflow-wrap: anywhere;
+}
+.wr-big.plain { font-family: var(--font-body); font-weight: 900; letter-spacing: 0; }
+.wr-big.long { font-size: clamp(30px, 9.5vw, 46px); }
+.wr-label { margin: 0; font-family: var(--font-pixel); font-size: 20px; color: #fff; }
+.wr-badge { margin: 8px 0 2px; padding: 8px; background: rgba(0, 0, 0, 0.25); border: 3px solid var(--wr-accent); line-height: 0; }
+.wr-lines { list-style: none; margin: var(--space-3) 0 0; padding: 0; display: grid; gap: var(--space-2); width: 100%; }
+.wr-lines li {
+  font-size: 18px; font-weight: 800; line-height: 1.35;
+  background: rgba(0, 0, 0, 0.28); border: 2px solid rgba(255, 255, 255, 0.25); padding: 10px 12px;
+}
+.wr-foot { margin: 12px 0 0; font-size: 15px; font-weight: 700; color: #fff; opacity: 0.95; }
+.wr-pun { margin: 4px 0 0; font-style: italic; font-weight: 600; font-size: 15px; color: #fff4dc; }
+
+/* animations: a little pixel pop + rise */
+.wr-pop { animation: wr-pop 0.55s steps(5) both; }
+.wr-pop2 { animation: wr-pop 0.55s steps(5) 0.35s both; }
+@keyframes wr-pop { 0% { transform: scale(0.3); opacity: 0; } 70% { transform: scale(1.12); opacity: 1; } 100% { transform: scale(1); } }
+.wr-rise { animation: wr-rise 0.45s ease-out both; }
+@keyframes wr-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+/* share slide */
+.wr-share { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); }
+.wr-share .wr-big { font-size: clamp(28px, 9vw, 40px); }
+.wr-share-img { width: 100%; margin-top: 6px; }
+.wr-share .quest-card-preview { max-height: 46vh; background: transparent; }
+.wr-share .quest-card-preview img { max-height: 46vh; width: auto; margin: 0 auto; display: block; }
+.wr-share .share-hint { color: #e6ecf5 !important; }
+.wr-share .btn-row { justify-content: center; }
+
+.wr-nav { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: 6px 12px calc(12px + env(safe-area-inset-bottom, 0px)); }
+.wr-navbtn { width: 48px; height: 48px; background: rgba(0, 0, 0, 0.25); color: #fff; border: 2px solid rgba(255, 255, 255, 0.6); font-size: 16px; cursor: pointer; }
+.wr-navbtn:disabled { opacity: 0.35; cursor: default; }
+.wr-hint { font-size: 13px; font-weight: 700; color: #fff; opacity: 0.9; text-align: center; }
+
+/* not open yet / loading */
+.wr-closed { align-items: center; justify-content: center; padding: 24px; }
+.wr-closed-box { max-width: 380px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.wr-closed-box h1 { font-size: 22px; color: #ffd27a; margin: 0; }
+.wr-closed-box p { margin: 0; font-size: 16px; }
+.wr-closed .field-error { background: #fff; padding: 8px; }
+
+/* Reduced motion: no auto-advance (handled in JS), no pops; just a gentle fade between slides. */
+@media (prefers-reduced-motion: reduce) {
+  .wrapped .wr-slide { animation: wr-fade 0.35s ease both !important; }
+  .wrapped .wr-pop, .wrapped .wr-pop2, .wrapped .wr-rise { animation: none !important; opacity: 1; transform: none; }
+}
+@keyframes wr-fade { from { opacity: 0; } to { opacity: 1; } }
+
+@media (max-height: 700px) {
+  .wr-avatar svg { width: 120px; height: 120px; }
+  .wr-lines li { font-size: 16px; padding: 8px 10px; }
+}

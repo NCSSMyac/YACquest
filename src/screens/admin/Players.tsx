@@ -137,7 +137,8 @@ function PlayerModal({ user, onClose }: { user: api.AdminUserRow; onClose: () =>
           <label className="field">
             <span>Activity</span>
             <select value={activityId} onChange={(e) => setActivityId(e.target.value)}>
-              {ACTIVITIES.map((a) => <option key={a.id} value={a.id}>{a.title} (+{TIER_POINTS[a.tier]})</option>)}
+              {/* 0030: the in-app event survey awards itself (once per event), so it isn't offered here. */}
+              {ACTIVITIES.filter((a) => a.method !== 'event_survey').map((a) => <option key={a.id} value={a.id}>{a.title} (+{TIER_POINTS[a.tier]})</option>)}
             </select>
           </label>
           <label className="field"><span>Note (optional)</span><input className="input" value={note} onChange={(e) => setNote(e.target.value)} /></label>

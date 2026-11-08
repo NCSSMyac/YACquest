@@ -66,7 +66,17 @@ import type {
   EventFollowupStatus,
   EventPhoto,
   Friend,
+  PaceData,
+  WrappedData,
+  EoyChecklist,
+  EoyItemId,
+  SeasonalClaim,
+  PointsMix,
+  EventSurveyInput,
+  EventSurveyResults,
+  EventSurveyStatus,
 } from '../types';
+import { cleanSurveyText, surveyError } from '../lib/eventSurvey';
 import { ApiError, emitChange } from './shared';
 import { isNetworkErrorMessage, OFFLINE_MESSAGE, reportNetworkFailure, reportNetworkSuccess } from '../lib/online';
 import type { BugContext } from '../lib/bugContext';
@@ -605,7 +615,7 @@ export async function listActivities(): Promise<Activity[]> {
   return ACTIVITIES;
 }
 
-export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Promise<(YacEvent & { checkedIn: boolean } & EventRsvpInfo)[]> {
+export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Promise<(YacEvent & { checkedIn: boolean; surveyDone?: boolean } & EventRsvpInfo)[]> {
   const user = await requireMe();
   const cycle = await activeCycle();
   const evRows = rows(await sb().from('events').select(EVENT_COLS).eq('cycle_id', cycle.id).order('starts_at', { ascending: true }).limit(500)) as AnyRow[];
@@ -622,10 +632,15 @@ export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Pr
   if (!events.length) return [];
   const ids = events.map((e) => e.id);
   const isAdmin = user.role === 'admin' || user.role === 'chair';
-  const [checkins, secrets, rsvps] = await Promise.all([
+  const [checkins, secrets, rsvps, surveyed] = await Promise.all([
     sb().from('ledger').select('ref_id').eq('user_id', user.id).eq('source', 'checkin').in('ref_id', ids).then(rows),
     isAdmin ? sb().from('event_secrets').select('event_id, password').in('event_id', ids).then(rows) : Promise.resolve([] as AnyRow[]),
     rsvpSummary(),
+    // 0030: my in-app survey answers (RLS: own rows only). null = server without 0030 → no Rate buttons.
+    scope === 'upcoming'
+      ? Promise.resolve(null)
+      : sb().from('event_surveys').select('event_id').eq('user_id', user.id).in('event_id', ids)
+          .then((r) => (r.error ? null : new Set(((r.data as AnyRow[] | null) ?? []).map((x) => str(x.event_id)))), () => null),
   ]);
   const attended = new Set(((checkins as AnyRow[]) ?? []).map((r) => str(r.ref_id)));
   const pw = new Map(((secrets as AnyRow[]) ?? []).map((r) => [str(r.event_id), str(r.password)]));
@@ -636,6 +651,7 @@ export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Pr
     checkedIn: attended.has(e.id),
     goingCount: rsvps.get(e.id)?.goingCount ?? 0,
     myRsvp: rsvps.get(e.id)?.myRsvp ?? false,
+    ...(surveyed ? { surveyDone: surveyed.has(e.id) } : {}),
   }));
 }
 
@@ -968,15 +984,21 @@ export async function awardActivity(userId: string, activityId: string, note: st
   emitChange();
 }
 
-export async function adminListEvents(): Promise<(YacEvent & AdminEventRsvpCounts & { followup?: EventFollowupStatus })[]> {
-  const [list, counts, surveys, followups] = await Promise.all([
+export async function adminListEvents(): Promise<(YacEvent & AdminEventRsvpCounts & { followup?: EventFollowupStatus; olderCycle?: boolean; surveyCount?: number; surveyAverage?: number })[]> {
+  const [list, counts, surveys, followups, cycle, answers] = await Promise.all([
+    // Every cycle's events (admin_list_events has no cycle filter); olderCycle marks archived-cycle ones.
     rpc<AnyRow[]>('admin_list_events'),
     // 0022 (admins + chairs): RSVP counts per event. Zeros if the server doesn't have 0022 yet.
     rpc<AnyRow[] | null>('admin_event_rsvp_counts').catch(() => [] as AnyRow[]),
     // 0026: survey links + follow-up status. Nothing if the server doesn't have 0026 yet.
     sb().from('events').select('id, survey_url').not('survey_url', 'is', null).limit(1000).then((r) => (r.error ? [] : ((r.data as AnyRow[] | null) ?? [])), () => [] as AnyRow[]),
     rpc<AnyRow[] | null>('admin_event_followups').catch(() => [] as AnyRow[]),
+    activeCycle().catch(() => null),
+    // 0030: in-app survey answers per event. null if the server doesn't have 0030 yet (no Survey button).
+    rpc<AnyRow[] | null>('admin_event_survey_counts').catch(() => null),
   ]);
+  const answered = answers ? new Map(answers.map((r) => [str(pick(r, 'event_id')), r])) : null;
+  const older = new Set(cycle ? (list ?? []).filter((r) => { const c = pick(r, 'cycle_id'); return c != null && str(c) !== cycle.id; }).map((r) => str(r.id)) : []);
   const byId = new Map((counts ?? []).map((r) => [str(pick(r, 'event_id')), r]));
   const survey = new Map(surveys.map((r) => [str(r.id), str(r.survey_url)]));
   const sent = new Map((followups ?? []).map((r) => [str(pick(r, 'event_id')), toFollowup(r)]));
@@ -989,6 +1011,9 @@ export async function adminListEvents(): Promise<(YacEvent & AdminEventRsvpCount
       goingCount: c ? num(c.going) : 0,
       rsvpCame: c ? num(pick(c, 'going_came')) : 0,
       ...(f ? { followup: f } : {}),
+      ...(older.has(e.id) ? { olderCycle: true } : {}),
+      ...(answered ? { surveyCount: num(answered.get(e.id)?.responses) } : {}),
+      ...(answered?.get(e.id) && pick(answered.get(e.id)!, 'average') != null ? { surveyAverage: num(pick(answered.get(e.id)!, 'average')) } : {}),
     };
   });
 }
@@ -1619,8 +1644,12 @@ export async function adminStats(): Promise<AdminStats> {
     })),
     milestones: arr(r.milestones).map((m) => ({ points: num(m.points), count: num(m.count) })),
     distribution: arr(r.distribution).map((d) => ({ label: str(d.label), min: num(d.min), count: num(d.count) })),
-    sources: { event: num(src.event), digital: num(src.digital), referral: num(src.referral), staff: num(src.staff), removed: num(src.removed) },
+    sources: { event: num(src.event), digital: num(src.digital), referral: num(src.referral), staff: num(src.staff), removed: num(src.removed), ...(src.survey != null ? { survey: num(src.survey) } : {}) },
     badges: arr(r.badges).map((b) => ({ id: str(b.id), count: num(b.count) })),
+    // 0030: per-event in-app survey ratings (missing before 0030).
+    ...(Array.isArray(r.ratings) ? {
+      ratings: arr(r.ratings).map((x) => ({ id: str(x.id), title: str(x.title), startsAt: str(pick(x, 'starts_at')), came: num(x.came), responses: num(x.responses), average: num(x.average) })),
+    } : {}),
   };
 }
 
@@ -1773,4 +1802,170 @@ export async function myFriends(): Promise<Friend[]> {
     came: r.came === true,
     bonus: r.bonus === true,
   }));
+}
+
+// ───────────────────────────── 0028: pace, Wrapped + end-of-year, seasonal wardrobe ─────────────────────────────
+
+/** admin_pace() (staff; participants only). The projection happens in src/lib/pace.ts. */
+export async function adminPace(): Promise<PaceData> {
+  const r = (one(await rpc<AnyRow | AnyRow[] | null>('admin_pace')) ?? {}) as AnyRow;
+  const cyc = (r.cycle ?? {}) as AnyRow;
+  const list = (v: unknown): AnyRow[] => (Array.isArray(v) ? (v as AnyRow[]) : []);
+  return {
+    generatedAt: str(pick(r, 'generated_at')),
+    goal: num(r.goal) || PRIZE.goal,
+    prizeCount: num(pick(r, 'prize_count')) || PRIZE.count,
+    cycle: { name: str(cyc.name), startsAt: str(pick(cyc, 'starts_at')), endsAt: str(pick(cyc, 'ends_at')) },
+    weeks: strList(r.weeks),
+    weeklyTotals: (Array.isArray(pick(r, 'weekly_totals')) ? (pick(r, 'weekly_totals') as unknown[]) : []).map(num),
+    players: list(r.players).map((p) => ({ id: str(p.id), name: str(p.name), campus: str(p.campus) as CampusId, points: num(p.points), firstAt: opt(pick(p, 'first_at')) ?? null })),
+    top: list(r.top).map((p) => ({
+      id: str(p.id), name: str(p.name), campus: str(p.campus) as CampusId, points: num(p.points),
+      cumulative: (Array.isArray(p.cumulative) ? (p.cumulative as unknown[]) : []).map(num),
+    })),
+  };
+}
+
+/** my_wrapped(). Error 'not_open' before Wrapped opens (YACquest Chairs can preview). */
+export async function myWrapped(): Promise<WrappedData> {
+  const r = (one(await rpc<AnyRow | AnyRow[] | null>('my_wrapped')) ?? {}) as AnyRow;
+  const optNum = (v: unknown) => (v === null || v === undefined ? undefined : Number(v));
+  const mix = (r.mix ?? {}) as AnyRow;
+  const best = pick<AnyRow | null>(r, 'best_month');
+  const rare = pick<AnyRow | null>(r, 'rarest_badge');
+  const st = r.staff as AnyRow | undefined;
+  const order = new Map(BADGES.map((b, i) => [b.id, i]));
+  return {
+    cycleName: str(pick(r, 'cycle_name')),
+    cycleEndsAt: str(pick(r, 'cycle_ends_at')),
+    opensAt: str(pick(r, 'opens_at')),
+    preview: !!r.preview,
+    displayName: str(pick(r, 'display_name')),
+    handle: str(r.handle),
+    campus: pick<CampusId>(r, 'campus'),
+    role: (str(r.role) || 'participant') as Role,
+    avatar: (str(r.avatar) || 'yak') as AvatarId,
+    look: toLook(r),
+    points: num(r.points),
+    eventsAttended: num(pick(r, 'events_attended')),
+    favoriteCampus: (opt(pick(r, 'favorite_campus')) ?? null) as WrappedData['favoriteCampus'],
+    favoriteKind: (opt(pick(r, 'favorite_kind')) ?? null) as WrappedData['favoriteKind'],
+    bestMonth: best ? { month: str(best.month), points: num(best.points) } : null,
+    badgesEarned: num(pick(r, 'badges_earned')),
+    badgeTotal: num(pick(r, 'badge_total')) || BADGES.length,
+    earnedBadgeIds: strList(pick(r, 'earned_badge_ids')).filter((id) => order.has(id)),
+    rarestBadge: rare ? { id: str(rare.id), pct: num(rare.pct), holders: num(rare.holders) } : rare === null ? null : undefined,
+    bestStreak: num(pick(r, 'best_streak')),
+    friendsBrought: num(pick(r, 'friends_brought')),
+    monthWins: num(pick(r, 'month_wins')),
+    mix: { event: num(mix.event), digital: num(mix.digital), photos: num(mix.photos), quests: num(mix.quests), referral: num(mix.referral), staff: num(mix.staff) } as PointsMix,
+    rankOverall: optNum(pick(r, 'rank_overall')),
+    rankCampus: optNum(pick(r, 'rank_campus')),
+    participants: optNum(r.participants),
+    campusParticipants: optNum(pick(r, 'campus_participants')),
+    topPctOverall: optNum(pick(r, 'top_pct_overall')),
+    topPctCampus: optNum(pick(r, 'top_pct_campus')),
+    staff: st
+      ? {
+          reviews: num(st.reviews), eventsHosted: num(pick(st, 'events_hosted')), checkinsAtHosted: num(pick(st, 'checkins_at_hosted')),
+          announcements: num(st.announcements), heroCrowns: num(pick(st, 'hero_crowns')), councilBadges: num(pick(st, 'council_badges')),
+          councilBadgeIds: strList(pick(st, 'council_badge_ids')),
+        }
+      : undefined,
+  };
+}
+
+/** claim_seasonal_items(): records any seasonal item whose window is open today (any logged-in user). */
+export async function claimSeasonalItems(): Promise<SeasonalClaim> {
+  const r = (one(await rpc<AnyRow | AnyRow[] | null>('claim_seasonal_items')) ?? {}) as AnyRow;
+  const active = Array.isArray(r.active) ? (r.active as AnyRow[]) : [];
+  const claimed = strList(r.claimed);
+  if (claimed.length) emitChange();
+  return { claimed, active: active.map((a) => ({ holiday: str(a.holiday), endsOn: str(pick(a, 'ends_on')) })) };
+}
+
+/** eoy_checklist() (staff). */
+export async function eoyChecklist(): Promise<EoyChecklist> {
+  const r = (one(await rpc<AnyRow | AnyRow[] | null>('eoy_checklist')) ?? {}) as AnyRow;
+  const w = r.wrapped as AnyRow | null | undefined;
+  const items = Array.isArray(r.items) ? (r.items as AnyRow[]) : [];
+  return {
+    cycleName: str(pick(r, 'cycle_name')),
+    opensAt: str(pick(r, 'opens_at')),
+    endsAt: str(pick(r, 'ends_at')),
+    windowEndsAt: str(pick(r, 'window_ends_at')),
+    inWindow: !!pick(r, 'in_window'),
+    cycleEnded: !!pick(r, 'cycle_ended'),
+    fulfillBy: str(pick(r, 'fulfill_by')),
+    wrapped: w ? { sentAt: str(pick(w, 'sent_at')), notified: num(w.notified), emailed: num(w.emailed) } : null,
+    items: items.map((i) => ({ id: str(i.id) as EoyItemId, done: !!i.done, doneAt: opt(pick(i, 'done_at')) ?? null, doneBy: opt(pick(i, 'done_by')) ?? null })),
+  };
+}
+
+/** set_eoy_item() (staff; 'reset' = YACquest Chair after the cycle ends). */
+export async function setEoyItem(item: EoyItemId | 'wrapped_sent', done: boolean): Promise<void> {
+  await rpc('set_eoy_item', { p_item: item, p_done: done });
+  emitChange();
+}
+
+// ───────────────────────────── 0030: in-app event feedback survey ─────────────────────────────
+
+/** my_survey_status(p_event_id) → can I answer, did I already? */
+export async function mySurveyStatus(eventId: string): Promise<EventSurveyStatus> {
+  const r = (one(await rpc<AnyRow | AnyRow[] | null>('my_survey_status', { p_event_id: eventId })) ?? {}) as AnyRow;
+  return {
+    eventId: str(pick(r, 'event_id')),
+    title: str(r.title),
+    startsAt: str(pick(r, 'starts_at')),
+    endsAt: str(pick(r, 'ends_at')),
+    checkedIn: pick(r, 'checked_in') === true,
+    done: r.done === true,
+    closesAt: str(pick(r, 'closes_at')),
+    open: r.open === true,
+    points: num(r.points),
+  };
+}
+
+/**
+ * submit_event_survey (0030): saves the answer and awards the points in one transaction (once per event).
+ * Errors: not_found, not_attended, closed, rating, favorite, least_favorite, comments, duplicate.
+ */
+export async function submitEventSurvey(input: EventSurveyInput): Promise<{ points: number }> {
+  const err = surveyError({ rating: input.rating, favorite: input.favorite, leastFavorite: input.leastFavorite, comments: input.comments });
+  if (err) fail(err.code, err.message);
+  const r = (one(await rpc<AnyRow | AnyRow[] | null>('submit_event_survey', {
+    p_event_id: input.eventId,
+    p_rating: input.rating,
+    p_favorite: cleanSurveyText(input.favorite),
+    p_least_favorite: cleanSurveyText(input.leastFavorite),
+    p_comments: cleanSurveyText(input.comments),
+    p_anonymous: !!input.anonymous,
+  })) ?? {}) as AnyRow;
+  emitChange();
+  return { points: num(r.points) };
+}
+
+/** admin_event_survey(p_event_id) (0030): staff only. Anonymous answers come without a name or campus. */
+export async function adminEventSurvey(eventId: string): Promise<EventSurveyResults> {
+  const r = (one(await rpc<AnyRow | AnyRow[] | null>('admin_event_survey', { p_event_id: eventId })) ?? {}) as AnyRow;
+  const avg = pick(r, 'average');
+  return {
+    eventId: str(pick(r, 'event_id')),
+    title: str(r.title),
+    startsAt: str(pick(r, 'starts_at')),
+    attendees: num(r.attendees),
+    responses: num(r.responses),
+    average: avg === null || avg === undefined ? null : Number(avg),
+    distribution: Array.isArray(r.distribution) ? (r.distribution as unknown[]).map(num) : [0, 0, 0, 0, 0],
+    rows: arr(r.rows).map((x) => ({
+      name: x.anonymous === true ? null : opt(x.name) ?? null,
+      ...(x.anonymous !== true && opt(x.campus) ? { campus: str(x.campus) as CampusId } : {}),
+      anonymous: x.anonymous === true,
+      rating: num(x.rating),
+      favorite: str(x.favorite),
+      leastFavorite: str(pick(x, 'least_favorite')),
+      comments: str(x.comments),
+      createdAt: str(pick(x, 'created_at')),
+    })),
+  };
 }

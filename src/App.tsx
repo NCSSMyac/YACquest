@@ -42,6 +42,10 @@ import Council from './screens/admin/Council';
 // 0025: lazy-loaded so the charts and the full-screen door view stay out of the main bundle.
 const Stats = lazy(() => import('./screens/admin/Stats'));
 const DoorMode = lazy(() => import('./screens/admin/DoorMode'));
+// 0028: YACquest Wrapped (full-screen story + share image) stays out of the main bundle too.
+const Wrapped = lazy(() => import('./screens/Wrapped'));
+// 0030: in-app event survey (opened from a past event card, the follow-up notification or its email).
+const Survey = lazy(() => import('./screens/Survey'));
 const lazyPage = (el: JSX.Element) => <Suspense fallback={<Loading lines={3} />}>{el}</Suspense>;
 
 function RequireAuth() {
@@ -156,6 +160,8 @@ export default function App() {
             <Route element={<RequireAuth />}>
               {/* Outside Layout: the reset link logs the person in, then they pick a new password here. */}
               <Route path="/reset-password" element={<ResetPassword />} />
+              {/* 0028: YACquest Wrapped is a full-screen story (no app header / tab bar). */}
+              <Route path="/wrapped" element={<Suspense fallback={<div className="app-shell"><Loading /></div>}><Wrapped /></Suspense>} />
               {/* 0025: Event-day Door mode is full screen (no app header / tab bar). Staff only. */}
               <Route element={<RequireStaff />}>
                 <Route path="/admin/door/:eventId" element={<Suspense fallback={<div className="app-shell"><Loading /></div>}><DoorMode /></Suspense>} />
@@ -168,6 +174,7 @@ export default function App() {
                 <Route path="me" element={<Me />} />
                 <Route path="notifications" element={<Notifications />} />
                 <Route path="rules" element={<Rules />} />
+                <Route path="survey/:eventId" element={lazyPage(<Survey />)} />
                 <Route path="admin" element={<RequireStaff />}>
                   <Route element={<AdminLayout />}>
                     <Route index element={<AdminHome />} />

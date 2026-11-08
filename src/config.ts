@@ -99,3 +99,104 @@ export const INSTAGRAM_URL = 'https://www.instagram.com/ncssmyoungalumni/';
 
 /** Up to this many YACquest Chairs at once (the database has its own copy: app_config.max_chairs). */
 export const MAX_CHAIRS = 6;
+
+/** Where the docs live (linked from the admin Pace card). */
+export const DOCS_URL = 'https://github.com/ncssmyac/YACquest/blob/main/docs';
+
+/**
+ * 0028 Pace tracker (Admin dashboard → Pace, Admin → Stats). The projection lives in src/lib/pace.ts.
+ * Each player's pace = points per week since their first points this cycle (or since CYCLE.displayStart,
+ * whichever is later). Conservative = keeps `dampening` × that pace until CYCLE.end; optimistic = 100%.
+ */
+export const PACE = {
+  dampening: 0.8,
+  /** Below this many weeks with any points (or this many weeks since CYCLE.displayStart), the card says "Check back after a couple of weeks of events". */
+  minWeeks: 2,
+  /** The mid-year check (docs/POINTS.md): from this date, "Consider lowering the goal" can show. */
+  checkFrom: '2027-02-01T00:00:00-05:00',
+  /** Even optimistically fewer than this many finishers → "Consider lowering the goal". */
+  tooFew: 2,
+  /** Even conservatively more than this many finishers → "Goal may be too easy". */
+  tooMany: 8,
+} as const;
+
+/**
+ * 0028 YACquest Wrapped (a tap-through story of your year, #/wrapped) + the end-of-year wrap-up.
+ * The database derives the same opening time (wrapped_opens_at(): one week before the cycle's last day,
+ * midnight in New York), so change both together if CYCLE.end moves.
+ */
+export const WRAPPED = {
+  opensAt: '2027-04-24T00:00:00-04:00',
+  /** The wrap-up window (Home banner, admin End-of-year card) lasts until this many days after CYCLE.end. */
+  wrapUpDays: 14,
+  /** Browser demo only (mock API): show Wrapped any time, for testing. Never affects the real backend. */
+  mockAlwaysOpen: false,
+} as const;
+
+export type SeasonalHolidayId = 'indigenous_peoples_day' | 'dia_de_muertos' | 'diwali' | 'thanksgiving';
+
+export interface SeasonalHoliday {
+  id: SeasonalHolidayId;
+  name: string;
+  emoji: string;
+  /**
+   * Inclusive [first day, last day] in America/New_York, by year. Missing year → computed with `rule` if
+   * there is one, otherwise the item just doesn't come back that year.
+   */
+  windows: Record<number, [string, string]>;
+  /** Fallback for years not listed: compute the window from a fixed rule. */
+  rule?: 'second_monday_october_pm7';
+  /** What the holiday's items honor (shown in Wardrobe → Seasonal → About this item). */
+  about: string;
+  learnMore?: { label: string; url: string };
+}
+
+/**
+ * 0028 SEASONAL WARDROBE: limited-time items, free for everyone (participants AND staff) during their
+ * window, owned forever once unlocked (claimed when you open the app or the Wardrobe during the window).
+ *
+ * ⚠️ VERIFY THESE DATES EVERY YEAR (Diwali follows the lunar calendar; Thanksgiving is the 4th Thursday of
+ * November) and keep the database copy in sync: seasonal_windows in supabase/migrations/0028_pace_wrapped_seasonal.sql
+ * (add a new migration with the next year's rows). Descriptions and art should be reviewed by members of
+ * these communities (e.g. campus cultural organizations) before they go live — see docs/SETUP.md.
+ */
+export const SEASONAL: SeasonalHoliday[] = [
+  {
+    id: 'indigenous_peoples_day',
+    name: 'Indigenous Peoples’ Day',
+    emoji: '🌲',
+    // 2nd Monday of October ± 7 days (2026: Oct 12; 2027: Oct 11).
+    windows: { 2026: ['2026-10-05', '2026-10-19'], 2027: ['2027-10-04', '2027-10-18'] },
+    rule: 'second_monday_october_pm7',
+    about:
+      'Indigenous Peoples’ Day honors the Native peoples of this land, their histories, their living cultures and their sovereignty. North Carolina is home to eight state-recognized tribes, and NCSSM and our campuses sit on the ancestral lands of Indigenous nations. Learn about the tribes of North Carolina from the NC Commission of Indian Affairs.',
+    learnMore: { label: 'NC Commission of Indian Affairs', url: 'https://ncadmin.nc.gov/divisions/american-indian-affairs' },
+  },
+  {
+    id: 'dia_de_muertos',
+    name: 'Día de los Muertos',
+    emoji: '🌼',
+    windows: { 2026: ['2026-10-25', '2026-11-09'], 2027: ['2027-10-25', '2027-11-09'] },
+    about:
+      'Día de los Muertos (Nov 1–2) is a joyful Mexican tradition of remembering and celebrating loved ones who have passed — not a spooky holiday or part of Halloween. Families build ofrendas decorated with cempasúchil (marigolds), whose color and scent are said to guide spirits home, and papel picado. This item is a flower crown honoring the tradition — not a costume.',
+  },
+  {
+    id: 'diwali',
+    name: 'Diwali',
+    emoji: '🪔',
+    // 7 days before through 7 days after. Diwali 2026 = Sunday, Nov 8, 2026 (Lakshmi Puja; confirmed).
+    // Diwali 2027 = Oct 29, 2027: VERIFY before Oct 2027 (lunar calendar).
+    windows: { 2026: ['2026-11-01', '2026-11-15'], 2027: ['2027-10-22', '2027-11-05'] },
+    about:
+      'Diwali, the Festival of Lights, is celebrated by Hindus, Sikhs, Jains and some Buddhists around the world. Homes are lit with diyas (clay oil lamps) and decorated with rangoli (colorful floor designs) to celebrate the victory of light over darkness.',
+  },
+  {
+    id: 'thanksgiving',
+    name: 'Thanksgiving',
+    emoji: '🍂',
+    // 4th Thursday of November (Nov 26, 2026; Nov 25, 2027): the week before through the Monday after.
+    windows: { 2026: ['2026-11-19', '2026-11-30'], 2027: ['2027-11-18', '2027-11-29'] },
+    about:
+      'Thanksgiving is a U.S. holiday about gratitude and sharing a meal with family and friends. This cozy scarf celebrates the harvest season and saying thank you.',
+  },
+];

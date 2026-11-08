@@ -19,7 +19,7 @@ export const CARD_W = 1080;
 export const CARD_H = 1920;
 export const CARD_SITE = 'ncssmyac.github.io/YACquest';
 
-const C = {
+export const C = {
   night: '#071a3a',
   navy: '#0b2a5b',
   navy2: '#13306b',
@@ -55,7 +55,7 @@ export interface CardModel {
   footer: string;
 }
 
-const hash = (s: string) => [...s].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) | 0, 7);
+export const hash = (s: string) => [...s].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) | 0, 7);
 
 /** Everything the card says, from the recap (pure; staff cards never show rank, participants never show Council info). */
 export function cardModel(r: QuestRecap, at: Date = new Date()): CardModel {
@@ -96,11 +96,11 @@ export function cardModel(r: QuestRecap, at: Date = new Date()): CardModel {
 
 // ───────────────────────────── drawing ─────────────────────────────
 
-const PIXEL_FONT = 'Silkscreen';
-const BODY_FONT = 'Nunito';
+export const PIXEL_FONT = 'Silkscreen';
+export const BODY_FONT = 'Nunito';
 
 /** Wait for the bundled fonts so the first draw doesn't fall back to a system font. */
-async function loadFonts() {
+export async function loadFonts() {
   if (typeof document === 'undefined' || !document.fonts) return;
   try {
     await Promise.all([
@@ -115,15 +115,15 @@ async function loadFonts() {
   }
 }
 
-type Ctx = CanvasRenderingContext2D;
+export type Ctx = CanvasRenderingContext2D;
 
-function rect(ctx: Ctx, x: number, y: number, w: number, h: number, color: string) {
+export function rect(ctx: Ctx, x: number, y: number, w: number, h: number, color: string) {
   ctx.fillStyle = color;
   ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
 }
 
 /** A chunky pixel box: dark outline, colored border, fill, with notched (stepped) corners. */
-function pixelBox(ctx: Ctx, x: number, y: number, w: number, h: number, border: string, fill: string, b = 8) {
+export function pixelBox(ctx: Ctx, x: number, y: number, w: number, h: number, border: string, fill: string, b = 8) {
   const n = b; // notch size
   rect(ctx, x + n, y, w - 2 * n, h, C.night);
   rect(ctx, x, y + n, w, h - 2 * n, C.night);
@@ -133,7 +133,7 @@ function pixelBox(ctx: Ctx, x: number, y: number, w: number, h: number, border: 
 }
 
 /** Draws a string[] pixel grid (chars → palette) at `scale` px per pixel. */
-function drawCharGrid(ctx: Ctx, grid: string[], palette: Record<string, string>, x: number, y: number, scale: number) {
+export function drawCharGrid(ctx: Ctx, grid: string[], palette: Record<string, string>, x: number, y: number, scale: number) {
   grid.forEach((row, gy) =>
     [...row].forEach((ch, gx) => {
       const c = palette[ch];
@@ -142,7 +142,7 @@ function drawCharGrid(ctx: Ctx, grid: string[], palette: Record<string, string>,
   );
 }
 
-function drawColorGrid(ctx: Ctx, grid: (string | null)[][], x: number, y: number, scale: number) {
+export function drawColorGrid(ctx: Ctx, grid: (string | null)[][], x: number, y: number, scale: number) {
   grid.forEach((row, gy) =>
     row.forEach((c, gx) => {
       if (c) rect(ctx, x + gx * scale, y + gy * scale, scale, scale, c);
@@ -151,7 +151,7 @@ function drawColorGrid(ctx: Ctx, grid: (string | null)[][], x: number, y: number
 }
 
 /** Text with a hard pixel drop shadow, shrunk to fit `maxW`. */
-function text(
+export function text(
   ctx: Ctx,
   s: string,
   x: number,
@@ -188,10 +188,10 @@ function rng(seed: number) {
   };
 }
 
-const STAR = ['..k..', '.kgk.', 'kgwgk', '.kgk.', '..k..'];
-const STAR_PAL: Record<string, string> = { k: C.night, g: C.gold, w: C.white };
+export const STAR = ['..k..', '.kgk.', 'kgwgk', '.kgk.', '..k..'];
+export const STAR_PAL: Record<string, string> = { k: C.night, g: C.gold, w: C.white };
 
-function background(ctx: Ctx, seed: number) {
+export function background(ctx: Ctx, seed: number) {
   rect(ctx, 0, 0, CARD_W, CARD_H, C.navy);
   // soft vertical bands, in big pixel steps
   for (let i = 0; i < 12; i++) rect(ctx, 0, CARD_H - (i + 1) * 40, CARD_W, 40, i % 2 ? '#0d2f66' : '#0c2d61');
@@ -214,7 +214,7 @@ function background(ctx: Ctx, seed: number) {
     rect(ctx, cx, cy, 16, 16, C.goldDark);
 }
 
-function tile(ctx: Ctx, t: CardTile, x: number, y: number, w: number, h: number, highlight: boolean) {
+export function tile(ctx: Ctx, t: CardTile, x: number, y: number, w: number, h: number, highlight: boolean) {
   pixelBox(ctx, x, y, w, h, highlight ? C.gold : C.blue, highlight ? '#173a7a' : C.navy2, 8);
   text(ctx, t.value, x + w / 2, y + 92, { font: PIXEL_FONT, weight: 700, size: 64, color: C.gold, shadow: C.night, maxW: w - 40 });
   text(ctx, t.label, x + w / 2, y + h - 34, { font: BODY_FONT, weight: 700, size: 26, color: C.white, maxW: w - 28, minSize: 16 });

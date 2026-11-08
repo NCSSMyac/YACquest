@@ -56,7 +56,8 @@ export default function Prize() {
   useEffect(() => {
     if (!userId || unlockIds === undefined) return;
     // Free looks aren't news.
-    const ids = unlockIds ? unlockIds.split(',').filter((id) => cosmeticById(id)?.rule.type !== 'free') : [];
+    // (0028: seasonal items get their own notification + toast instead.)
+    const ids = unlockIds ? unlockIds.split(',').filter((id) => !['free', 'seasonal'].includes(cosmeticById(id)?.rule.type ?? '')) : [];
     for (const id of takeNew('looks', userId, ids))
       celebrate({ title: 'New look unlocked!', subtitle: cosmeticById(id)?.name ?? id, cosmeticId: id, size: 'big' });
   }, [userId, unlockIds, celebrate]);
@@ -91,7 +92,7 @@ export default function Prize() {
       <div id="hub-panel" role="tabpanel" aria-labelledby={`hub-tab-${tab}`}>
         {tab === 'treasure' && <Treasure />}
         {tab === 'badges' && <BadgesTab badges={badges} staffBadges={staff?.badges} />}
-        {tab === 'wardrobe' && <WardrobePanel unlocks={unlocks.data} error={unlocks.error} staff={staff} />}
+        {tab === 'wardrobe' && <WardrobePanel unlocks={unlocks.data} error={unlocks.error} staff={staff} initialCat={params.get('cat')} />}
       </div>
     </div>
   );

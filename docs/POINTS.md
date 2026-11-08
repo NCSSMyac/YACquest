@@ -11,6 +11,8 @@
 | **Digital Connection** | **5** | Surveys · following @ncssmyoungalumni (once) · reposts · polls · story games | 1 digital action per week |
 | **Prize goal** | **350** | First 4 people to reach it win a $75 gift card ($300 of the $350 budget) | |
 
+**In-app event feedback survey (0030):** +5 (Tier 3) once per event you checked in to, up to 14 days after it ends, awarded automatically and **not** counted toward the 1-per-week digital limit (it's tied to attendance).
+
 **Every award uses one of these three numbers.** Check-ins, approved screenshots, game wins and friend codes all pull from the tier value automatically. Manual admin additions are capped at **+35 per entry**, the size of one High-Impact action, so no one can be pushed to the prize with a single click. Removals can go up to −350 (the goal) to fix mistakes or cheating.
 
 ## This year: 6 events, posts every other week → goal 350
@@ -57,6 +59,7 @@ Nobody gets there from events alone (all 6 = 150, short of halfway at 175): ever
 
 ## Check-ins during the year
 - **Feb 1:** if almost nobody is past halfway (175), lower the goal and announce it. The goal, number of spots and gift card value live in `src/config.ts` (`PRIZE`) **and** the database (`app_config.prize_goal`, `prize_count`, `prize_value_usd`; to change it, copy the goal section of `supabase/migrations/0018_goal_350_again.sql` into a new migration).
+- **Pace tracker** (0028, Admin dashboard → Pace, Admin → Stats): projects how many people reach the goal by May 1 at their current pace and, from Feb 1, suggests lowering the goal if even the optimistic projection is under 2 finishers (or flags "Goal may be too easy" above 8). It's a guide; the decision stays with the YACquest Chairs.
 - If YAC plans more or fewer events, edit `OPP` (and `GOAL`) in the script and rerun it.
 - **Revoked prizes:** if points are removed and a winner drops below 350, their spot goes to the next person who qualified.
 
@@ -66,3 +69,6 @@ Badges never award points, so they can't change the prize race. Participants can
 **Hot Streak** = check in at events **3 calendar months in a row** (America/New_York, this cycle). Progress is your best streak this cycle (e.g. 2/3). With only ~6 events this year, YAC needs an event in each of 3 consecutive months for anyone to earn it, so it's a nice reason to space events out. The Rainbow background still unlocks at 6 badges (Hot Streak counts like any other).
 
 **Monthly streak** (shown on Home and Me): consecutive months with at least one check-in. It counts back from this month; if you haven't checked in yet this month it still counts through last month and Home says "Check in this month to keep your streak!". Missing a whole month resets it. RSVPs ("I'm going") don't count and earn no points; only check-ins do.
+
+## Seasonal wardrobe and Wrapped (0028): no points
+Seasonal wardrobe items (Día de los Muertos, Diwali, Thanksgiving, Indigenous Peoples' Day) are **cosmetic only**: they're free during their window, never cost or award points, and don't count toward badges (they're not badges) or the prize. YACquest Wrapped and the end-of-year checklist only *read* points; nothing in them changes the ledger.

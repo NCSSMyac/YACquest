@@ -21,6 +21,8 @@ import { greetingFor, greetingName } from '../lib/adminDashboard';
 import { useAsync } from '../lib/useAsync';
 import { randomYakPun, yakPunOfTheDay } from '../lib/yakPuns';
 import { useStaffRewards } from '../lib/useStaffRewards';
+import { WRAPPED } from '../config';
+import { wrappedWindow } from '../lib/wrapped';
 
 const WIDE_QUERY = '(min-width: 820px)';
 
@@ -230,11 +232,24 @@ export default function Home() {
   );
 
   const star = <HomeAdventurer key="star" meId={d.user.id} />;
+  // 0028: during the wrap-up window (Wrapped opens → 14 days after the quest ends)
+  const showWrapped = wrappedWindow().wrapUp || (api.isMock && WRAPPED.mockAlwaysOpen);
+  const wrappedBanner = showWrapped ? (
+    <section key="wrapped" className="panel dash-card wrapped-banner" aria-labelledby="wrapped-banner-title">
+      <span className="wrapped-banner-gift" aria-hidden="true">🎁</span>
+      <div className="wrapped-banner-text">
+        <h2 id="wrapped-banner-title" className="dash-title-text">Your YACquest Wrapped is here!</h2>
+        <p>Your year in points, events, badges and your YAC personality, plus a card to share.</p>
+      </div>
+      <Link to="/wrapped" className="btn">Open my Wrapped</Link>
+    </section>
+  ) : null;
 
   return (
     <div className="stack dash home-dash">
       <TodayChip />
       {greeting}
+      {wrappedBanner}
       {wide ? (
         <div className="dash-cols">
           <div className="stack">{[messagesCard, pointsCard]}</div>

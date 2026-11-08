@@ -20,6 +20,8 @@ import type { Activity } from '../types';
 import { Accordion, Card, ShowMore } from '../components/Blocks';
 import type { GlyphName } from '../components/PixelGlyph';
 import { limitToInclude, nextLimit } from '../lib/listing';
+import { Link } from 'react-router-dom';
+import { SURVEY_POINTS, canRate, surveyPath } from '../lib/eventSurvey';
 
 type Ev = Awaited<ReturnType<typeof api.listEvents>>[number];
 type TabId = 'events' | 'quests' | 'subs';
@@ -125,6 +127,16 @@ function Events({ focusId }: { focusId?: string }) {
                   <button type="button" className="photo-link" onClick={() => setWall({ id: e.id, title: e.title })} aria-label={`Photos from ${e.title} (${photoCounts.data?.[e.id] ?? 0})`}>
                     📸 Photos ({photoCounts.data?.[e.id] ?? 0})
                   </button>
+                  {/* 0030: in-app survey for events you came to (until 14 days after), then "✓ Survey done". */}
+                  {e.checkedIn && (e.surveyDone || canRate(e, now)) && (
+                    <span className="past-actions">
+                      {e.surveyDone ? (
+                        <span className="chip approved">✓ Survey done</span>
+                      ) : (
+                        <Link to={surveyPath(e.id)} className="btn small">📝 Rate this event (+{SURVEY_POINTS})<span className="sr-only">: {e.title}</span></Link>
+                      )}
+                    </span>
+                  )}
                 </span>
                 {e.checkedIn ? <span className="chip approved">Went ✓</span> : <span className="chip neutral">Missed</span>}
               </li>
@@ -170,7 +182,7 @@ function EventCard({ e, now, focused, onDone }: { e: Ev; now: number; focused?: 
   return (
     <div id={`event-${e.id}`} className={focused ? 'event-focus' : undefined}>
     <Panel tone={live && !e.checkedIn ? 'gold' : undefined}>
-      <div className="stack" style={{ gap: 10 }}>
+      <div className="stack" style={{ gap: 12 }}>
         <div className="spread" style={{ alignItems: 'flex-start' }}>
           <strong style={{ fontSize: 18, lineHeight: 1.25, minWidth: 0 }}>{e.title}</strong>
           {live && !e.checkedIn && <span className="chip t1 blink">● LIVE</span>}
@@ -307,6 +319,7 @@ function QuestRow({ a, goEvents, onProof }: { a: Activity; goEvents: () => void;
       )}
       {(a.method === 'screenshot' || a.method === 'photo') && <button className="btn small" onClick={onProof}>Submit proof</button>}
       {a.method === 'event_password' && <button className="btn blue small" onClick={goEvents}>See events</button>}
+      {a.method === 'event_survey' && <button className="btn blue small" onClick={goEvents}>See past events</button>}
       {a.method === 'referral' && (
         <div className="row" style={{ flexWrap: 'wrap' }}>
           <span className="pixel" style={{ fontSize: 16 }} aria-label="Your friend code">{user?.friendCode}</span>

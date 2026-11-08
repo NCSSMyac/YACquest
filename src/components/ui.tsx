@@ -46,7 +46,7 @@ export function StatusChip({ status }: { status: SubmissionStatus }) {
 
 export function Loading({ lines = 2 }: { lines?: number }) {
   return (
-    <div className="stack" aria-busy="true" aria-label="Loading">
+    <div className="stack" role="status" aria-busy="true" aria-label="Loading">
       {Array.from({ length: lines }, (_, i) => (
         <div key={i} className="skeleton" />
       ))}

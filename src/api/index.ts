@@ -114,6 +114,16 @@ export const {
   listFeedback,
   markFeedbackReviewed,
   listAnnouncements,
+  // 0028: pace tracker (staff), Wrapped, end-of-year checklist (staff), seasonal wardrobe
+  adminPace,
+  myWrapped,
+  eoyChecklist,
+  setEoyItem,
+  claimSeasonalItems,
+  // 0030: in-app event feedback survey (+5 for attendees); results are staff only
+  mySurveyStatus,
+  submitEventSurvey,
+  adminEventSurvey,
   // chair
   listTeam,
   setRole,

@@ -8,6 +8,8 @@ import { fmtCycleDate, fmtCycleRange, fmtDate, fmtDateTime, timeAgo } from '../.
 import { errorMessage, useAsync } from '../../lib/useAsync';
 import { DAY_NAMES, hourLabel, isEmail } from '../../lib/validate';
 import type { EmailLogRow, ReportSettings } from '../../types';
+import { useHashScroll } from '../../lib/useHashScroll';
+import { EndOfYearCard } from './EndOfYear';
 
 export default function System() {
   const toast = useToast();
@@ -53,12 +55,15 @@ export default function System() {
     }
   }
 
+  useHashScroll();
   return (
     <div className="stack">
+      {/* 0028: end-of-year checklist (+ Preview Wrapped) is always here for YACquest Chairs */}
+      <EndOfYearCard isChair />
       <WeeklyEmail />
       <EmailLog />
 
-      <Card glyph="coin" title="Export">
+      <Card glyph="coin" title="Export" id="export">
         <p className="muted" style={{ marginTop: 0 }}>Full points ledger as CSV, for audits and the year-end archive.</p>
         <button className="btn small" disabled={exporting} onClick={exportCsv}>{exporting ? 'Preparing…' : 'Export ledger CSV'}</button>
       </Card>
@@ -79,7 +84,7 @@ export default function System() {
         )}
       </Card>
 
-      <Accordion glyph="bolt" title="Danger zone" summary="End the cycle and reset everyone’s points">
+      <Accordion glyph="bolt" title="Danger zone" summary="End the cycle and reset everyone’s points" id="reset">
         <p style={{ marginTop: 0 }}>Ending the cycle archives all history and zeroes everyone’s points. This can’t be undone.</p>
         <button className="btn red" onClick={() => { setResetOpen(true); setErr(null); setConfirmText(''); }}>End cycle &amp; reset points</button>
       </Accordion>

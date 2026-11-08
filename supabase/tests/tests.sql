@@ -181,7 +181,7 @@ do $$ begin
   perform t.eq(handle_available('bad name'), false, 'handle_available: bad chars');
   perform t.eq(friend_code_exists('YAC-0000'), false, 'friend_code_exists: unknown');
   perform t.ok((select count(*) from app_config) = 1, 'anon can read app_config');
-  perform t.ok((select count(*) from activities) = 15, 'anon can read 15 activities');
+  perform t.ok((select count(*) from activities) = 16, 'anon can read 16 activities (0030: + event_survey)');
   perform t.denied('select dashboard_stats()', 'anon cannot call dashboard_stats');
   perform t.denied('select count(*) from profiles', 'anon cannot read profiles');
 end $$;
@@ -1253,7 +1253,7 @@ values ((select id from cycles where not is_active order by starts_at limit 1), 
 do $$ begin
   perform t.denied('select * from my_badges()', 'anon cannot call my_badges');
   perform t.denied('select monthly_shoutout()', 'anon cannot call monthly_shoutout');
-  perform t.eq((select count(*) from cosmetics), 17::bigint, 'anon can read the cosmetics catalogue');
+  perform t.eq((select count(*) from cosmetics), 24::bigint, 'anon can read the cosmetics catalogue (17 + 7 seasonal from 0028)');
 end $$;
 :as_gina
 do $$
@@ -2615,7 +2615,7 @@ begin
   perform t.eq((s->>'signupsBefore')::int, (select count(*)::int from profiles where role = 'participant' and created_at < '2030-01-07 00:00-05'), '0025 stats: sign-ups before the cycle');
   perform t.eq(jsonb_array_length(s->'events'), 1, '0025 stats: only events that have started');
   perform t.ok((s->'events'->0->>'title') = 'Stats Mixer' and (s->'events'->0->>'going')::int = 2 and (s->'events'->0->>'came')::int = 2, '0025 stats: going 2 vs came 2 (staff excluded)');
-  perform t.eq(s->'sources', '{"event":40,"digital":5,"referral":40,"staff":120,"removed":10}'::jsonb, '0025 stats: points by source');
+  perform t.eq(s->'sources', '{"event":40,"digital":5,"referral":40,"staff":120,"removed":10,"survey":0}'::jsonb, '0025 stats: points by source (0030: + survey)');
   perform t.eq((s->'totals'->>'points')::int, 105 + 60 + 30, '0025 stats: total participant points');
   perform t.eq((s->'totals'->>'active30')::int, 2, '0025 stats: active in the last 30 days');
   perform t.eq((s->'totals'->>'checkins')::int, 2, '0025 stats: participant check-ins');
@@ -2907,8 +2907,9 @@ do $$ begin
   perform t.eq((select count(*) from notifications where kind = 'event_followup' and title = 'Thanks for coming to Spring Social! 🐂'), 3::bigint,
                '0026: thanks → the three who checked in (alice, carol, erin)');
   perform t.eq((select body from notifications where kind = 'event_followup' and user_id = t.u('alice')),
-               'Tell us how it went in the feedback survey: https://forms.gle/abc123 It counts as the “Complete a Feedback Survey” digital quest: send a screenshot of the confirmation in Quests for ' || tier_points(3) || ' points.',
-               '0026: thanks body: survey link + the Feedback Survey digital quest + Tier 3 points');
+               'How was it? Rate it in the app for +' || tier_points(3) || ' points (takes a minute): #/survey/00000000-0000-0000-0000-0000000026f1'
+               || ' Or fill out the YAC survey here: https://forms.gle/abc123 It counts as the “Complete a Feedback Survey” digital quest: send a screenshot of the confirmation in Quests for ' || tier_points(3) || ' points.',
+               '0026/0030: thanks body: in-app survey link, then the survey link + the Feedback Survey digital quest + Tier 3 points');
   perform t.eq((select count(*) from notifications where kind = 'event_followup' and user_id = t.u('alice')), 1::bigint, '0026: alice came (and RSVP''d) → only the thanks, no "missed you"');
   perform t.eq((select title || ' | ' || body from notifications where kind = 'event_followup' and user_id = t.u('bob')),
                'Sorry we missed you at Spring Social | Hope to see you next time! Next up: Panel Night — Fri, Apr 5 at 6:00 PM at Gerrard Hall. RSVP in Quests.',
@@ -2920,7 +2921,7 @@ do $$ begin
   perform t.eq((select count(*) from notifications where kind = 'event_followup' and user_id = t.u('chair1')), 0::bigint, '0026: people who neither RSVP''d nor came get nothing');
   perform t.eq((select array_agg(to_emails[1] order by to_emails[1]) from email_outbox where kind = 'event_followup'),
                array['alice@example.edu', 'bob@example.edu', 'carol@example.edu'], '0026: emails only for people with email updates on (not erin, dave, ref3)');
-  perform t.ok((select subject = 'Thanks for coming to Spring Social!' and body_text like '%https://forms.gle/abc123%' and body_html like '%Take the feedback survey%'
+  perform t.ok((select subject = 'Thanks for coming to Spring Social!' and body_text like '%https://forms.gle/abc123%' and body_html like '%Rate this event%'
                        and body_text like '%Complete a Feedback Survey%' and status = 'pending'
                   from email_outbox where kind = 'event_followup' and dedupe_key = 'followup:00000000-0000-0000-0000-0000000026f1:' || t.u('alice')),
                '0026: thanks email: subject, survey link + button, the quest');
@@ -2972,8 +2973,9 @@ end $$;
 :as_super
 do $$ begin
   perform t.ok(exists (select 1 from admin_actions where action = 'event_followup_sent' and actor_id = t.u('admin') and details->>'title' = 'Old Picnic'), '0026: manual follow-up logged with the staff member');
-  perform t.ok((select body like '%When YAC shares the feedback survey%' from notifications where kind = 'event_followup' and user_id = t.u('carol') and title = 'Thanks for coming to Old Picnic! 🐂'),
-               '0026: no survey link → the thanks still points to the survey quest');
+  perform t.ok((select body = 'How was it? Rate it in the app for +' || tier_points(3) || ' points (takes a minute): #/survey/00000000-0000-0000-0000-0000000026f5'
+                  from notifications where kind = 'event_followup' and user_id = t.u('carol') and title = 'Thanks for coming to Old Picnic! 🐂'),
+               '0026/0030: no survey link → the thanks links only the in-app survey');
 end $$;
 
 -- ---- survey link on events ----
@@ -3276,6 +3278,483 @@ do $$ declare v_ids bigint[]; begin
   perform t.eq(cardinality(v_ids), 2, '0027 purge: service role gets the queued files');
   perform t.eq(finish_storage_purge(v_ids), 2, '0027 purge: …and clears them when done');
   perform t.eq((select count(*) from claim_storage_purge(100)), 0::bigint, '0027 purge: queue empty');
+end $$;
+rollback;
+
+-- =============================================================================
+-- 0028. PACE TRACKER, YACQUEST WRAPPED + END-OF-YEAR, SEASONAL WARDROBE
+--       Fixed dates everywhere (never today's date): each block is rolled back.
+-- =============================================================================
+\set as_w1 'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-000000028a01''; set role authenticated;'
+\set as_w2 'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-000000028a02''; set role authenticated;'
+:as_super
+insert into t.users values ('w1', '00000000-0000-0000-0000-000000028a01'), ('w2', '00000000-0000-0000-0000-000000028a02'),
+                           ('w3', '00000000-0000-0000-0000-000000028a03') on conflict do nothing;
+
+-- ---- seasonal: 2nd Monday + seeded windows (pure, no transaction needed) ----
+do $$ begin
+  perform t.eq(second_monday_of_october(2026), date '2026-10-12', '0028 seasonal: 2nd Monday of Oct 2026 = Oct 12');
+  perform t.eq(second_monday_of_october(2027), date '2027-10-11', '0028 seasonal: 2nd Monday of Oct 2027 = Oct 11');
+  perform t.eq(second_monday_of_october(2028), date '2028-10-09', '0028 seasonal: 2nd Monday of Oct 2028 = Oct 9 (Oct 1 is a Sunday)');
+  perform t.eq(second_monday_of_october(2029), date '2029-10-08', '0028 seasonal: 2nd Monday of Oct 2029 = Oct 8 (Oct 1 is a Monday)');
+  perform t.ok((select starts_on = '2026-10-05' and ends_on = '2026-10-19' from seasonal_windows where holiday = 'indigenous_peoples_day' and year = 2026),
+               '0028 seasonal: Indigenous Peoples'' Day 2026 window Oct 5–19');
+  perform t.ok((select starts_on = '2026-11-01' and ends_on = '2026-11-15' from seasonal_windows where holiday = 'diwali' and year = 2026),
+               '0028 seasonal: Diwali 2026 window Nov 1–15 (Nov 8 ± 7)');
+  perform t.ok((select starts_on = '2027-10-22' and ends_on = '2027-11-05' from seasonal_windows where holiday = 'diwali' and year = 2027),
+               '0028 seasonal: Diwali 2027 window Oct 22 – Nov 5 (Oct 29 ± 7)');
+  perform t.ok((select starts_on = '2026-11-19' and ends_on = '2026-11-30' from seasonal_windows where holiday = 'thanksgiving' and year = 2026),
+               '0028 seasonal: Thanksgiving 2026 window Nov 19–30');
+  perform t.eq((select count(*) from cosmetics where rule_type = 'seasonal'), 7::bigint, '0028 seasonal: 7 seasonal items');
+  perform t.eq((select array_agg(holiday order by holiday) from seasonal_active('2026-11-05 12:00-05')), array['dia_de_muertos', 'diwali'],
+               '0028 seasonal: Nov 5, 2026 → Día de los Muertos + Diwali are open');
+  perform t.eq((select array_agg(holiday) from seasonal_active('2026-11-10 08:00-05')), array['diwali'], '0028 seasonal: Nov 10 → only Diwali');
+  perform t.eq((select array_agg(holiday) from seasonal_active('2026-11-16 03:00Z')), array['diwali'],
+               '0028 seasonal: 10 PM Nov 15 in New York (03:00Z Nov 16) still counts as Nov 15');
+  perform t.ok(not exists (select 1 from seasonal_active('2026-12-15 12:00-05')), '0028 seasonal: mid-December → nothing open');
+  perform t.ok(position('queue_wrapped_notifications' in pg_get_functiondef('public.enqueue_weekly_report_if_due()'::regprocedure)) > 0,
+               '0028: the every-10-minutes job also queues Wrapped');
+  perform t.ok(position('queue_event_followups' in pg_get_functiondef('public.enqueue_weekly_report_if_due()'::regprocedure)) > 0,
+               '0028: …and still queues event follow-ups (0026 kept)');
+  perform t.eq(wrapped_opens_at('2027-05-01 23:59:59-04'), '2027-04-24 00:00:00-04'::timestamptz, '0028 wrapped: opens Apr 24, 2027 at midnight New York');
+end $$;
+
+-- ---- seasonal: claiming, persistence, equip rules ----
+begin;
+-- make sure no real "today" window can interfere: only the 2026 Día de los Muertos + Diwali rows are kept
+delete from seasonal_windows where not (year = 2026 and holiday in ('dia_de_muertos', 'diwali'));
+update profiles set role = 'participant' where id = t.u('alice');
+update profiles set role = 'admin' where id = t.u('admin');
+delete from seasonal_unlocks;
+do $$ declare v text[]; begin
+  v := claim_seasonal_for(t.u('alice'), '2026-11-05 12:00-05');
+  perform t.eq(v, array['cempasuchil_crown', 'diya', 'papel_picado', 'rangoli_diyas'], '0028 seasonal: claiming on Nov 5 gives the 4 open items');
+  perform t.eq(claim_seasonal_for(t.u('alice'), '2026-11-06 12:00-05'), '{}'::text[], '0028 seasonal: claiming again → nothing new');
+  perform t.eq((select count(*) from notifications where user_id = t.u('alice') and kind = 'seasonal'), 2::bigint, '0028 seasonal: one notification per holiday, once');
+  perform t.ok(exists (select 1 from notifications where user_id = t.u('alice') and kind = 'seasonal'
+                        and title = '🪔 New limited-time item for Diwali — see what it honors'), '0028 seasonal: Diwali notification text');
+  perform t.eq(claim_seasonal_for(t.u('admin'), '2026-11-10 12:00-05'), array['diya', 'rangoli_diyas'], '0028 seasonal: staff get them too (Nov 10: Diwali only)');
+  perform t.eq(claim_seasonal_for(t.u('bob'), '2026-12-15 12:00-05'), '{}'::text[], '0028 seasonal: outside every window → nothing');
+  -- windows are over (deleted): owned items stay owned
+  delete from seasonal_windows;
+end $$;
+:as_alice
+do $$ begin
+  perform t.ok('cempasuchil_crown' = any (my_unlocks()) and 'land_of_longleaf' <> all (my_unlocks()), '0028 seasonal: my_unlocks has owned seasonal items only');
+  perform t.eq(equip_look('cempasuchil_crown', 'diya', 'papel_picado')->>'hat', 'cempasuchil_crown', '0028 seasonal: owned items equip after their window');
+  perform t.throws('select equip_look(null, ''harvest_scarf'', null)', 'locked', '0028 seasonal: not owned + outside the window → locked');
+  perform t.throws('select equip_look(null, null, ''land_of_longleaf'')', 'locked', '0028 seasonal: Land of the Longleaf not owned → locked');
+  perform t.throws('select equip_look(''papel_picado'', null, null)', 'look', '0028 seasonal: wrong slot → look');
+  perform t.denied('select unlocks_for(''' || t.u('bob') || ''')', '0028: unlocks_for stays internal');
+  perform t.denied('select claim_seasonal_for(''' || t.u('alice') || ''', now())', '0028: claim_seasonal_for is internal (no picking your own date)');
+  perform t.ok((claim_seasonal_items()::jsonb) ?& array['claimed', 'active'], '0028 seasonal: claim_seasonal_items() → {claimed, active}');
+end $$;
+:as_admin
+do $$ begin
+  perform t.eq(equip_look(null, 'diya', 'council_chamber')->>'accessory', 'diya', '0028 seasonal: staff can wear seasonal + Council items together');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied('select claim_seasonal_items()', '0028 seasonal: anon can''t claim');
+end $$;
+:as_super
+rollback;
+
+-- ---- pace tracker (fixed dates) ----
+begin;
+-- (an earlier test reset the cycle at "now": give the active cycle fixed dates for this block)
+update cycles set starts_at = '2026-10-15 00:00-04', ends_at = '2027-05-01 23:59:59-04' where is_active;
+update profiles set role = 'admin' where role = 'participant';
+insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data) values
+  (t.u('w1'), 'w1@example.edu', now(), '{"handle":"wrap1","display_name":"Wren One","campus":"duke","avatar":"yak"}'),
+  (t.u('w2'), 'w2@example.edu', now(), '{"handle":"wrap2","display_name":"Wes Two","campus":"unc","avatar":"knight"}'),
+  (t.u('w3'), 'w3@example.edu', now(), '{"handle":"wrap3","display_name":"Wu Three","campus":"duke","avatar":"mage"}');
+insert into ledger (cycle_id, user_id, amount, source, reason, created_at) values
+  (active_cycle_id(), t.u('w1'), 35, 'manual', 'p1', '2026-11-10 12:00-05'),
+  (active_cycle_id(), t.u('w1'), 20, 'manual', 'p2', '2026-11-18 12:00-05'),
+  (active_cycle_id(), t.u('w2'), 20, 'manual', 'p3', '2026-11-18 13:00-05'),
+  (active_cycle_id(), t.u('w1'), 5,  'manual', 'p4', '2026-12-20 12:00-05'),   -- after p_now: ignored
+  (active_cycle_id(), t.u('admin'), 300, 'manual', 'staff', '2026-11-11 12:00-05');  -- staff: never counted
+:as_w1
+do $$ begin
+  perform t.throws('select admin_pace()', 'forbidden', '0028 pace: participants can''t see it');
+end $$;
+:as_admin
+do $$ declare p jsonb := admin_pace('2026-12-01 12:00-05')::jsonb; begin
+  perform t.eq((p->>'goal')::int, (select prize_goal from app_config), '0028 pace: goal from app_config');
+  perform t.eq(jsonb_array_length(p->'weeks'), 8, '0028 pace: 8 Monday weeks from Oct 12 to Nov 30');
+  perform t.eq(p->'weeks'->>0, '2026-10-12', '0028 pace: first week = week of the cycle start');
+  perform t.eq((select sum(v::int) from jsonb_array_elements_text(p->'weeklyTotals') v), 75::bigint, '0028 pace: weekly totals add up (participants only, up to p_now)');
+  perform t.eq(p->'weeklyTotals'->>4, '35', '0028 pace: week of Nov 9 = 35');
+  perform t.eq(p->'weeklyTotals'->>5, '40', '0028 pace: week of Nov 16 = 40');
+  perform t.eq(jsonb_array_length(p->'players'), 2, '0028 pace: 2 participants with points (staff + zero-point players left out)');
+  perform t.ok((p->'players'->0->>'name') = 'Wren One' and (p->'players'->0->>'points') = '55'
+               and (p->'players'->0->>'firstAt')::timestamptz = '2026-11-10 12:00-05', '0028 pace: player row = points so far + first activity');
+  perform t.eq(p->'top'->0->'cumulative', '[0, 0, 0, 0, 35, 55, 55, 55]'::jsonb, '0028 pace: top 10 cumulative points per week');
+end $$;
+:as_super
+rollback;
+
+-- ---- Wrapped: stats, staff excluded from percentiles, availability ----
+begin;
+update profiles set role = 'admin' where role = 'participant';
+update profiles set role = 'chair' where id = t.u('chair1');
+insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data) values
+  (t.u('w1'), 'w1@example.edu', now(), '{"handle":"wrap1","display_name":"Wren One","campus":"duke","avatar":"yak"}'),
+  (t.u('w2'), 'w2@example.edu', now(), '{"handle":"wrap2","display_name":"Wes Two","campus":"unc","avatar":"knight"}'),
+  (t.u('w3'), 'w3@example.edu', now(), '{"handle":"wrap3","display_name":"Wu Three","campus":"duke","avatar":"mage"}');
+insert into events (id, cycle_id, title, campus, kind, location, starts_at, ends_at, activity_id) values
+  ('00000000-0000-0000-0000-0000000028e1', active_cycle_id(), 'Duke Mixer', 'duke', 'active', 'Gardens', '2026-11-14 18:00-05', '2026-11-14 20:00-05', 'home_event'),
+  ('00000000-0000-0000-0000-0000000028e2', active_cycle_id(), 'Big Gala', 'unc', 'high_impact', 'Pit', '2026-12-05 18:00-05', '2026-12-05 21:00-05', 'cross_campus_event'),
+  ('00000000-0000-0000-0000-0000000028e3', active_cycle_id(), 'Duke Trivia', 'duke', 'active', 'Bryan', '2026-12-12 18:00-05', '2026-12-12 20:00-05', 'home_event');
+insert into ledger (cycle_id, user_id, amount, source, activity_id, ref_id, reason, created_at) values
+  (active_cycle_id(), t.u('w1'), 20, 'checkin', 'home_event', '00000000-0000-0000-0000-0000000028e1', 'Checked in', '2026-11-14 18:30-05'),
+  (active_cycle_id(), t.u('w1'), 35, 'checkin', 'cross_campus_event', '00000000-0000-0000-0000-0000000028e2', 'Checked in', '2026-12-05 18:30-05'),
+  (active_cycle_id(), t.u('w1'), 20, 'checkin', 'home_event', '00000000-0000-0000-0000-0000000028e3', 'Checked in', '2026-12-12 18:30-05'),
+  (active_cycle_id(), t.u('w1'), 35, 'referral', 'bring_new_alum', t.u('w3')::text, 'Brought a new alum', '2026-12-12 18:31-05'),
+  (active_cycle_id(), t.u('w2'), 20, 'checkin', 'home_event', '00000000-0000-0000-0000-0000000028e1', 'Checked in', '2026-11-14 18:40-05'),
+  (active_cycle_id(), t.u('admin'), 500, 'manual', null, null, 'Staff points (never ranked)', '2026-11-20 12:00-05');
+-- Wrapped is not open yet (cycle ends in 30 days → opens in ~23)
+update cycles set ends_at = now() + interval '30 days' where is_active;
+:as_w1
+do $$ begin
+  perform t.throws('select my_wrapped()', 'not_open', '0028 wrapped: participants wait until it opens');
+end $$;
+:as_chair1
+do $$ declare w jsonb := my_wrapped()::jsonb; begin
+  perform t.eq(w->>'preview', 'true', '0028 wrapped: YACquest Chairs can preview any time');
+  perform t.ok(w ? 'staff' and not (w ? 'rankOverall') and not (w ? 'topPctOverall'), '0028 wrapped: staff get staff stats, never a rank');
+end $$;
+:as_admin
+do $$ begin
+  perform t.throws('select my_wrapped()', 'not_open', '0028 wrapped: plain admins can''t preview early');
+end $$;
+:as_super
+update cycles set ends_at = now() + interval '3 days' where is_active;
+:as_w1
+do $$ declare w jsonb := my_wrapped()::jsonb; begin
+  perform t.eq(w->>'preview', 'false', '0028 wrapped: open (1 week before the end)');
+  perform t.eq((w->>'points')::int, 110, '0028 wrapped: total points');
+  perform t.eq((w->>'eventsAttended')::int, 3, '0028 wrapped: 3 events');
+  perform t.eq(w->>'favoriteCampus', 'duke', '0028 wrapped: favorite campus (2 of 3 at Duke)');
+  perform t.eq(w->>'favoriteKind', 'active', '0028 wrapped: favorite event type');
+  perform t.eq(w->'bestMonth', '{"month": "2026-12", "points": 90}'::jsonb, '0028 wrapped: best month = December (35 + 20 + 35)');
+  perform t.eq((w->>'bestStreak')::int, 2, '0028 wrapped: longest streak Nov → Dec = 2 months');
+  perform t.eq((w->>'friendsBrought')::int, 1, '0028 wrapped: friends brought');
+  perform t.ok(w->'earnedBadgeIds' ? 'big_moment' and w->'earnedBadgeIds' ? 'recruiter' and (w->>'badgesEarned')::int = 3, '0028 wrapped: badges earned');
+  perform t.eq(w->'rarestBadge', '{"id": "recruiter", "pct": 34, "holders": 1}'::jsonb, '0028 wrapped: rarest badge (1 of 3 players → 34%)');
+  perform t.eq((w->>'participants')::int, 3, '0028 wrapped: staff never counted as players');
+  perform t.eq((w->>'rankOverall')::int, 1, '0028 wrapped: rank 1 even though a staff member has 500 points');
+  perform t.eq((w->>'topPctOverall')::int, 34, '0028 wrapped: top 34% overall');
+  perform t.ok((w->>'rankCampus')::int = 1 and (w->>'campusParticipants')::int = 2 and (w->>'topPctCampus')::int = 50, '0028 wrapped: campus rank among Duke players');
+  perform t.ok((w->'mix'->>'event')::int = 75 and (w->'mix'->>'referral')::int = 35, '0028 wrapped: points mix for the YAC personality');
+  perform t.ok(not (w ? 'staff'), '0028 wrapped: participants get no staff block');
+end $$;
+:as_w2
+do $$ declare w jsonb := my_wrapped()::jsonb; begin
+  perform t.ok((w->>'rankOverall')::int = 2 and (w->>'topPctOverall')::int = 67, '0028 wrapped: second player → top 67%');
+  perform t.eq(w->'rarestBadge'->>'pct', '67', '0028 wrapped: First Steps held by 2 of 3 players');
+end $$;
+:as_admin
+do $$ declare w jsonb := my_wrapped()::jsonb; begin
+  perform t.ok(w ? 'staff' and not (w ? 'rarestBadge') and not (w ? 'participants'), '0028 wrapped: staff version (no rank, no rarity)');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied('select my_wrapped()', '0028 wrapped: anon can''t call it');
+end $$;
+:as_super
+rollback;
+
+-- ---- Wrapped notifications: once per cycle, only inside the wrap-up window ----
+begin;
+update cycles set name = '2026–27 Pilot', starts_at = '2026-10-15 00:00-04', ends_at = '2027-05-01 23:59:59-04' where is_active;
+delete from wrapped_sends;
+update profiles set email_opt_in = false;
+update profiles set email_opt_in = true where id in (t.u('alice'), t.u('bob'));
+:as_alice
+do $$ begin
+  perform t.denied('select queue_wrapped_notifications(''2027-04-25'')', '0028 wrapped: participants can''t run the job');
+end $$;
+:as_admin
+do $$ begin
+  perform t.denied('select queue_wrapped_notifications()', '0028 wrapped: admins can''t run it either');
+end $$;
+:as_service
+do $$ declare n int; begin
+  perform t.eq(queue_wrapped_notifications('2027-04-23 23:59-04'), 0, '0028 wrapped: a minute before it opens → nothing');
+  perform t.eq(queue_wrapped_notifications('2027-05-16 00:00-04'), 0, '0028 wrapped: after the wrap-up window → nothing');
+  n := queue_wrapped_notifications('2027-04-24 00:10-04');
+  perform t.eq(n::bigint, (select count(*) from profiles), '0028 wrapped: when it opens → everyone gets the notification');
+  perform t.eq(queue_wrapped_notifications('2027-04-24 00:20-04'), 0, '0028 wrapped: next run → nothing (once per cycle)');
+  perform t.eq(queue_wrapped_notifications('2027-05-03 12:00-04'), 0, '0028 wrapped: later in the window → still nothing');
+end $$;
+:as_super
+do $$ begin
+  perform t.eq((select count(*) from notifications where kind = 'wrapped' and user_id = t.u('alice')), 1::bigint, '0028 wrapped: alice: one notification');
+  perform t.ok((select title = 'Your YACquest Wrapped is here! 🎁' and body like 'Your 2026–27 Pilot in YACquest: % points · % event% · % badge%'
+                  from notifications where kind = 'wrapped' and user_id = t.u('alice')), '0028 wrapped: notification teaser (points · events · badges)');
+  perform t.eq((select count(*) from email_outbox where kind = 'wrapped'), 2::bigint, '0028 wrapped: emails only for opted-in people (alice, bob)');
+  perform t.ok((select body_text like '%https://ncssmyac.github.io/YACquest/#/wrapped%' and body_html like '%Open my Wrapped%'
+                  from email_outbox where kind = 'wrapped' and to_emails = array['alice@example.edu']), '0028 wrapped: email links to #/wrapped');
+  perform t.ok((select notified > 0 and emailed = 2 from wrapped_sends), '0028 wrapped: marker row with counts');
+  perform t.ok(exists (select 1 from admin_actions where action = 'wrapped_sent' and actor_id is null), '0028 wrapped: logged (System)');
+end $$;
+rollback;
+
+-- ---- End-of-year checklist permissions ----
+begin;
+update profiles set role = 'participant' where id = t.u('alice');
+update profiles set role = 'admin' where id = t.u('admin');
+update profiles set role = 'chair' where id = t.u('chair1');
+update cycles set ends_at = now() + interval '10 days' where is_active;
+:as_alice
+do $$ begin
+  perform t.throws('select eoy_checklist()', 'forbidden', '0028 eoy: participants can''t see the checklist');
+  perform t.throws('select set_eoy_item(''ledger_backup'', true)', 'forbidden', '0028 eoy: participants can''t tick');
+end $$;
+:as_admin
+do $$ declare c jsonb; begin
+  perform t.eq(set_eoy_item('ledger_backup', true)->>'done', 'true', '0028 eoy: staff can tick an item');
+  perform t.throws('select set_eoy_item(''reset'', true)', 'forbidden', '0028 eoy: only YACquest Chairs tick the reset');
+  perform t.throws('select set_eoy_item(''wrapped_sent'', true)', 'auto', '0028 eoy: "Wrapped sent" ticks itself');
+  perform t.throws('select set_eoy_item(''party'', true)', 'unknown', '0028 eoy: unknown item');
+  c := eoy_checklist()::jsonb;
+  perform t.ok((c->'items'->0->>'id') = 'ledger_backup' and (c->'items'->0->>'done') = 'true' and (c->'items'->0->>'doneBy') = 'Helper',
+               '0028 eoy: checklist shows who ticked it');
+  perform t.eq(jsonb_array_length(c->'items'), 5, '0028 eoy: 5 manual items');
+  perform t.ok(c->'wrapped' = 'null'::jsonb and (c->>'cycleEnded') = 'false', '0028 eoy: Wrapped not sent yet, cycle still running');
+  perform t.eq(set_eoy_item('ledger_backup', false)->>'done', 'false', '0028 eoy: staff can untick');
+end $$;
+:as_chair1
+do $$ begin
+  perform t.throws('select set_eoy_item(''reset'', true)', 'too_early', '0028 eoy: reset only after the cycle ends');
+end $$;
+:as_super
+update cycles set ends_at = now() - interval '1 day' where is_active;
+:as_chair1
+do $$ begin
+  perform t.eq(set_eoy_item('reset', true)->>'done', 'true', '0028 eoy: a YACquest Chair ticks the reset after the end');
+end $$;
+:as_super
+do $$ begin
+  perform t.eq((select count(*) from admin_actions where action in ('eoy_item_checked', 'eoy_item_unchecked')), 3::bigint, '0028 eoy: every tick is logged');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied('select eoy_checklist()', '0028 eoy: anon can''t call it');
+end $$;
+:as_super
+rollback;
+
+-- ---- 0029: upcoming / live events survive a reset; one-time repair of orphaned events ----
+begin;
+update profiles set role = 'participant' where id = t.u('alice');
+update profiles set role = 'chair' where id = t.u('chair1');
+:as_chair1
+do $$ declare ev json; begin
+  ev := create_event(jsonb_build_object('title','Pickleball 0029','campus','duke','kind','active','location','Courts',
+          'startsAt', now() + interval '1 day', 'endsAt', now() + interval '1 day 2 hours', 'password', 'dink29'));
+  perform set_config('t.e_up', ev->>'id', false);
+  ev := create_event(jsonb_build_object('title','Live 0029','campus','all','kind','active','location','Quad',
+          'startsAt', now() - interval '10 minutes', 'endsAt', now() + interval '1 hour', 'password', 'live29'));
+  perform set_config('t.e_live', ev->>'id', false);
+  ev := create_event(jsonb_build_object('title','Done 0029','campus','duke','kind','active','location','Quad',
+          'startsAt', now() - interval '5 hours', 'endsAt', now() - interval '3 hours', 'checkInGraceMinutes', 60, 'password', 'done29'));
+  perform set_config('t.e_done', ev->>'id', false);
+  perform set_config('t.c_before', active_cycle_id()::text, false);
+end $$;
+:as_alice
+do $$ begin
+  perform set_rsvp(current_setting('t.e_up')::uuid, true);
+end $$;
+:as_chair1
+do $$ begin
+  perform reset_cycle('RESET', '0029 test cycle', now() + interval '200 days');
+  perform t.ok(active_cycle_id() <> current_setting('t.c_before')::uuid, '0029 reset: new cycle');
+end $$;
+:as_alice
+do $$ begin
+  perform t.ok(exists (select 1 from events where id = current_setting('t.e_up')::uuid and cycle_id = active_cycle_id()),
+               '0029 reset: upcoming event still listed for participants (active cycle)');
+  perform t.ok(exists (select 1 from events where id = current_setting('t.e_live')::uuid and cycle_id = active_cycle_id()),
+               '0029 reset: live event moved to the new cycle');
+  perform t.ok(exists (select 1 from events where id = current_setting('t.e_done')::uuid and cycle_id = current_setting('t.c_before')::uuid),
+               '0029 reset: finished event stays with the archived cycle');
+  perform t.ok((select (x->>'myRsvp')::boolean from json_array_elements(event_rsvp_summary()) x where x->>'eventId' = current_setting('t.e_up')),
+               '0029 reset: RSVP still there after the move');
+  perform t.eq((set_rsvp(current_setting('t.e_up')::uuid, false)->>'going')::boolean, false, '0029 reset: RSVP still works on the moved event');
+  perform check_in(current_setting('t.e_live')::uuid, 'live29');
+  perform t.ok(exists (select 1 from ledger where user_id = t.u('alice') and source = 'checkin' and ref_id = current_setting('t.e_live')
+                       and cycle_id = active_cycle_id()), '0029 reset: check-in works on a moved event (new cycle)');
+  perform t.eq((select points from profiles where id = t.u('alice')), 20, '0029 reset: check-in points count in the new cycle');
+  perform t.denied('select move_open_events_to_active_cycle()', '0029: repair helper is not callable by users');
+end $$;
+:as_super
+do $$ declare v_old uuid := current_setting('t.c_before')::uuid; n int; begin
+  -- Simulate an event orphaned by an earlier (pre-0029) reset, then run the repair twice.
+  update events set cycle_id = v_old where id = current_setting('t.e_up')::uuid;
+  n := move_open_events_to_active_cycle();
+  perform t.eq(n, 1, '0029 repair: re-attaches the orphaned upcoming event');
+  perform t.eq(move_open_events_to_active_cycle(), 0, '0029 repair: idempotent (second run moves nothing)');
+  perform t.ok((select cycle_id = active_cycle_id() from events where id = current_setting('t.e_up')::uuid), '0029 repair: event back in the active cycle');
+  perform t.ok((select cycle_id = v_old from events where id = current_setting('t.e_done')::uuid), '0029 repair: finished events untouched');
+end $$;
+rollback;
+
+-- =============================================================================
+-- 0030 — in-app event feedback survey (+5 for attendees). Fixed dates; rolled back afterwards.
+-- =============================================================================
+:as_super
+begin;
+update profiles set role = 'participant' where id in (t.u('alice'), t.u('bob'), t.u('carol'), t.u('erin'));
+update profiles set role = 'admin' where id = t.u('admin');
+update profiles set role = 'chair' where id = t.u('chair1');
+update profiles set display_name = v.n from (values ('alice', 'Alice A.'), ('bob', 'Bob'), ('carol', 'Carol'), ('erin', 'Erin')) v(h, n) where id = t.u(v.h);
+update profiles set email_opt_in = true where id = t.u('alice');
+-- s1: a far-future event (not ended yet → open from check-in); s2: long over (window closed); s3: follow-up link test
+insert into events (id, cycle_id, title, campus, kind, location, starts_at, ends_at, activity_id, survey_url, attendee_count) values
+  ('00000000-0000-0000-0000-0000000030e1', active_cycle_id(), 'Stargazing Social', 'duke', 'active', 'Duke Gardens', '2030-06-01 19:00-04', '2030-06-01 21:00-04', 'home_event', null, 3),
+  ('00000000-0000-0000-0000-0000000030e2', active_cycle_id(), 'Old Brunch', 'duke', 'active', 'Quad', '2025-03-01 11:00-05', '2025-03-01 13:00-05', 'home_event', null, 1),
+  ('00000000-0000-0000-0000-0000000030e3', active_cycle_id(), 'Board Game Night', 'unc', 'active', 'Library', '2030-07-01 18:00-04', '2030-07-01 20:00-04', 'home_event', 'https://forms.gle/yac30', 1);
+insert into ledger (cycle_id, user_id, amount, source, activity_id, ref_id, reason)
+select active_cycle_id(), t.u(n), 20, 'checkin', 'home_event', '00000000-0000-0000-0000-0000000030e1', 'Checked in: Stargazing Social'
+  from unnest(array['alice', 'carol', 'erin']) n;
+insert into ledger (cycle_id, user_id, amount, source, activity_id, ref_id, reason) values
+  (active_cycle_id(), t.u('alice'), 20, 'checkin', 'home_event', '00000000-0000-0000-0000-0000000030e2', 'Checked in: Old Brunch'),
+  (active_cycle_id(), t.u('alice'), 20, 'checkin', 'home_event', '00000000-0000-0000-0000-0000000030e3', 'Checked in: Board Game Night');
+
+do $$ begin
+  perform t.ok(exists (select 1 from activities where id = 'event_survey' and tier = 3 and method = 'event_survey' and title = 'Event feedback survey'), '0030: event_survey activity (Tier 3)');
+  perform t.ok(survey_window_open('2030-06-01 21:00-04', '2030-06-01 19:30-04'), '0030 window: open during the event (from check-in)');
+  perform t.ok(survey_window_open('2030-06-01 21:00-04', '2030-06-15 21:00-04'), '0030 window: open until exactly 14 days after it ends');
+  perform t.ok(not survey_window_open('2030-06-01 21:00-04', '2030-06-15 21:00:01-04'), '0030 window: closed one second later');
+end $$;
+
+-- ---- who may answer ----
+:as_bob
+do $$ begin
+  perform t.throws($q$select submit_event_survey('00000000-0000-0000-0000-0000000030e1', 5, 'Stars!')$q$, 'not_attended', '0030: only people who checked in');
+  perform t.ok(not (my_survey_status('00000000-0000-0000-0000-0000000030e1')->>'open')::boolean
+               and not (my_survey_status('00000000-0000-0000-0000-0000000030e1')->>'checkedIn')::boolean, '0030 status: not attended → not open');
+  perform t.throws('select admin_event_survey(''00000000-0000-0000-0000-0000000030e1'')', 'forbidden', '0030: participants can''t see results');
+  perform t.throws('select * from admin_event_survey_counts()', 'forbidden', '0030: participants can''t see counts');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied($q$select submit_event_survey('00000000-0000-0000-0000-0000000030e1', 5, 'x')$q$, '0030: anon can''t submit');
+  perform t.denied('select admin_event_survey(''00000000-0000-0000-0000-0000000030e1'')', '0030: anon can''t read results');
+  perform t.denied('select count(*) from event_surveys', '0030: anon can''t read the table');
+end $$;
+
+-- ---- validation, then a good answer (alice) ----
+:as_alice
+do $$ declare r json; v_before int := (select points from profiles where id = t.u('alice')); begin
+  perform t.throws($q$select submit_event_survey('00000000-0000-0000-0000-0000000030e2', 4, 'Brunch')$q$, 'closed', '0030 window: closed 14 days after the event ended');
+  perform t.throws(format('select submit_event_survey(%L, 4, %L)', gen_random_uuid(), 'x'), 'not_found', '0030: unknown event');
+  perform t.throws($q$select submit_event_survey('00000000-0000-0000-0000-0000000030e1', null, 'Stars!')$q$, 'rating', '0030 required: rating');
+  perform t.throws($q$select submit_event_survey('00000000-0000-0000-0000-0000000030e1', 0, 'Stars!')$q$, 'rating', '0030: rating below 1');
+  perform t.throws($q$select submit_event_survey('00000000-0000-0000-0000-0000000030e1', 6, 'Stars!')$q$, 'rating', '0030: rating above 5');
+  perform t.throws($q$select submit_event_survey('00000000-0000-0000-0000-0000000030e1', 5, '   ')$q$, 'favorite', '0030 required: favorite part (blank after trim)');
+  perform t.throws($q$select submit_event_survey('00000000-0000-0000-0000-0000000030e1', 5, null)$q$, 'favorite', '0030 required: favorite part (null)');
+  perform t.throws(format('select submit_event_survey(%L, 5, %L)', '00000000-0000-0000-0000-0000000030e1', repeat('a', 301)), 'favorite', '0030 limit: favorite ≤ 300');
+  perform t.throws(format('select submit_event_survey(%L, 5, %L, %L)', '00000000-0000-0000-0000-0000000030e1', 'ok', repeat('b', 301)), 'least_favorite', '0030 limit: least favorite ≤ 300');
+  perform t.throws(format('select submit_event_survey(%L, 5, %L, %L, %L)', '00000000-0000-0000-0000-0000000030e1', 'ok', '', repeat('c', 1001)), 'comments', '0030 limit: comments ≤ 1000');
+  perform t.eq((select count(*) from event_surveys), 0::bigint, '0030: nothing saved by refused answers');
+  perform t.ok((my_survey_status('00000000-0000-0000-0000-0000000030e1')->>'open')::boolean, '0030 status: attended + in the window → open');
+
+  -- the digital quest of the week first: the survey must not touch it
+  perform t.ok(can_submit('poll') is null or can_submit('poll') like 'Digital quests are limited%', '0030: (setup) digital cap state read');
+  perform set_config('t.cap_before', coalesce(can_submit('poll'), 'none'), false);
+
+  r := submit_event_survey('00000000-0000-0000-0000-0000000030e1', 5, '  The telescope!  ', 'Bit cold', E'More hot cocoa\nplease', false);
+  perform t.eq((r->>'points')::int, tier_points(3), '0030: +5 (Tier 3) for a complete answer');
+  perform t.eq((select points from profiles where id = t.u('alice')), v_before + tier_points(3), '0030: points land on the profile');
+  perform t.ok((select favorite = 'The telescope!' and least_favorite = 'Bit cold' and comments = E'More hot cocoa\nplease' and rating = 5 and not anonymous
+                  from event_surveys where user_id = t.u('alice')), '0030: saved trimmed (line breaks kept in comments)');
+  perform t.ok((select count(*) = 1 and bool_and(source = 'survey' and activity_id = 'event_survey' and ref_id = '00000000-0000-0000-0000-0000000030e1'
+                                                and amount = tier_points(3) and reason = 'Event feedback survey: Stargazing Social')
+                  from ledger where user_id = t.u('alice') and source = 'survey'), '0030: one ledger row, ref = event id');
+  perform t.throws($q$select submit_event_survey('00000000-0000-0000-0000-0000000030e1', 3, 'Again')$q$, 'duplicate', '0030: once per person per event');
+  perform t.eq((select count(*) from ledger where user_id = t.u('alice') and source = 'survey'), 1::bigint, '0030: points awarded once');
+  perform t.eq(coalesce(can_submit('poll'), 'none'), current_setting('t.cap_before'), '0030: survey doesn''t count toward the weekly digital cap');
+  perform t.ok((my_survey_status('00000000-0000-0000-0000-0000000030e1')->>'done')::boolean
+               and not (my_survey_status('00000000-0000-0000-0000-0000000030e1')->>'open')::boolean, '0030 status: done → not open');
+  perform t.eq((select count(*) from event_surveys), 1::bigint, '0030 RLS: alice reads her own response');
+end $$;
+:as_super
+do $$ declare v_state text; begin
+  begin
+    insert into ledger (cycle_id, user_id, amount, source, activity_id, ref_id, reason)
+    values (active_cycle_id(), t.u('alice'), 5, 'survey', 'event_survey', '00000000-0000-0000-0000-0000000030e1', 'dup');
+  exception when others then
+    v_state := sqlstate;
+  end;
+  perform t.eq(v_state, '23505', '0030: unique index stops a second survey ledger row for the same event');
+end $$;
+:as_carol
+do $$ begin
+  perform t.ok((submit_event_survey('00000000-0000-0000-0000-0000000030e1', 3, 'Meeting people', '', '', true)->>'points')::int = tier_points(3), '0030: anonymous answer still earns points');
+  perform t.eq((select count(*) from event_surveys), 1::bigint, '0030 RLS: carol sees only her own row');
+end $$;
+:as_erin
+do $$ begin
+  perform submit_event_survey('00000000-0000-0000-0000-0000000030e1', 4, 'The view');
+  perform t.eq((select count(*) from event_surveys where user_id <> t.u('erin')), 0::bigint, '0030 RLS: no one else''s rows');
+  perform t.denied($q$insert into event_surveys (event_id, user_id, rating, favorite) values ('00000000-0000-0000-0000-0000000030e2', t.u('erin'), 5, 'x')$q$, '0030: no direct inserts');
+  perform t.denied($q$update event_surveys set rating = 1$q$, '0030: no direct updates');
+end $$;
+
+-- ---- staff results ----
+:as_admin
+do $$ declare r json; begin
+  r := admin_event_survey('00000000-0000-0000-0000-0000000030e1');
+  perform t.ok((r->>'responses')::int = 3 and (r->>'attendees')::int = 3 and (r->>'average')::numeric = 4.0, '0030 results: 3 of 3, average 4.0');
+  perform t.eq((r->'distribution')::jsonb, '[0,0,1,1,1]'::jsonb, '0030 results: distribution 1★..5★');
+  perform t.ok((select count(*) = 1 from json_array_elements(r->'rows') x
+                 where (x->>'anonymous')::boolean and x->>'name' is null and x->>'campus' is null and x->>'favorite' = 'Meeting people'),
+               '0030 results: anonymous row has no name or campus');
+  perform t.ok(position('carol' in lower(r::text)) = 0 and position(t.u('carol')::text in r::text) = 0, '0030 results: nothing identifies the anonymous person');
+  perform t.ok((select count(*) = 2 from json_array_elements(r->'rows') x where x->>'name' in ('Alice A.', 'Erin')), '0030 results: named rows show the name');
+  perform t.ok(exists (select 1 from admin_event_survey_counts() where event_id = '00000000-0000-0000-0000-0000000030e1' and responses = 3 and average = 4.0), '0030: counts for the Events cards');
+  perform t.eq((admin_event_survey('00000000-0000-0000-0000-0000000030e2')->>'responses')::int, 0, '0030 results: empty event → 0');
+  perform t.throws(format('select admin_event_survey(%L)', gen_random_uuid()), 'not_found', '0030 results: unknown event');
+  perform t.eq((select count(*) from event_surveys), 0::bigint, '0030 RLS: staff can''t read the table directly (RPC only)');
+end $$;
+:as_chair1
+do $$ declare s json := admin_stats(); r json := weekly_report_preview(); begin
+  perform t.eq((s->'sources'->>'survey')::int, 3 * tier_points(3), '0030 stats: survey points as their own source');
+  perform t.ok(json_typeof(s->'ratings') = 'array' and json_array_length(s->'ratings') = 0, '0030 stats: ratings list (future event not listed yet)');
+  perform t.ok(r->>'text' like '%📝 EVENT SURVEYS THIS WEEK: 3 new responses · average 4.0★%', '0030 weekly email: survey line (text)');
+  perform t.ok(r->>'html' like '%Event surveys this week:</b> 3 new responses · average <b>4.0★</b>%', '0030 weekly email: survey line (HTML)');
+  perform t.ok(substring(r->>'text' from E'📝 EVENT SURVEYS THIS WEEK:[^\n]*') not similar to '%(Carol|Alice|Erin)%', '0030 weekly email: survey line has no names');
+end $$;
+-- started events only show in the ratings list
+:as_super
+update events set starts_at = now() - interval '2 days', ends_at = now() - interval '2 days' + interval '2 hours' where id = '00000000-0000-0000-0000-0000000030e1';
+:as_chair1
+do $$ declare s json := admin_stats(); begin
+  perform t.ok(exists (select 1 from json_array_elements(s->'ratings') x
+                        where x->>'id' = '00000000-0000-0000-0000-0000000030e1' and (x->>'responses')::int = 3 and (x->>'average')::numeric = 4.0
+                          and (x->>'came')::int = 3 and x->>'title' = 'Stargazing Social'), '0030 stats: per-event average rating + responses');
+end $$;
+
+-- ---- follow-up links to the in-app survey ----
+:as_service
+do $$ begin
+  perform t.eq(queue_event_followups('2030-07-01 21:30-04'), 1, '0030 follow-up: Board Game Night followed up');
+end $$;
+:as_super
+do $$ begin
+  perform t.eq((select body from notifications where kind = 'event_followup' and user_id = t.u('alice') and title = 'Thanks for coming to Board Game Night! 🐂'),
+               'How was it? Rate it in the app for +' || tier_points(3) || ' points (takes a minute): #/survey/00000000-0000-0000-0000-0000000030e3'
+               || ' Or fill out the YAC survey here: https://forms.gle/yac30 It counts as the “Complete a Feedback Survey” digital quest: send a screenshot of the confirmation in Quests for ' || tier_points(3) || ' points.',
+               '0030 follow-up: note links #/survey/<id> and keeps the external survey line');
+  perform t.ok((select body_text like '%https://ncssmyac.github.io/YACquest/#/survey/00000000-0000-0000-0000-0000000030e3%'
+                       and body_text like '%Or fill out the YAC survey here: https://forms.gle/yac30%'
+                       and body_html like '%href="https://ncssmyac.github.io/YACquest/#/survey/00000000-0000-0000-0000-0000000030e3"%'
+                  from email_outbox where kind = 'event_followup' and dedupe_key = 'followup:00000000-0000-0000-0000-0000000030e3:' || t.u('alice')),
+               '0030 follow-up: email links <app_url>#/survey/<id> (text + button) and the external survey');
 end $$;
 rollback;
 

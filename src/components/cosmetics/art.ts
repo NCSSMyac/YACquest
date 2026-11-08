@@ -5,6 +5,7 @@
  */
 import type { AvatarId } from '../../types';
 import { GRIDS } from '../Sprite';
+import { SEASONAL_ACCESSORY_ART, SEASONAL_HAT_ART, SEASONAL_PALETTE, type SeasonalArt } from './seasonalArt';
 
 /** Extra colors used by cosmetics/backgrounds (chars unused by the characters). */
 export const EXTRA_PALETTE: Record<string, string> = {
@@ -27,6 +28,8 @@ export const EXTRA_PALETTE: Record<string, string> = {
   Z: '#3a2414', // cave
   W: '#5c3a1e', // cave light
   R: '#a3282a', // deep red (Hero's Cape, staff-only art)
+  // 0028 seasonal items use symbol chars (seasonalArt.ts)
+  ...SEASONAL_PALETTE,
 };
 
 export interface Art {
@@ -104,9 +107,12 @@ export const HAT_ART: Record<string, Art> = {
     ],
     sink: 2,
   },
+  // 0028 seasonal
+  ...SEASONAL_HAT_ART,
 };
 
-export const ACCESSORY_ART: Record<string, Art> = {
+/** `anchor: 'side'` (0028 Diya) sits beside the character (SIDE_ANCHOR) instead of at the neck. */
+export const ACCESSORY_ART: Record<string, SeasonalArt> = {
   bowtie: {
     grid: [
       'kk...kk',
@@ -155,6 +161,8 @@ export const ACCESSORY_ART: Record<string, Art> = {
       '.....kkk.....',
     ],
   },
+  // 0028 seasonal
+  ...SEASONAL_ACCESSORY_ART,
 };
 
 /** Sparkle aura: twinkling stars placed around the character (frame coords, 32×32 grid). */

@@ -8,6 +8,23 @@ import { OfflineBannerInChrome, useRegisterChrome } from './OfflineBanner';
 import { Sprite } from './Sprite';
 import { TodayEventProvider, useTodayEvent } from './TodayEvent';
 import { localTourDone, setLocalTourDone, shouldAutoShowTour, useTourRequest } from '../lib/tour';
+import { claimToasts } from '../lib/seasonal';
+import { useToast } from './ui';
+
+/** 0028: once per session per person, claim seasonal items whose window is open today; toast what's new. */
+const seasonalClaimedFor = new Set<string>();
+function SeasonalClaimer({ userId }: { userId: string }) {
+  const toast = useToast();
+  useEffect(() => {
+    if (seasonalClaimedFor.has(userId)) return;
+    seasonalClaimedFor.add(userId);
+    api.claimSeasonalItems().then(
+      (r) => claimToasts(r.claimed).forEach((t, i) => setTimeout(() => toast(t, 'info'), 600 + i * 1800)),
+      () => seasonalClaimedFor.delete(userId),
+    );
+  }, [userId, toast]);
+  return null;
+}
 
 // 0026: lazy-loaded so the tour stays out of the main bundle (most visits never open it).
 const WelcomeTour = lazy(() => import('./WelcomeTour'));
@@ -57,6 +74,7 @@ function Shell() {
   return (
     <div className={`app-shell${wide ? ' wide' : ''}`}>
       {user && <NotificationPopups />}
+      {user && <SeasonalClaimer userId={user.id} />}
       {user && (autoTour || replay) && (
         <Suspense fallback={null}>
           <WelcomeTour user={user} onClose={closeTour} />

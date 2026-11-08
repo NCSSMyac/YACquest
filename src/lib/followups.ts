@@ -35,10 +35,15 @@ export function followupWhen(iso: string): string {
 
 export const thanksTitle = (title: string) => `Thanks for coming to ${title}! 🐂`;
 
-export function thanksBody(surveyUrl: string | undefined | null, questTitle: string, points: number): string {
+/**
+ * 0030: the in-app survey comes first (`#/survey/<id>` becomes a "Rate this event" button in Notifications);
+ * an event's external survey link is still mentioned for the separate "Complete a Feedback Survey" screenshot quest.
+ */
+export function thanksBody(eventId: string, surveyUrl: string | undefined | null, questTitle: string, points: number, surveyPoints: number): string {
+  const inApp = `How was it? Rate it in the app for +${surveyPoints} points (takes a minute): #/survey/${eventId}`;
   return surveyUrl
-    ? `Tell us how it went in the feedback survey: ${surveyUrl} It counts as the “${questTitle}” digital quest: send a screenshot of the confirmation in Quests for ${points} points.`
-    : `Tell us how it went! When YAC shares the feedback survey, filling it out counts as the “${questTitle}” digital quest: send a screenshot of the confirmation in Quests for ${points} points.`;
+    ? `${inApp} Or fill out the YAC survey here: ${surveyUrl} It counts as the “${questTitle}” digital quest: send a screenshot of the confirmation in Quests for ${points} points.`
+    : inApp;
 }
 
 export const missedTitle = (title: string) => `Sorry we missed you at ${title}`;

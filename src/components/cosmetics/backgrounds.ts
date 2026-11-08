@@ -3,6 +3,7 @@
  * character tile plus a little headroom for hats) and is drawn procedurally from palette chars.
  */
 import { EXTRA_PALETTE } from './art';
+import { SEASONAL_BACKGROUNDS } from './seasonalArt';
 
 export const FRAME = { x: -2, y: -4, w: 36, h: 36 } as const;
 
@@ -284,6 +285,8 @@ const BUILDERS: Record<string, () => Grid> = {
   council_chamber: councilChamber,
   starlit_throne: starlitThrone,
   hall_of_heroes: hallOfHeroes,
+  // 0028 seasonal (seasonalArt.ts)
+  ...SEASONAL_BACKGROUNDS,
 };
 
 const cache = new Map<string, string[]>();

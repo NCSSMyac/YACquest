@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as api from '../../api';
+import { SEASONAL, type SeasonalHoliday } from '../../config';
+import { holidayState, returnsLabel, seasonalItems, shortDate, untilText, type SeasonalState } from '../../lib/seasonal';
 import { useAuth } from '../../lib/auth';
 import { badgeById } from '../../lib/badges';
 import { COSMETICS, type CosmeticDef, type UnlockRule } from '../../lib/cosmetics';
@@ -7,7 +9,7 @@ import { errorMessage } from '../../lib/useAsync';
 import { STAFF_COSMETICS, staffRequirementText } from '../../lib/staffRewards';
 import type { CosmeticSlot, Look, StaffRewards } from '../../types';
 import { Avatar, CosmeticIcon } from '../Avatar';
-import { ErrorText, Loading, Panel, useToast } from '../ui';
+import { ErrorText, Loading, Modal, Panel, useToast } from '../ui';
 
 const SECTIONS: { slot: CosmeticSlot; title: string }[] = [
   { slot: 'hat', title: 'Hats' },
@@ -25,22 +27,36 @@ export function requirementText(rule: UnlockRule): string {
       return `Earn the ${badgeById(rule.id)?.name ?? rule.id} badge`;
     case 'badges':
       return `Collect ${rule.min} badges`;
+    case 'seasonal':
+      return 'Limited time';
   }
 }
 
-type Cat = CosmeticSlot | 'council' | 'hero';
+type Cat = CosmeticSlot | 'seasonal' | 'council' | 'hero';
+const CAT_IDS: Cat[] = ['hat', 'accessory', 'background', 'seasonal', 'council', 'hero'];
+/** Deep link: /prize?tab=wardrobe&cat=seasonal */
+export const isWardrobeCat = (v: string | null): v is Cat => !!v && (CAT_IDS as string[]).includes(v);
+const REGULAR = COSMETICS.filter((c) => c.rule.type !== 'seasonal');
 
 const sameLook = (a?: Look, b?: Look) => (a?.hat ?? '') === (b?.hat ?? '') && (a?.accessory ?? '') === (b?.accessory ?? '') && (a?.background ?? '') === (b?.background ?? '');
 
 /** `staff` (0020): the caller's staff rewards — only ever non-null for admins/chairs; adds the Council + Hero sections. */
-export function WardrobePanel({ unlocks, error, staff }: { unlocks: string[] | null; error?: string | null; staff?: StaffRewards | null }) {
+export function WardrobePanel({ unlocks, error, staff, initialCat }: { unlocks: string[] | null; error?: string | null; staff?: StaffRewards | null; initialCat?: string | null }) {
   const { user, refresh } = useAuth();
   const toast = useToast();
   const [draft, setDraft] = useState<Look>(user?.look ?? {});
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [cat, setCat] = useState<Cat>('hat');
+  const [cat, setCat] = useState<Cat>(isWardrobeCat(initialCat ?? null) ? (initialCat as Cat) : 'hat');
+  const [about, setAbout] = useState<SeasonalHoliday | null>(null);
   const saved = user?.look;
+  // 0028: opening the Wardrobe claims any seasonal item whose window is open today (the list reloads itself).
+  const claimed = useRef(false);
+  useEffect(() => {
+    if (claimed.current || !user) return;
+    claimed.current = true;
+    api.claimSeasonalItems().catch(() => {});
+  }, [user]);
   useEffect(() => {
     setDraft(saved ?? {});
   }, [saved?.hat, saved?.accessory, saved?.background]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -74,9 +90,11 @@ export function WardrobePanel({ unlocks, error, staff }: { unlocks: string[] | n
   const heroItems = STAFF_COSMETICS.filter((c) => c.rule.type === 'hero');
   const cats: { id: Cat; label: string; got: number; total: number }[] = [
     ...SECTIONS.map((sec) => {
-      const items = COSMETICS.filter((c) => c.slot === sec.slot);
+      const items = REGULAR.filter((c) => c.slot === sec.slot);
       return { id: sec.slot as Cat, label: sec.title, got: items.filter((c) => have.has(c.id)).length, total: items.length };
     }),
+    // 0028: limited-time items (shown even when none are owned, as "Returns next year")
+    { id: 'seasonal' as Cat, label: '🎉 Seasonal', got: seasonalItems().filter((c) => have.has(c.id)).length, total: seasonalItems().length },
     ...(staff
       ? [
           { id: 'council' as Cat, label: '🏛️ Council', got: council.filter((c) => have.has(c.id)).length, total: council.length },
@@ -120,7 +138,7 @@ export function WardrobePanel({ unlocks, error, staff }: { unlocks: string[] | n
               <Tile selected={!draft[section.slot]} onClick={() => setDraft((d) => ({ ...d, [section.slot]: undefined }))} label="None">
                 <div style={{ width: 44, height: 44, display: 'grid', placeItems: 'center', fontSize: 26, fontWeight: 800, color: 'var(--text-soft)' }} aria-hidden>∅</div>
               </Tile>
-              {COSMETICS.filter((c) => c.slot === section.slot).map((c) => {
+              {REGULAR.filter((c) => c.slot === section.slot).map((c) => {
                 const locked = !have.has(c.id);
                 return (
                   <Tile key={c.id} selected={draft[c.slot] === c.id} locked={locked} onClick={() => toggle(c)} label={c.name} hint={locked ? requirementText(c.rule) : undefined}>
@@ -134,6 +152,7 @@ export function WardrobePanel({ unlocks, error, staff }: { unlocks: string[] | n
             </div>
           </Panel>
         )}
+        {current === 'seasonal' && <SeasonalSection have={have} draft={draft} campus={user.campus} onToggle={toggle} onAbout={setAbout} />}
         {staff && current === 'council' && (
           <StaffSection
             title="🏛️ Council wardrobe"
@@ -158,7 +177,162 @@ export function WardrobePanel({ unlocks, error, staff }: { unlocks: string[] | n
           />
         )}
       </div>
+      {about && <AboutModal holiday={about} have={have} campus={user.campus} onClose={() => setAbout(null)} />}
     </div>
+  );
+}
+
+// ───────────── 0028 Seasonal ─────────────
+
+/** Active holidays first (soonest to end), then owned ones, then "Returns next year". */
+function seasonalOrder(have: Set<string>, now = Date.now()) {
+  const rank = (st: SeasonalState) => (st.kind === 'available' ? 0 : st.kind === 'owned' ? 1 : 2);
+  return SEASONAL.map((h, i) => {
+    const owned = seasonalItems(h.id).some((c) => have.has(c.id));
+    return { h, i, st: holidayState(h, owned, now) };
+  }).sort((a, b) => rank(a.st) - rank(b.st) || (a.st.kind === 'available' && b.st.kind === 'available' ? a.st.endsOn.localeCompare(b.st.endsOn) : 0) || a.i - b.i);
+}
+
+function StateChip({ st }: { st: SeasonalState }) {
+  if (st.kind === 'available') return <span className="chip seasonal-chip">Limited time!</span>;
+  if (st.kind === 'owned') return <span className="chip neutral">Yours to keep</span>;
+  return <span className="chip neutral seasonal-returns">{returnsLabel(st)}</span>;
+}
+
+function SeasonalSection({ have, draft, campus, onToggle, onAbout }: {
+  have: Set<string>;
+  draft: Look;
+  campus: Parameters<typeof CosmeticIcon>[0]['campus'];
+  onToggle: (c: Pick<CosmeticDef, 'id' | 'slot'>) => void;
+  onAbout: (h: SeasonalHoliday) => void;
+}) {
+  const groups = seasonalOrder(have);
+  return (
+    <div className="stack seasonal">
+      <p className="muted seasonal-intro">Limited-time looks that honor holidays and traditions. Free for everyone while they’re here, and yours to keep once you’ve opened the Wardrobe during that time. They never change your points.</p>
+      {groups.map(({ h, st }) => {
+        const items = seasonalItems(h.id);
+        const greyed = st.kind === 'returns';
+        return (
+          <Panel key={h.id} className={`seasonal-group${greyed ? ' greyed' : ''}`}>
+            <div className="seasonal-head">
+              <h2 className="seasonal-title"><span aria-hidden="true">{h.emoji}</span> {h.name}</h2>
+              <StateChip st={st} />
+            </div>
+            <p className="seasonal-when">
+              {st.kind === 'available' ? untilText(st.endsOn, st.daysLeft)
+                : st.kind === 'owned' ? 'Wear it any time.'
+                : st.next ? `${returnsLabel(st) === 'Coming soon' ? 'Arrives' : 'Back'} ${shortDate(st.next[0])}, ${st.next[0].slice(0, 4)}` : 'Returns next year'}
+            </p>
+            <div role="group" aria-label={`${h.name} items`} className="tile-grid">
+              {items.map((c) => {
+                const locked = !have.has(c.id);
+                return (
+                  <SeasonalTile key={c.id} selected={draft[c.slot] === c.id} locked={locked} label={c.name}
+                    hint={locked ? (st.kind === 'available' ? 'Opening…' : returnsLabel(st)) : undefined}
+                    onTap={() => (locked ? onAbout(h) : onToggle(c))} onLongPress={() => onAbout(h)}>
+                    <span aria-hidden="true" style={{ position: 'relative', display: 'inline-block', lineHeight: 0 }}>
+                      <CosmeticIcon id={c.id} size={44} campus={campus} locked={locked} />
+                      {locked && <LockGlyph />}
+                    </span>
+                  </SeasonalTile>
+                );
+              })}
+            </div>
+            <button type="button" className="btn small ghost seasonal-about-btn" onClick={() => onAbout(h)} data-holiday={h.id}>
+              <span aria-hidden="true">ⓘ </span>About this item<span className="sr-only">: {h.name}</span>
+            </button>
+          </Panel>
+        );
+      })}
+      <p className="muted seasonal-tip">Tip: press and hold an item to read what it honors.</p>
+    </div>
+  );
+}
+
+/** Tap = try on (or About when locked); press and hold = About this item. */
+function SeasonalTile({ selected, locked, label, hint, onTap, onLongPress, children }: {
+  selected: boolean;
+  locked: boolean;
+  label: string;
+  hint?: string;
+  onTap: () => void;
+  onLongPress: () => void;
+  children: React.ReactNode;
+}) {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressed = useRef(false);
+  const clear = () => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+  };
+  return (
+    <button
+      type="button"
+      aria-pressed={locked ? undefined : selected}
+      className={`panel flat seasonal-tile${selected ? ' selected' : ''}${locked ? ' locked' : ''}`}
+      onPointerDown={() => {
+        longPressed.current = false;
+        clear();
+        timer.current = setTimeout(() => {
+          longPressed.current = true;
+          onLongPress();
+        }, 550);
+      }}
+      onPointerUp={clear}
+      onPointerLeave={clear}
+      onPointerCancel={clear}
+      onContextMenu={(e) => e.preventDefault()}
+      onClick={() => {
+        if (longPressed.current) {
+          longPressed.current = false;
+          return;
+        }
+        onTap();
+      }}
+    >
+      {children}
+      <span className="seasonal-tile-name">{label}</span>
+      {hint && <span className="muted seasonal-tile-hint">{hint}</span>}
+      {locked && <span className="sr-only"> (opens About this item)</span>}
+    </button>
+  );
+}
+
+function AboutModal({ holiday, have, campus, onClose }: { holiday: SeasonalHoliday; have: Set<string>; campus: Parameters<typeof CosmeticIcon>[0]['campus']; onClose: () => void }) {
+  const items = seasonalItems(holiday.id);
+  const owned = items.some((c) => have.has(c.id));
+  const st = holidayState(holiday, owned);
+  return (
+    <Modal open onClose={onClose} title={`About this item: ${holiday.name}`}>
+      <div className="stack seasonal-about">
+        <div className="seasonal-about-art">
+          {items.map((c) => (
+            <figure key={c.id}>
+              <CosmeticIcon id={c.id} size={96} campus={campus} locked={!have.has(c.id) && st.kind === 'returns'} />
+              <figcaption>
+                <b>{c.name}</b>
+                <span className="muted">{c.slot === 'hat' ? 'Hat' : c.slot === 'accessory' ? 'Accessory' : 'Background'}</span>
+              </figcaption>
+            </figure>
+          ))}
+        </div>
+        <div className="seasonal-about-label">
+          <span className="chip t1">{holiday.emoji} {holiday.name}</span>
+          <StateChip st={st} />
+        </div>
+        <p className="seasonal-about-text">{holiday.about}</p>
+        {holiday.learnMore && (
+          <a className="btn small blue seasonal-learn" href={holiday.learnMore.url} target="_blank" rel="noopener noreferrer">
+            Learn more: {holiday.learnMore.label}<span className="sr-only"> (opens in a new tab)</span> ↗
+          </a>
+        )}
+        <p className="muted seasonal-about-fine">
+          {st.kind === 'available' ? `${untilText(st.endsOn, st.daysLeft)}. Free for everyone, and yours to keep.` : st.kind === 'owned' ? 'You have this one. Wear it any time.' : returnsLabel(st) === 'Coming soon' && st.kind === 'returns' && st.next ? `Not here yet: free for everyone from ${shortDate(st.next[0])} to ${shortDate(st.next[1])}.` : 'Not available right now. It returns next year.'}
+        </p>
+        <button type="button" className="btn" onClick={onClose}>Close</button>
+      </div>
+    </Modal>
   );
 }
 

@@ -29,7 +29,7 @@ function PersonSearch({ label, actions, exclude }: { label: string; actions: Sea
           {rows.map((u) => (
             <li key={u.id} className="spread" style={{ flexWrap: 'wrap', gap: 8 }}>
               <span>{u.displayName} <span className="muted">@{u.handle}</span></span>
-              <span className="btn-row" style={{ gap: 6 }}>
+              <span className="btn-row">
                 {actions.map((a) => (
                   <button key={a.label} className={`btn small ${a.className ?? 'ghost'}`} disabled={a.disabled} title={a.title} onClick={() => a.onPick(u)}>{a.label}</button>
                 ))}
@@ -110,7 +110,7 @@ export default function Team() {
                 </div>
                 <span className="muted wrap-anywhere">{m.email}{!m.emailVerified && ' · email not confirmed'}</span>
                 {m.role === 'admin' && (
-                  <div className="btn-row" style={{ gap: 6 }}>
+                  <div className="btn-row">
                     <button className="btn small" disabled={chairsFull} title={chairsFull ? fullHint : undefined} onClick={() => openPromote(m)}>Make YACquest Chair</button>
                     <button className="btn small red" onClick={() => { setErr(null); setRemoving(m); }}>Remove admin</button>
                   </div>

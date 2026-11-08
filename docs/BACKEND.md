@@ -448,3 +448,58 @@ Signed-in users only. Checks, in order: `confirm` (the typed text, trimmed, lead
 - App version: `vite.config.ts` defines `__APP_VERSION__` = `{version (package.json), sha (GITHUB_SHA[0:7] or 'dev'), builtAt}` and writes `dist/version.json`; Help shows "App version X (built DATE)"; the app re-fetches `./version.json` (no cache) on focus at most every 30 min and shows "New version available — Refresh" when a newer build is live (never for `dev` builds).
 - Error buffer (`src/lib/errorBuffer.ts`): `window.onerror` + `unhandledrejection` + failed screen loads, last 5 messages in memory only, scrubbed; attached to problem reports. Global crash screen (`ErrorBoundary`) with Reload and Report a problem.
 - Accessibility pass: Modal focus trap + Escape + focus return + `aria-labelledby`; toasts in a `role=status` live region (errors `role=alert`); `role=main` on pages outside the app chrome; contrast tokens (`--green`, `--red`, `--link`, chip text colors, new `--red-text` / `--green-text` / `--me-row`); 44px tap targets; accessible names include the visible text.
+
+## 0028 — Pace tracker, YACquest Wrapped + end-of-year wrap-up, seasonal wardrobe
+Safe to re-run, **no points-rule changes**, no Edge Function re-deploy.
+
+### Pace (staff)
+- `admin_pace(p_now default null)` → `{generatedAt, goal, prizeCount, cycle{name,startsAt,endsAt}, weeks[] (Mondays, America/New_York, cycle start → now), weeklyTotals[] (all participants' points per week), players[{id,name,campus,points,firstAt}] (participants with ledger rows up to p_now), top[{id,name,campus,points,cumulative[]}] (top 10, cumulative per week)}`. `require_admin`. Participants only. The projection is client-side: `src/lib/pace.ts` (`projectPace`, `paceChart`; settings `PACE` in config).
+
+### Wrapped
+- `wrapped_opens_at(ends_at)` = (NY day of `ends_at` − 7 days) at 00:00 NY → Apr 24, 2027 00:00 EDT (= `WRAPPED.opensAt`).
+- `my_wrapped()` → `{cycleName, cycleEndsAt, opensAt, preview, displayName, handle, campus, role, avatar, hat, accessory, background, points, eventsAttended, favoriteCampus, favoriteKind, bestMonth{month,points}|null, bestStreak, friendsBrought, monthWins, mix{event,digital,photos,quests,referral,staff}, earnedBadgeIds[], badgeTotal, badgesEarned}` plus, for **participants**: `rarestBadge{id,holders,pct}|null, rankOverall, rankCampus, participants, campusParticipants, topPctOverall, topPctCampus` (ranks and rarity among `role = 'participant'` only; top % = ceil(100 × rank / players), min 1), or for **staff**: `staff{reviews, eventsHosted, checkinsAtHosted, announcements, heroCrowns (this cycle), councilBadges, councilBadgeIds}` and no rank/rarity. Errors: `not_open` before `wrapped_opens_at` unless YACquest Chair (`preview = true`).
+- `wrapped_badge_rarity (cycle_id pk, computed_at, participants, counts jsonb)`: cache refreshed when older than 1 h by `badge_rarity()` (internal).
+- `wrapped_sends (cycle_id pk, sent_at, notified, emailed)` + `queue_wrapped_notifications(p_now default now())` → int (**service role only**): if `p_now` is in `[opens_at, ends_at + 14 days)` and no marker yet → marker row, notification kind `wrapped` "Your YACquest Wrapped is here! 🎁" to **every profile** (participants + staff) with a teaser (points · events · badges), email kind `wrapped` (dedupe `wrapped:<cycle>:<user>`) to opted-in confirmed addresses linking to `app_config.app_url || '#/wrapped'`, logs `wrapped_sent` (System). `enqueue_weekly_report_if_due()` = exact copy of 0026 + guarded step 0c calling it. `email_outbox.kind` allows `wrapped`. New column `app_config.app_url` (default `https://ncssmyac.github.io/YACquest/`).
+
+### End-of-year checklist
+- `eoy_checklist (cycle_id, item ∈ ledger_backup|confirm_winners|deliver_gift_cards|thank_you|reset, done, done_by, done_at, pk(cycle_id,item))`, RLS on, no grants.
+- `eoy_checklist()` → `{cycleName, opensAt, endsAt, windowEndsAt, inWindow, cycleEnded, fulfillBy, wrapped{sentAt,notified,emailed}|null, items[{id,done,doneAt,doneBy}]}` (staff).
+- `set_eoy_item(p_item, p_done)` (staff): `auto` for `wrapped_sent`, `unknown`, `forbidden` (reset, non-chair), `too_early` (reset before `ends_at`). Logs `eoy_item_checked` / `eoy_item_unchecked`.
+
+### Seasonal wardrobe
+- `cosmetics.rule_type` adds `seasonal` (`rule_value` = holiday id); 7 items: `cempasuchil_crown` (hat), `papel_picado` (bg) — `dia_de_muertos`; `diya` (accessory), `rangoli_diyas` (bg) — `diwali`; `harvest_scarf` (accessory), `autumn_harvest` (bg) — `thanksgiving`; `land_of_longleaf` (bg) — `indigenous_peoples_day`.
+- `seasonal_holidays (id, name, emoji, sort_order)`, `seasonal_windows (holiday, year, starts_on, ends_on)` (readable by anyone; inclusive NY dates; seeded 2026 + 2027; re-running 0028 resets those rows). `second_monday_of_october(year)`.
+- `seasonal_unlocks (user_id, item_id, unlocked_at)` — no FK to `cosmetics` (re-running 0009 deletes unknown catalogue rows), not reset with the cycle, deleted with the account.
+- `seasonal_active(p_now)` (internal) and `claim_seasonal_for(user, p_now)` (internal: inserts open items, one `seasonal` notification per holiday the first time) → `claim_seasonal_items()` → `{claimed[], active[{holiday,endsOn}]}` for any signed-in user.
+- `unlocks_for()` (copy of 0009 + `seasonal` = owned) and `my_unlocks()` re-created; `equip_look()` = copy of 0020 that first claims today's open items. Owned seasonal items equip any time; unowned → `locked`.
+
+### Grants
+`admin_pace`, `my_wrapped`, `eoy_checklist`, `set_eoy_item`, `claim_seasonal_items`, `my_unlocks`, `equip_look`: `revoke … from public, anon; grant … to authenticated`. `queue_wrapped_notifications`, `enqueue_weekly_report_if_due`: service_role only. `wrapped_for`, `badge_rarity`, `claim_seasonal_for`, `seasonal_active`, `unlocks_for`: internal.
+
+### App-only
+`#/wrapped` (lazy `src/screens/Wrapped.tsx` + `wrapped.css`; share image `src/lib/wrappedCard.ts`, built from `src/lib/questCard.ts` pieces), Home Wrapped banner, `src/lib/wrapped.ts` (availability, YAC personality, slides), `src/lib/seasonal.ts` (dates, states), `src/components/cosmetics/seasonalArt.ts`, Wardrobe Seasonal tab + About this item, Admin `PaceViews.tsx` / `EndOfYear.tsx`, `?template=builtin:year_end` on Announce. Mock flag `WRAPPED.mockAlwaysOpen` opens Wrapped any time in the browser demo.
+
+## 0029 — Upcoming events survive a reset
+
+- **Bug fixed:** the app lists participants' events with `events.cycle_id = active cycle`, and `reset_cycle()` starts a new cycle, so events created before a reset (even ones that hadn't happened yet) disappeared from the Quests tab.
+- `move_open_events_to_active_cycle()` → int (**internal**, no grants): `update events set cycle_id = active_cycle_id() where cycle_id is distinct from active_cycle_id() and ends_at + make_interval(mins => check_in_grace_minutes) > now()`; returns the number moved. Idempotent.
+- `reset_cycle(p_confirm, p_name, p_ends_at)` = exact copy of 0001 + calls it right after the new cycle is inserted. Upcoming/live events move; finished events stay with the archived cycle.
+- One-time repair: the migration runs the helper once (re-attaches events orphaned by an earlier reset; harmless if the same `update` was already run by hand).
+- `event_rsvps` has no cycle column (keyed by event), so RSVPs follow the event. `check_in()` never compared the event's cycle (ledger rows go to the active cycle); `set_rsvp`, `event_rsvp_summary`, RSVP reminders, `admin_stats` and Wrapped's "events hosted" compare `events.cycle_id` with the active cycle, so a moved event behaves like a new one.
+- `admin_list_events()` (unchanged) returns **every** cycle. The app marks archived-cycle rows `olderCycle: true` (live: `cycle_id` ≠ active cycle) and Admin → Events hides them behind an **Older cycles** toggle. Mock mirrors this (`eventCycles` / `cycleId` in the demo DB).
+
+## 0030 — In-app event feedback survey (+5 for attendees)
+
+Additive (no downtime): one table, one activity row, two widened CHECKs (added `not valid`, then validated), new functions, four re-created functions.
+- **Activity** `event_survey` — "Event feedback survey", Tier 3 (`tier_points(3)` = 5), method `event_survey` (`activities.method` check widened). Once per person per event. **Not** part of the weekly digital cap (that cap only counts tier-3 *submissions*). The screenshot quest `survey` ("Complete a Feedback Survey") is unchanged and still covers external surveys.
+- **Ledger:** `source` gets `'survey'`; `ledger_one_survey` unique index on `(user_id, ref_id) where source = 'survey'`, `ref_id` = event id, `activity_id = 'event_survey'`, reason `Event feedback survey: <title>`.
+- **Table `event_surveys`** (id, event_id, user_id, rating 1–5, favorite 1–300, least_favorite ≤300, comments ≤1000, anonymous, created_at; `unique (event_id, user_id)`; cascades with the event / profile). RLS: a signed-in user SELECTs **own rows only**; no direct writes; staff read through the RPC below.
+- **Window:** from your check-in until `ends_at + 14 days` (`survey_window_open(ends_at, now)`, internal).
+- `submit_event_survey(p_event_id, p_rating, p_favorite, p_least_favorite default '', p_comments default '', p_anonymous default false)` → `{eventId, points, surveyId}` (signed in). Trims + strips control characters (`survey_text`, internal), then saves the answer **and** the ledger row in one transaction (advisory lock + unique index). Errors: `not_found`, `not_attended`, `closed`, `rating`, `favorite`, `least_favorite`, `comments`, `duplicate`.
+- `my_survey_status(p_event_id)` → `{eventId, title, startsAt, endsAt, checkedIn, done, closesAt, open, points}` (signed in).
+- `admin_event_survey(p_event_id)` → `{eventId, title, startsAt, attendees, responses, average, distribution [1★..5★], rows [{name, campus, anonymous, rating, favorite, leastFavorite, comments, createdAt}]}` (admins + chairs). **Anonymous rows have `name`/`campus` null and no id.** `attendees` = greatest(`attendee_count`, distinct check-ins).
+- `admin_event_survey_counts()` → table `(event_id, responses, average)` (admins + chairs) for the Admin → Events "📊 Survey (N)" button.
+- **Re-created (exact copies + marked additions):** `send_followup_for_event` (0026): the "Thanks for coming" note now reads `How was it? Rate it in the app for +5 points (takes a minute): #/survey/<id>` (+ `Or fill out the YAC survey here: <survey_url> …` when the event has one); the email links `<app_config.app_url>#/survey/<id>` (text + "⭐ Rate this event" button). `queue_event_followups` / `send_event_followup_now` unchanged. `admin_stats` (0025): `sources.survey` + `ratings [{id, title, startsAt, came, responses, average}]` (started events of this cycle with answers). `build_weekly_report` (0027): one line `📝 EVENT SURVEYS THIS WEEK: N new responses · average X★` (no names).
+- **Grants:** the two participant + two staff RPCs and `admin_stats` → authenticated (revoked from public/anon); `survey_window_open`, `survey_text`, `send_followup_for_event`, `build_weekly_report` → nobody.
+- **App:** `#/survey/<eventId>` (lazy), "📝 Rate this event (+5)" / "✓ Survey done" on past event cards (`listEvents` adds `surveyDone`; live reads own `event_surveys` rows), a line on the check-in pass, a button in the follow-up notification (`src/lib/linkify.ts` turns `#/survey/<id>` into a router link), Admin → Events "📊 Survey (N)" results modal (lazy, CSV via `src/lib/csv.ts`, anonymous rows without names), Stats "Event ratings" card. Rules in `src/lib/eventSurvey.ts`; mock mirrors everything (`surveys` in the demo DB, v13; four seeded Kickoff Mixer answers).
+

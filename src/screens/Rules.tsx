@@ -70,6 +70,7 @@ export function RulesContent({ expanded = false }: { expanded?: boolean }) {
       <Accordion defaultOpen={expanded} glyph="shield" title="Fair play limits" summary={`Digital: ${CAPS.digitalPerWeek} per week · referrals: ${CAPS.referralsPerCycle}`}>
         <ul style={{ margin: 0, paddingLeft: 20 }}>
           <li>Digital quests: {CAPS.digitalPerWeek} per week in total.</li>
+          <li>Event feedback surveys in the app: +{TIER_POINTS[3]} once per event you checked in to (up to 14 days after it), and they don’t count toward the digital limit.</li>
           <li>Social tag posts: {CAPS.socialTagPerMonth} per month.</li>
           <li>Friend referrals: up to {CAPS.referralsPerCycle} per cycle, and your friend must attend an event.</li>
           <li>Event photos: {CAPS.photosPerEvent} per event, {CAPS.photosPerCycle} per cycle.</li>

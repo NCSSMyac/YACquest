@@ -49,7 +49,8 @@ export type VerifyMethod =
   | 'screenshot' // upload proof, reviewed by a lead
   | 'photo' // upload event photo, reviewed by a lead
   | 'lead_award' // a YAC admin awards it (e.g. winning a game)
-  | 'referral'; // automatic when a referred friend attends their first event
+  | 'referral' // automatic when a referred friend attends their first event
+  | 'event_survey'; // 0030: automatic when you answer the in-app survey of an event you checked in to
 
 export interface Activity {
   id: string;
@@ -99,7 +100,7 @@ export interface Submission {
   shareOnWall?: boolean;
 }
 
-export type LedgerSource = 'checkin' | 'submission' | 'manual' | 'referral' | 'seed';
+export type LedgerSource = 'checkin' | 'submission' | 'manual' | 'referral' | 'survey' | 'seed';
 
 /** Append-only. A user's points = sum(amount). Never edit a row; add a correcting one. */
 export interface LedgerEntry {
@@ -162,7 +163,11 @@ export type NotificationKind =
   /** 0024: "⏰ Starts in 1 hour: <title> at <location>" for an event you RSVP'd to. */
   | 'event_reminder'
   /** 0026: "Thanks for coming to <title>! 🐂" / "Sorry we missed you at <title>" after an event. */
-  | 'event_followup';
+  | 'event_followup'
+  /** 0028: "Your YACquest Wrapped is here! 🎁" (once per cycle, when Wrapped opens). */
+  | 'wrapped'
+  /** 0028: "🪔 New limited-time item for Diwali — see what it honors". */
+  | 'seasonal';
 
 export interface AppNotification {
   id: string;
@@ -241,7 +246,7 @@ export interface WeeklyReport {
   recipients: string[];
 }
 
-export type EmailKind = 'weekly_report' | 'prize_qualified' | 'prize_info' | 'test' | 'announcement' | 'event_reminder' | 'event_followup';
+export type EmailKind = 'weekly_report' | 'prize_qualified' | 'prize_info' | 'test' | 'announcement' | 'event_reminder' | 'event_followup' | 'wrapped';
 export type EmailStatus = 'pending' | 'sending' | 'sent' | 'failed';
 
 export interface EmailLogRow {
@@ -557,9 +562,11 @@ export interface AdminStats {
   milestones: { points: number; count: number }[];
   distribution: { label: string; min: number; count: number }[];
   /** Points earned this cycle by source (positive rows), and points removed by corrections. */
-  sources: { event: number; digital: number; referral: number; staff: number; removed: number; other?: number };
+  sources: { event: number; digital: number; referral: number; staff: number; removed: number; other?: number; survey?: number };
   /** How many participants earned each badge, most first. */
   badges: { id: string; count: number }[];
+  /** 0030: in-app survey results per started event of this cycle that has answers, oldest first. Missing before 0030. */
+  ratings?: { id: string; title: string; startsAt: string; came: number; responses: number; average: number }[];
 }
 
 /** One row of the participants CSV (YACquest Chairs only). */
@@ -631,4 +638,134 @@ export interface Friend {
   came: boolean;
   /** You got the referral bonus for them this cycle. */
   bonus: boolean;
+}
+
+// ───────────── 0028: pace tracker, Wrapped + end-of-year, seasonal wardrobe ─────────────
+
+/** admin_pace(): raw weekly data; src/lib/pace.ts does the projection. Participants only. */
+export interface PaceData {
+  generatedAt: string;
+  goal: number;
+  prizeCount: number;
+  cycle: { name: string; startsAt: string; endsAt: string };
+  /** Monday (America/New_York) of each week from the cycle start to now, 'YYYY-MM-DD'. */
+  weeks: string[];
+  /** All participants' points per week (same order as `weeks`). */
+  weeklyTotals: number[];
+  /** Every participant with points this cycle, most points first. */
+  players: { id: string; name: string; campus: CampusId; points: number; firstAt: string | null }[];
+  /** Top 10: cumulative points at the end of each week. */
+  top: { id: string; name: string; campus: CampusId; points: number; cumulative: number[] }[];
+}
+
+export type PointsMix = Record<'event' | 'digital' | 'photos' | 'quests' | 'referral' | 'staff', number>;
+
+/** my_wrapped(): the caller's year. Participants get ranks; staff get `staff` instead (never in percentiles). */
+export interface WrappedData {
+  cycleName: string;
+  cycleEndsAt: string;
+  opensAt: string;
+  /** A YACquest Chair looking before it opens. */
+  preview: boolean;
+  displayName: string;
+  handle: string;
+  campus: CampusId;
+  role: Role;
+  avatar: AvatarId;
+  look?: Look;
+  points: number;
+  eventsAttended: number;
+  favoriteCampus: CampusId | 'all' | null;
+  favoriteKind: YacEvent['kind'] | null;
+  bestMonth: { month: string; points: number } | null;
+  badgesEarned: number;
+  badgeTotal: number;
+  earnedBadgeIds: string[];
+  /** Participants only: the earned badge the fewest players have. */
+  rarestBadge?: { id: string; pct: number; holders: number } | null;
+  bestStreak: number;
+  friendsBrought: number;
+  monthWins: number;
+  mix: PointsMix;
+  rankOverall?: number;
+  rankCampus?: number;
+  participants?: number;
+  campusParticipants?: number;
+  topPctOverall?: number;
+  topPctCampus?: number;
+  staff?: { reviews: number; eventsHosted: number; checkinsAtHosted: number; announcements: number; heroCrowns: number; councilBadges: number; councilBadgeIds: string[] };
+}
+
+export type EoyItemId = 'ledger_backup' | 'confirm_winners' | 'deliver_gift_cards' | 'thank_you' | 'reset';
+
+export interface EoyChecklist {
+  cycleName: string;
+  opensAt: string;
+  endsAt: string;
+  windowEndsAt: string;
+  inWindow: boolean;
+  cycleEnded: boolean;
+  fulfillBy: string;
+  /** null until the automatic "Wrapped is here" send has run. */
+  wrapped: { sentAt: string; notified: number; emailed: number } | null;
+  items: { id: EoyItemId; done: boolean; doneAt: string | null; doneBy: string | null }[];
+}
+
+export interface SeasonalClaim {
+  /** Item ids unlocked just now (empty when nothing new). */
+  claimed: string[];
+  /** Holidays whose window is open today. */
+  active: { holiday: string; endsOn: string }[];
+}
+
+// ───────────── 0030: in-app event feedback survey ─────────────
+
+/** What a player sends (rating + favorite part are required). */
+export interface EventSurveyInput {
+  eventId: string;
+  rating: number;
+  favorite: string;
+  leastFavorite?: string;
+  comments?: string;
+  /** "Send anonymously to the YAC team": still tied to you for points, but staff never see your name. */
+  anonymous?: boolean;
+}
+
+/** my_survey_status(event): can I answer, and did I already? */
+export interface EventSurveyStatus {
+  eventId: string;
+  title: string;
+  startsAt: string;
+  endsAt: string;
+  checkedIn: boolean;
+  done: boolean;
+  /** ends_at + 14 days */
+  closesAt: string;
+  open: boolean;
+  points: number;
+}
+
+/** One answer as staff see it. Anonymous answers have no name or campus. */
+export interface EventSurveyRow {
+  name: string | null;
+  campus?: CampusId;
+  anonymous: boolean;
+  rating: number;
+  favorite: string;
+  leastFavorite: string;
+  comments: string;
+  createdAt: string;
+}
+
+/** admin_event_survey(event): Admin → Events → 📊 Survey. */
+export interface EventSurveyResults {
+  eventId: string;
+  title: string;
+  startsAt: string;
+  attendees: number;
+  responses: number;
+  average: number | null;
+  /** Answers per star, [1★, 2★, 3★, 4★, 5★]. */
+  distribution: number[];
+  rows: EventSurveyRow[];
 }

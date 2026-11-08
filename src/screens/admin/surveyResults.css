@@ -1,0 +1,22 @@
+/* 0030: Admin → Events → 📊 Survey results (src/screens/admin/SurveyResults.tsx, lazy-loaded) */
+.sres { gap: var(--space-4); }
+.sres-sub { margin: -4px 0 0; font-size: 13px; }
+.sres-top { display: flex; align-items: center; gap: var(--space-4); padding: var(--space-3) var(--space-4); background: var(--cream); border: 3px solid var(--border); }
+.sres-avg { display: flex; align-items: baseline; gap: 4px; flex: none; }
+.sres-num { font-family: var(--font-num); font-size: 40px; line-height: 1; font-weight: 900; }
+.sres-of { color: var(--text-soft); font-weight: 800; }
+.sres-avg-side { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.sres-word { font-family: var(--font-pixel); font-size: 13px; }
+.sres-rate { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 15px; }
+.sres-dist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.sres-dist li { display: grid; grid-template-columns: 30px 1fr 28px; align-items: center; gap: var(--space-2); font-size: 13px; }
+.sres-dist-lbl { font-weight: 800; color: var(--text-soft); }
+.sres-dist b { text-align: right; font-family: var(--font-num); }
+.sres-bar { display: block; height: 14px; border: 2px solid var(--navy-900); background: var(--surface); }
+.sres-bar > span { display: block; height: 100%; background: repeating-linear-gradient(90deg, var(--gold-500) 0 6px, var(--gold-300) 6px 8px); }
+.sres-sec { display: flex; flex-direction: column; gap: var(--space-2); }
+.sres-h { margin: 0; display: flex; align-items: center; gap: var(--space-2); font-size: 13px; }
+.sres-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.sres-list li { border-left: 4px solid var(--gold-500); padding: 6px 10px; background: var(--cream); }
+.sres-quote { margin: 0 0 2px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sres-who { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--text-soft); font-weight: 700; }

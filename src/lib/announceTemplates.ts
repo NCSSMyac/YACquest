@@ -43,6 +43,13 @@ export const BUILTIN_TEMPLATES: (TemplateDef & { name: string })[] = [
     title: '⭐ Adventurer of the Month: {adventurer}',
     body: 'Big congrats to {adventurer}, our Adventurer of the Month for {month}! Want to be next? Every check-in and quest counts.',
   },
+  {
+    // 0028: End-of-year checklist → "Send a thank-you announcement"
+    id: 'builtin:year_end',
+    name: 'Thank you for a great year',
+    title: 'Thank you for an amazing YACquest year! 💙',
+    body: 'That’s a wrap on YACquest! Thank you for every check-in, photo, post and friend you brought along. Open your YACquest Wrapped from Home to relive your year, and keep an eye out for next year’s quest. We can’t wait to see you there!',
+  },
 ];
 
 export type TemplateVars = Partial<Record<'event' | 'date' | 'location' | 'goal' | 'spotsLeft' | 'adventurer' | 'month', string | number>>;

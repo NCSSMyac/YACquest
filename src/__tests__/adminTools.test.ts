@@ -128,7 +128,7 @@ describe('announcement templates', () => {
     expect(placeholders('{a} {b} {a}')).toEqual(['a', 'b']);
   });
   it('built-ins fit the announcement limits and report what is still missing', () => {
-    expect(BUILTIN_TEMPLATES.map((t) => t.name)).toEqual(['Event reminder', 'Thank you for coming', 'Prize update', 'Welcome / how to earn', 'Adventurer of the Month']);
+    expect(BUILTIN_TEMPLATES.map((t) => t.name)).toEqual(['Event reminder', 'Thank you for coming', 'Prize update', 'Welcome / how to earn', 'Adventurer of the Month', 'Thank you for a great year']);
     const r = applyTemplate(BUILTIN_TEMPLATES[0], { event: 'Kickoff Mixer', date: 'Sat, Nov 14 at 6:00 PM', goal: 350 });
     expect(r.title).toBe('Reminder: Kickoff Mixer is Sat, Nov 14 at 6:00 PM!');
     expect(r.missing).toEqual(['location']);
@@ -203,7 +203,7 @@ describe('stats (mock mirror of admin_stats)', () => {
     for (let i = 1; i < s.milestones.length; i++) expect(s.milestones[i].count).toBeLessThanOrEqual(s.milestones[i - 1].count);
     const totalPts = parts.reduce((n, u) => n + pointsOf(u.id), 0);
     expect(s.totals.points).toBe(totalPts);
-    expect(s.sources.event + s.sources.digital + s.sources.referral + s.sources.staff + (s.sources.other ?? 0) - s.sources.removed).toBe(totalPts);
+    expect(s.sources.event + s.sources.digital + s.sources.referral + s.sources.staff + (s.sources.survey ?? 0) + (s.sources.other ?? 0) - s.sources.removed).toBe(totalPts);
     for (const c of s.campuses) expect(c.perMember).toBe(c.members ? Math.round((c.points / c.members) * 10) / 10 : 0);
   });
   it('a staff check-in or RSVP never shows up; a participant one does', async () => {

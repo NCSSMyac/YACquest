@@ -1,4 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import * as api from '../../api';
 import { CAMPUSES, campusName, type CampusId } from '../../config';
 import { Empty, ErrorText, Loading, Modal, Panel, useToast } from '../../components/ui';
@@ -16,8 +17,14 @@ import { monthName } from '../../lib/format';
 export default function Announce() {
   const { user } = useAuth();
   const toast = useToast();
-  const [title, setTitle] = useState('');
-  const [body, setBody] = useState('');
+  // 0028: /admin/announce?template=builtin:year_end starts from a built-in template (End-of-year checklist).
+  const [params] = useSearchParams();
+  const [start] = useState(() => {
+    const t = BUILTIN_TEMPLATES.find((x) => x.id === params.get('template'));
+    return t ? applyTemplate(t, {}) : null;
+  });
+  const [title, setTitle] = useState(start?.title ?? '');
+  const [body, setBody] = useState(start?.body ?? '');
   const [audience, setAudience] = useState<AnnouncementAudience>('all');
   const [campus, setCampus] = useState<CampusId>(user?.campus ?? 'duke');
   const [person, setPerson] = useState<api.AdminUserRow | null>(null);

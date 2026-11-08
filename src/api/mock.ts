@@ -10,7 +10,9 @@
  * else has to change. Rules marked "SERVER RULE" must also be enforced by the backend —
  * the front end checks are only for friendly error messages.
  */
-import { ADMIN_NEAR_GOAL_POINTS, CAPS, CAMPUSES, CYCLE, MAX_CHAIRS, PRIZE, TIER_POINTS, type CampusId } from '../config';
+import { ADMIN_NEAR_GOAL_POINTS, CAPS, CAMPUSES, CYCLE, MAX_CHAIRS, PRIZE, SEASONAL, TIER_POINTS, WRAPPED, type CampusId } from '../config';
+import { activeHolidays, openWindow, nyDate, seasonalItems } from '../lib/seasonal';
+import { wrappedWindow } from '../lib/wrapped';
 import { ACTIVITIES, ONCE_PER_CYCLE, activityById } from '../lib/activities';
 import { EVENT_KINDS, kindInfo } from '../lib/eventKinds';
 import { BADGES } from '../lib/badges';
@@ -71,7 +73,16 @@ import type {
   EventFollowupStatus,
   EventPhoto,
   Friend,
+  PaceData,
+  WrappedData,
+  EoyChecklist,
+  EoyItemId,
+  SeasonalClaim,
+  EventSurveyInput,
+  EventSurveyResults,
+  EventSurveyStatus,
 } from '../types';
+import { SURVEY_LIMITS, SURVEY_POINTS, cleanSurveyText, surveyClosesAt, surveyError, surveyWindowOpen } from '../lib/eventSurvey';
 
 // ───────────────────────────── errors ─────────────────────────────
 
@@ -133,8 +144,25 @@ interface Db {
   followups?: Record<string, { sentAt: string; sentBy?: string; attended: number; missed: number; emailed: number }>;
   /** 0026: submission id → staff moderation (submissions.wall_hidden_at / wall_hidden_by). */
   wallHidden?: Record<string, { at: string; by: string }>;
+  /** 0028: owned seasonal items (the real one is seasonal_unlocks). Kept forever. */
+  seasonalUnlocks?: { userId: string; itemId: string; at: string }[];
+  /** 0028: cycle name → "Wrapped is here" marker (the real one is wrapped_sends). */
+  wrappedSends?: Record<string, { sentAt: string; notified: number; emailed: number }>;
+  /** 0028: end-of-year checklist for this cycle (the real one is eoy_checklist). */
+  eoy?: Partial<Record<EoyItemId, { done: boolean; by?: string; at?: string }>>;
+  /** 0029: id of the active cycle (the real one is cycles.is_active). Unset = the first cycle. */
+  cycleId?: string;
+  /** 0029: event id → the cycle it belongs to (events.cycle_id). Unset = the active cycle. */
+  eventCycles?: Record<string, string>;
+  /** 0030: in-app event survey answers (the real one is event_surveys). */
+  surveys?: { id: string; eventId: string; userId: string; rating: number; favorite: string; leastFavorite: string; comments: string; anonymous: boolean; createdAt: string }[];
   seq: number;
 }
+
+const FIRST_CYCLE = 'cycle_1';
+/** 0029: the cycle an event belongs to (events.cycle_id). */
+const eventCycle = (d: Db, eventId: string) => d.eventCycles?.[eventId] ?? d.cycleId ?? FIRST_CYCLE;
+const inActiveCycle = (d: Db, eventId: string) => eventCycle(d, eventId) === (d.cycleId ?? FIRST_CYCLE);
 
 interface OutboxRow extends EmailLogRow {
   text: string;
@@ -143,8 +171,10 @@ interface OutboxRow extends EmailLogRow {
 }
 
 const DB_KEY = 'yacquest-db-v1';
+/** app_config.app_url (0028): links in emails. */
+const APP_URL = 'https://ncssmyac.github.io/YACquest/';
 const SESSION_KEY = 'yacquest-session';
-const DB_VERSION = 12;
+const DB_VERSION = 13;
 
 let db: Db | null = null;
 
@@ -322,6 +352,7 @@ const strip = (e: YacEvent, includePassword: boolean): YacEvent => (includePassw
 export async function currentUser(): Promise<User | null> {
   queueEventReminders(); // 0024: the demo has no cron, so reminders go out when the app loads
   queueEventFollowups(); // 0026: same for event follow-ups
+  queueWrappedNotifications(); // 0028: same for "Your YACquest Wrapped is here!"
   const id = sessionUserId();
   return load().users.find((u) => u.id === id) ?? null;
 }
@@ -433,6 +464,7 @@ export async function getDashboard(): Promise<Dashboard> {
   await delay();
   queueEventReminders();
   queueEventFollowups();
+  queueWrappedNotifications();
   const d = load();
   const user = me();
   const overall = rankedParticipants();
@@ -459,13 +491,15 @@ export async function listActivities(): Promise<Activity[]> {
   return ACTIVITIES;
 }
 
-export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Promise<(YacEvent & { checkedIn: boolean } & EventRsvpInfo)[]> {
+export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Promise<(YacEvent & { checkedIn: boolean; surveyDone?: boolean } & EventRsvpInfo)[]> {
   await delay();
   const d = load();
   const user = me();
   const t = Date.now();
   const isAdmin = user.role !== 'participant';
   return d.events
+    // SERVER RULE (list_events / events.cycle_id): participants see the active cycle's events only.
+    .filter((e) => inActiveCycle(d, e.id))
     .filter((e) => {
       const closes = new Date(e.endsAt).getTime() + e.checkInGraceMinutes * 60_000;
       if (scope === 'upcoming') return closes >= t;
@@ -478,6 +512,8 @@ export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Pr
       checkedIn: d.ledger.some((l) => l.userId === user.id && l.source === 'checkin' && l.refId === e.id),
       goingCount: d.rsvps.filter((r) => r.eventId === e.id).length,
       myRsvp: d.rsvps.some((r) => r.eventId === e.id && r.userId === user.id),
+      // 0030: did I already answer this event's in-app survey?
+      surveyDone: (d.surveys ?? []).some((s) => s.eventId === e.id && s.userId === user.id),
     }));
 }
 
@@ -489,7 +525,8 @@ export async function setRsvp(eventId: string, going: boolean): Promise<{ going:
   const user = me();
   const d = load();
   const e = d.events.find((x) => x.id === eventId);
-  if (!e) return fail('not_found', 'That event no longer exists.');
+  // SERVER RULE (set_rsvp, 0022): only the active cycle's events.
+  if (!e || !inActiveCycle(d, e.id)) return fail('not_found', 'That event no longer exists.');
   if (Date.now() >= new Date(e.startsAt).getTime()) fail('closed', 'RSVPs close when the event starts.');
   const has = d.rsvps.some((r) => r.eventId === eventId && r.userId === user.id);
   if (going && !has) d.rsvps.push({ eventId, userId: user.id, createdAt: now() });
@@ -821,16 +858,21 @@ export async function awardActivity(userId: string, activityId: string, note: st
 }
 
 
-export async function adminListEvents(): Promise<(YacEvent & AdminEventRsvpCounts & { followup?: EventFollowupStatus })[]> {
+export async function adminListEvents(): Promise<(YacEvent & AdminEventRsvpCounts & { followup?: EventFollowupStatus; olderCycle?: boolean; surveyCount?: number; surveyAverage?: number })[]> {
   await delay();
   const admin = requireRole('admin', 'chair');
-  return load()
+  const d = load();
+  // SERVER RULE (admin_list_events): every cycle's events; olderCycle marks ones from an archived cycle.
+  return d
     .events.filter(() => canManage(admin))
     .slice()
     .sort((a, b) => b.startsAt.localeCompare(a.startsAt))
     .map((e) => {
       const f = followupStatus(e.id);
-      return { ...e, ...rsvpCounts(e.id), ...(f ? { followup: f } : {}) };
+      // 0030 (admin_event_survey_counts): in-app survey answers + average for the "📊 Survey (N)" button.
+      const sv = (d.surveys ?? []).filter((s) => s.eventId === e.id);
+      const avg = sv.length ? Math.round((sv.reduce((n, s) => n + s.rating, 0) / sv.length) * 10) / 10 : undefined;
+      return { ...e, ...rsvpCounts(e.id), ...(f ? { followup: f } : {}), ...(inActiveCycle(d, e.id) ? {} : { olderCycle: true }), surveyCount: sv.length, ...(avg != null ? { surveyAverage: avg } : {}) };
     });
 }
 
@@ -981,6 +1023,17 @@ export async function resetCycle(confirmText: string): Promise<void> {
   const d = load();
   logAction('cycle_reset', undefined, { name: CYCLE.name }, chair);
   d.archives.push({ cycle: CYCLE.name, archivedAt: now(), ledgerRows: d.ledger.length, winners: d.claims });
+  // SERVER RULE (reset_cycle, 0029): events still upcoming or live (check-in hasn't closed) move to the new
+  // cycle so participants keep seeing them; finished events stay with the archived cycle.
+  const oldCycle = d.cycleId ?? FIRST_CYCLE;
+  const newCycle = `cycle_${(++d.seq).toString(36)}`;
+  const map = (d.eventCycles ??= {});
+  const t = Date.now();
+  for (const e of d.events) {
+    const open = new Date(e.endsAt).getTime() + e.checkInGraceMinutes * 60_000 > t;
+    map[e.id] = open ? newCycle : eventCycle(d, e.id) === oldCycle ? oldCycle : eventCycle(d, e.id);
+  }
+  d.cycleId = newCycle;
   d.ledger = [];
   d.claims = [];
   d.submissions = [];
@@ -1284,8 +1337,36 @@ export function seed(): Db {
     d.notifications.unshift({ id: nextId('ntf'), userId: demo.id, kind: 'points_adjusted', title: `+${TIER_POINTS[1]} for bringing a friend`, body: `${came.displayName} checked in to their first YAC event.`, read: true, createdAt: trivia.startsAt });
     const kickoffClosed = new Date(new Date(kickoff.endsAt).getTime() + kickoff.checkInGraceMinutes * 60_000 + 10 * 60_000).toISOString();
     d.followups = { [kickoff.id]: { sentAt: kickoffClosed, attended: 1, missed: d.rsvps.filter((r) => r.eventId === kickoff.id && r.userId !== demo.id).length, emailed: 9 } };
-    d.notifications.push({ id: nextId('ntf'), userId: demo.id, kind: 'event_followup', title: thanksTitle(kickoff.title), body: thanksBody(undefined, activityById('survey')!.title, TIER_POINTS[3]), read: true, createdAt: kickoffClosed });
+    d.notifications.push({ id: nextId('ntf'), userId: demo.id, kind: 'event_followup', title: thanksTitle(kickoff.title), body: thanksBody(kickoff.id, undefined, activityById('survey')!.title, TIER_POINTS[3], SURVEY_POINTS), read: true, createdAt: kickoffClosed });
     d.actions.push({ id: 0, actorName: '', action: 'event_followup_sent', details: { title: kickoff.title, attended: 1, missed: d.followups[kickoff.id].missed, emailed: 9, automatic: true }, createdAt: kickoffClosed });
+  }
+  // 0030 (own rng so the rest of the seed stays stable): five regulars also came to the Kickoff Mixer and
+  // four rated it in the app (one anonymously). Their check-in and survey points MOVE out of an existing seed
+  // row, so totals and the leaderboard don't change. The demo player came too and hasn't rated it yet
+  // (window open ~2 more days) → "📝 Rate this event (+5)" on the past event card.
+  {
+    const sr = rng(2030);
+    const regs = d.users.filter((u) => u.role === 'participant' && u !== demo && !u.referredBy
+      && !d.ledger.some((l) => l.userId === u.id && l.source === 'checkin')
+      && d.ledger.some((l) => l.userId === u.id && l.source === 'seed' && l.amount >= 50 && l.createdAt <= kickoff.startsAt));
+    const answers: [number, string, string, string, boolean][] = [
+      [5, 'Cornhole tournament and meeting people from my year!', '', 'Do this every semester please 🐂', false],
+      [4, 'The gardens at golden hour', 'A bit hard to find the group at first', 'Maybe a YAC sign at the entrance?', false],
+      [5, 'Free snacks + the yak stickers', '', '', true],
+      [3, 'Catching up with old friends', 'Ran out of drinks early', 'More water and lemonade next time', false],
+    ];
+    const picked: User[] = [];
+    while (picked.length < 5 && regs.length) picked.push(regs.splice(Math.floor(sr() * regs.length), 1)[0]);
+    picked.forEach((u, i) => {
+      const row = d.ledger.find((l) => l.userId === u.id && l.source === 'seed' && l.amount >= 50 && l.createdAt <= kickoff.startsAt)!;
+      const a = answers[i];
+      row.amount -= TIER_POINTS[2] + (a ? SURVEY_POINTS : 0);
+      d.ledger.push({ id: nextId('led'), userId: u.id, amount: TIER_POINTS[2], source: 'checkin', activityId: 'home_event', refId: kickoff.id, reason: `Checked in: ${kickoff.title}`, createdAt: kickoff.startsAt });
+      if (!a) return;
+      const at = new Date(new Date(kickoff.endsAt).getTime() + (3 + i * 7) * H).toISOString();
+      (d.surveys ??= []).push({ id: nextId('srv'), eventId: kickoff.id, userId: u.id, rating: a[0], favorite: a[1], leastFavorite: a[2], comments: a[3], anonymous: a[4], createdAt: at });
+      d.ledger.push({ id: nextId('led'), userId: u.id, amount: SURVEY_POINTS, source: 'survey', activityId: 'event_survey', refId: kickoff.id, reason: `Event feedback survey: ${kickoff.title}`, createdAt: at });
+    });
   }
   d.actions.sort((a, b) => a.createdAt.localeCompare(b.createdAt)).forEach((a, i) => (a.id = i + 1));
   return d;
@@ -1299,7 +1380,7 @@ const PHOTO_IMG = (sky: string, grass: string, variant: number) =>
   );
 
 // Expose for tests
-export const __test = { queueEventReminders, queueEventFollowups, load, pointsOf, rankedParticipants, setSession, addLedger, deliverOutbox, badgesFor, unlocksFor, shoutoutSync, staffStats, staffUnlocksFor, legendaryFor, streakFor };
+export const __test = { surveyRowsFor, queueEventReminders, queueEventFollowups, queueWrappedNotifications, claimSeasonalFor, wrappedFor, load, pointsOf, rankedParticipants, setSession, addLedger, deliverOutbox, badgesFor, unlocksFor, shoutoutSync, staffStats, staffUnlocksFor, legendaryFor, streakFor };
 
 // ───────────────────────────── team (chairs only) ─────────────────────────────
 
@@ -1585,6 +1666,11 @@ function buildWeeklyReport(): Omit<WeeklyReport, 'recipients'> {
     .map((e) => ({ title: e.title, when: new Date(e.startsAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'America/New_York' }).replace(',', ''), going: d.rsvps.filter((r) => r.eventId === e.id).length }));
   const soonText = soon.length ? soon.map((x) => `${x.title} (${x.when}) · ${x.going} going`).join('; ') : 'No events scheduled.';
   const soonHtml = soon.length ? soon.map((x) => `<b>${esc(x.title)}</b> (${esc(x.when)}) · ${x.going} going`).join('; ') : 'No events scheduled.';
+  // 0030: one line — in-app event survey answers this week + their average rating.
+  const surv = (d.surveys ?? []).filter((x) => new Date(x.createdAt).getTime() >= wk);
+  const survAvg = surv.length ? (Math.round((surv.reduce((n, x) => n + x.rating, 0) / surv.length) * 10) / 10).toFixed(1) : '';
+  const survText = surv.length ? `${surv.length} new response${surv.length === 1 ? '' : 's'} · average ${survAvg}★` : 'No new responses.';
+  const survHtml = surv.length ? `${surv.length} new response${surv.length === 1 ? '' : 's'} · average <b>${survAvg}★</b>` : 'No new responses.';
   const starLine = !star
     ? 'No points earned this month yet.'
     : star.final
@@ -1610,6 +1696,8 @@ function buildWeeklyReport(): Omit<WeeklyReport, 'recipients'> {
     ...(recentFeedback.length ? recentFeedback.map((f) => `- [${fbLabel[f.cat]}] ${f.who}: ${f.msg}`) : ['- No new feedback this week.']),
     '',
     `📅 NEXT 7 DAYS (RSVPs): ${soonText}`, // 0022
+    '',
+    `📝 EVENT SURVEYS THIS WEEK: ${survText} (results in Admin → Events → Survey)`, // 0030
     '',
     'THIS WEEK',
     `- ${active} active participants, ${pts} points awarded, ${signups} new sign-ups`,
@@ -1639,6 +1727,7 @@ function buildWeeklyReport(): Omit<WeeklyReport, 'recipients'> {
         ? recentFeedback.map((f) => `<div style="border-left:4px solid #f2b33d;padding:6px 10px;margin:0 0 8px;background:#fffaf0"><div style="font-size:12px;color:#4a5672"><b>${esc(fbLabel[f.cat])}</b> · ${esc(f.who)}</div><div style="white-space:pre-wrap">${esc(f.msg)}</div></div>`).join('')
         : '<p style="margin:0;color:#4a5672">No new feedback this week.</p>') +
       `<p style="margin:16px 0 0;font-size:14px">📅 <b>Next 7 days (RSVPs):</b> ${soonHtml}</p>` + // 0022
+      `<p style="margin:12px 0 0;font-size:14px">📝 <b>Event surveys this week:</b> ${survHtml} <span style="color:#4a5672">(results in Admin → Events → Survey)</span></p>` + // 0030
       h2('This week') +
       `<ul style="padding-left:18px;margin:0">${li(`${active} active participants · ${pts} points awarded · ${signups} new sign-ups`)}${li(`${pending} submissions waiting for review`)}${li(`${daysLeft} days left in the cycle`)}</ul>` +
       yakLineHtml(),
@@ -2055,9 +2144,11 @@ function unlocksFor(userId: string): string[] {
   const badges = badgesFor(userId);
   const earned = new Set(badges.filter((b) => b.earned).map((b) => b.id));
   const points = pointsOf(userId);
-  const ok = (r: UnlockRule) =>
-    r.type === 'free' || (r.type === 'points' && points >= r.min) || (r.type === 'badge' && earned.has(r.id)) || (r.type === 'badges' && earned.size >= r.min);
-  return COSMETICS.filter((c) => ok(c.rule)).map((c) => c.id);
+  // 0028: seasonal items once claimed (owned forever)
+  const owned = new Set((load().seasonalUnlocks ?? []).filter((x) => x.userId === userId).map((x) => x.itemId));
+  const ok = (r: UnlockRule, id: string) =>
+    r.type === 'free' || (r.type === 'points' && points >= r.min) || (r.type === 'badge' && earned.has(r.id)) || (r.type === 'badges' && earned.size >= r.min) || (r.type === 'seasonal' && owned.has(id));
+  return COSMETICS.filter((c) => ok(c.rule, c.id)).map((c) => c.id);
 }
 
 /**
@@ -2155,6 +2246,8 @@ export async function myUnlocks(): Promise<string[]> {
 export async function equipLook(look: Look): Promise<User> {
   await delay();
   const user = me();
+  // SERVER RULE (equip_look, 0028): claim any seasonal item whose window is open today first.
+  if (claimSeasonalFor(user.id).length) save();
   const unlocked = new Set(unlocksFor(user.id));
   const next: Look = {};
   for (const slot of ['hat', 'accessory', 'background'] as const) {
@@ -2575,11 +2668,22 @@ export async function adminStats(): Promise<AdminStats> {
       digital: sum(pos.filter((l) => l.source === 'submission')),
       referral: sum(pos.filter((l) => l.source === 'referral')),
       staff: sum(pos.filter((l) => l.source === 'manual')),
+      survey: sum(pos.filter((l) => l.source === 'survey')), // 0030
       removed: -sum(led.filter((l) => l.amount < 0)),
       // Demo only: points the seed gave out "earlier this cycle".
       other: sum(pos.filter((l) => l.source === 'seed')),
     },
     badges: [...badgeCounts.entries()].map(([id, count]) => ({ id, count })).sort((a, b) => b.count - a.count || BADGES.findIndex((x) => x.id === a.id) - BADGES.findIndex((x) => x.id === b.id)),
+    // 0030 (admin_stats.ratings): started events with in-app survey answers, oldest first.
+    ratings: d.events
+      .filter((e) => new Date(e.startsAt).getTime() <= t && inActiveCycle(d, e.id))
+      .sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.id.localeCompare(b.id))
+      .flatMap((e) => {
+        const sv = (d.surveys ?? []).filter((s) => s.eventId === e.id);
+        if (!sv.length) return [];
+        const came = Math.max(pos.filter((l) => l.source === 'checkin' && l.refId === e.id).length, e.attendeeCount - d.ledger.filter((l) => l.source === 'checkin' && l.refId === e.id && !isPart.has(l.userId)).length);
+        return [{ id: e.id, title: e.title, startsAt: e.startsAt, came, responses: sv.length, average: Math.round((sv.reduce((n, s) => n + s.rating, 0) / sv.length) * 10) / 10 }];
+      }),
   };
 }
 
@@ -2721,6 +2825,8 @@ function sendFollowup(e: YacEvent, nowMs: number, by?: User): EventFollowupStatu
   if (d.followups[e.id]) return null;
   const quest = activityById('survey')!;
   const pts = TIER_POINTS[quest.tier];
+  // 0030: the in-app survey link (#/survey/<id>; the email gets the full app address).
+  const link = `${APP_URL}#/survey/${e.id}`;
   let attended = 0;
   let missed = 0;
   let emailed = 0;
@@ -2729,13 +2835,14 @@ function sendFollowup(e: YacEvent, nowMs: number, by?: User): EventFollowupStatu
   for (const id of attendees) {
     const u = d.users.find((x) => x.id === id);
     if (!u) continue;
-    notify(u.id, 'event_followup', thanksTitle(e.title), thanksBody(e.surveyUrl, quest.title, pts));
+    notify(u.id, 'event_followup', thanksTitle(e.title), thanksBody(e.id, e.surveyUrl, quest.title, pts, SURVEY_POINTS));
     attended++;
     if (u.emailOptIn) {
-      const survey = e.surveyUrl ? `Tell us how it went: ${e.surveyUrl}\n\nCompleting the survey counts` : 'When YAC shares the feedback survey, completing it counts';
-      const text = `Thanks for coming to ${e.title}!\n\n${survey} as the "${quest.title}" digital quest: send a screenshot of the confirmation in YACquest → Quests for ${pts} points.\n\n${footer}`;
-      const button = e.surveyUrl ? `<p style="margin:0 0 12px"><a href="${esc(e.surveyUrl)}" style="display:inline-block;background:#f2b33d;color:#0b2a5b;font-weight:700;padding:10px 14px;text-decoration:none">Take the feedback survey</a></p>` : '';
-      const html = emailHtml(`Thanks for coming to ${e.title}!`, `<p style="font-size:16px;margin:0 0 10px">Thanks for coming to <b>${esc(e.title)}</b>! 🐂</p>${button}<p style="margin:0 0 12px">Completing the feedback survey counts as the <b>${esc(quest.title)}</b> digital quest: send a screenshot of the confirmation in YACquest → Quests for <b>${pts} points</b>.</p><p style="font-size:12px;color:#4a5672;margin:0">${esc(footer)}</p>`);
+      const external = e.surveyUrl ? `\n\nOr fill out the YAC survey here: ${e.surveyUrl}\nCompleting it counts as the "${quest.title}" digital quest: send a screenshot of the confirmation in YACquest → Quests for ${pts} points.` : '';
+      const text = `Thanks for coming to ${e.title}!\n\nHow was it? Rate it in YACquest for +${SURVEY_POINTS} points (takes a minute):\n${link}${external}\n\n${footer}`;
+      const button = `<p style="margin:0 0 6px">How was it? Rate it in YACquest for <b>+${SURVEY_POINTS} points</b> (takes a minute):</p><p style="margin:0 0 12px"><a href="${esc(link)}" style="display:inline-block;background:#f2b33d;color:#0b2a5b;font-weight:700;padding:10px 14px;text-decoration:none">⭐ Rate this event</a></p>`;
+      const ext = e.surveyUrl ? `<p style="margin:0 0 12px">Or fill out the YAC survey here: <a href="${esc(e.surveyUrl)}">${esc(e.surveyUrl)}</a>. Completing it counts as the <b>${esc(quest.title)}</b> digital quest: send a screenshot of the confirmation in YACquest → Quests for <b>${pts} points</b>.</p>` : '';
+      const html = emailHtml(`Thanks for coming to ${e.title}!`, `<p style="font-size:16px;margin:0 0 10px">Thanks for coming to <b>${esc(e.title)}</b>! 🐂</p>${button}${ext}<p style="font-size:12px;color:#4a5672;margin:0">${esc(footer)}</p>`);
       if (enqueueEmail('event_followup', [u.email], `Thanks for coming to ${e.title}!`, text, html, `followup:${e.id}:${u.id}`)) emailed++;
     }
   }
@@ -2860,4 +2967,348 @@ export async function myFriends(): Promise<Friend[]> {
       came: d.ledger.some((l) => l.userId === u.id && l.source === 'checkin'),
       bonus: d.ledger.some((l) => l.userId === user.id && l.activityId === 'bring_new_alum' && l.refId === u.id),
     }));
+}
+
+// ───────────────────────────── 0028: pace, Wrapped + end-of-year, seasonal wardrobe ─────────────────────────────
+// Mirrors 0028_pace_wrapped_seasonal.sql. Time comes from Date.now() (tests use fake timers).
+
+/** 'YYYY-MM-DD' Monday (New York) of the week containing `ms`. */
+const nyMonday = (ms: number) => {
+  const ymd = nyDate(ms);
+  const [y, m, dd] = ymd.split('-').map(Number);
+  const dow = (new Date(Date.UTC(y, m - 1, dd)).getUTCDay() + 6) % 7;
+  return new Date(Date.UTC(y, m - 1, dd - dow)).toISOString().slice(0, 10);
+};
+
+/** SERVER RULE (admin_pace, 0028): staff only; participants only; ledger rows up to now. */
+export async function adminPace(): Promise<PaceData> {
+  await delay();
+  requireRole('admin', 'chair');
+  const d = load();
+  const t = Date.now();
+  const parts = new Map(d.users.filter((u) => u.role === 'participant').map((u) => [u.id, u]));
+  const led = d.ledger.filter((l) => parts.has(l.userId) && Date.parse(l.createdAt) <= t);
+  const weeks: string[] = [];
+  const lastWeek = nyMonday(Math.min(t, Date.parse(CYCLE.end)));
+  for (let w = nyMonday(Date.parse(CYCLE.start)); w <= lastWeek; ) {
+    weeks.push(w);
+    const [y, m, dd] = w.split('-').map(Number);
+    w = new Date(Date.UTC(y, m - 1, dd + 7)).toISOString().slice(0, 10);
+  }
+  const idx = (iso: string) => Math.max(0, weeks.indexOf(nyMonday(Date.parse(iso))));
+  const weeklyTotals = weeks.map(() => 0);
+  const per = new Map<string, { pts: number; first: string | null; weekly: number[] }>();
+  for (const l of led) {
+    weeklyTotals[idx(l.createdAt)] += l.amount;
+    const row = per.get(l.userId) ?? { pts: 0, first: null, weekly: weeks.map(() => 0) };
+    row.pts += l.amount;
+    row.weekly[idx(l.createdAt)] += l.amount;
+    if (l.amount > 0 && (!row.first || l.createdAt < row.first)) row.first = l.createdAt;
+    per.set(l.userId, row);
+  }
+  const players = [...per.entries()]
+    .map(([id, r]) => ({ id, name: parts.get(id)!.displayName, campus: parts.get(id)!.campus, points: r.pts, firstAt: r.first }))
+    .sort((a, b) => b.points - a.points || a.name.localeCompare(b.name));
+  const top = players.filter((p) => p.points > 0).slice(0, 10).map((p) => {
+    let run = 0;
+    return { ...p, cumulative: per.get(p.id)!.weekly.map((v) => (run += v)) };
+  });
+  return {
+    generatedAt: new Date(t).toISOString(),
+    goal: PRIZE.goal,
+    prizeCount: PRIZE.count,
+    cycle: { name: CYCLE.name, startsAt: CYCLE.start, endsAt: CYCLE.end },
+    weeks,
+    weeklyTotals,
+    players,
+    top: top.map(({ id, name, campus, points, cumulative }) => ({ id, name, campus, points, cumulative })),
+  };
+}
+
+/** SERVER RULE (claim_seasonal_for, 0028): every item whose window is open today; one notification per holiday, once. */
+function claimSeasonalFor(userId: string, nowMs: number = Date.now()): string[] {
+  const d = load();
+  d.seasonalUnlocks ??= [];
+  const have = new Set(d.seasonalUnlocks.filter((x) => x.userId === userId).map((x) => x.itemId));
+  const fresh: string[] = [];
+  for (const h of activeHolidays(nowMs)) {
+    const items = seasonalItems(h.id).filter((c) => !have.has(c.id));
+    if (!items.length) continue;
+    for (const c of items) {
+      d.seasonalUnlocks.push({ userId, itemId: c.id, at: new Date(nowMs).toISOString() });
+      fresh.push(c.id);
+    }
+    notify(userId, 'seasonal', `${h.emoji} New limited-time item for ${h.name} — see what it honors`,
+      'Free in Prize → Wardrobe → Seasonal while it lasts, and yours to keep. Tap “About this item” to learn what it celebrates.');
+  }
+  return fresh.sort();
+}
+
+export async function claimSeasonalItems(): Promise<SeasonalClaim> {
+  await delay(60);
+  const user = me();
+  const claimed = claimSeasonalFor(user.id);
+  if (claimed.length) save();
+  const today = nyDate();
+  return { claimed, active: SEASONAL.map((h) => ({ h, w: openWindow(h, today) })).filter((x) => x.w).map((x) => ({ holiday: x.h.id, endsOn: x.w![1] })) };
+}
+
+/** SERVER RULE (wrapped_for, 0028): the user's year; ranks + rarity among participants only; staff get staff stats. */
+function wrappedFor(user: User): WrappedData {
+  const d = load();
+  const mine = d.ledger.filter((l) => l.userId === user.id);
+  const pos = mine.filter((l) => l.amount > 0);
+  const checkins = new Map<string, LedgerEntry>();
+  for (const l of pos) if (l.source === 'checkin' && l.refId && !checkins.has(l.refId)) checkins.set(l.refId, l);
+  const evs = [...checkins.keys()].map((id) => d.events.find((e) => e.id === id)).filter((e): e is YacEvent => !!e);
+  const mode = <T extends string>(vals: T[], prefer?: (a: T) => number): T | null => {
+    const n = new Map<T, number>();
+    for (const v of vals) n.set(v, (n.get(v) ?? 0) + 1);
+    return [...n.entries()].sort((a, b) => b[1] - a[1] || (prefer ? prefer(a[0]) - prefer(b[0]) : 0) || a[0].localeCompare(b[0]))[0]?.[0] ?? null;
+  };
+  const months = new Map<string, number>();
+  for (const l of pos) months.set(monthKey(l.createdAt), (months.get(monthKey(l.createdAt)) ?? 0) + l.amount);
+  const best = [...months.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+  const sumWhere = (f: (l: LedgerEntry) => boolean) => pos.filter(f).reduce((n, l) => n + l.amount, 0);
+  const tier = (l: LedgerEntry) => activityById(l.activityId ?? '')?.tier;
+  const badges = badgesFor(user.id);
+  const earnedIds = badges.filter((b) => b.earned).map((b) => b.id);
+  const out: WrappedData = {
+    cycleName: CYCLE.name,
+    cycleEndsAt: CYCLE.end,
+    opensAt: WRAPPED.opensAt,
+    preview: Date.now() < Date.parse(WRAPPED.opensAt),
+    displayName: user.displayName,
+    handle: user.handle,
+    campus: user.campus,
+    role: user.role,
+    avatar: user.avatar,
+    look: user.look,
+    points: pointsOf(user.id),
+    eventsAttended: checkins.size,
+    favoriteCampus: mode(evs.map((e) => e.campus), (c) => (c === 'all' ? 1 : 0)),
+    favoriteKind: mode(evs.map((e) => e.kind)),
+    bestMonth: best ? { month: best[0], points: best[1] } : null,
+    badgesEarned: earnedIds.length,
+    badgeTotal: BADGES.length,
+    earnedBadgeIds: earnedIds,
+    bestStreak: streakFor(user.id).best,
+    friendsBrought: pos.filter((l) => l.activityId === 'bring_new_alum').length,
+    monthWins: [...monthLeaders().values()].filter((m) => m.final && m.user.id === user.id).length,
+    mix: {
+      event: sumWhere((l) => l.source === 'checkin'),
+      digital: sumWhere((l) => l.source === 'submission' && tier(l) === 3),
+      photos: sumWhere((l) => l.source === 'submission' && l.activityId === 'event_photos'),
+      quests: sumWhere((l) => l.source === 'submission' && (tier(l) ?? 3) < 3 && l.activityId !== 'event_photos'),
+      referral: sumWhere((l) => l.source === 'referral'),
+      // demo seed rows count as staff-awarded points here
+      staff: sumWhere((l) => l.source === 'manual' || l.source === 'seed'),
+    },
+  };
+  if (user.role === 'participant') {
+    const parts = d.users.filter((u) => u.role === 'participant');
+    const holders = new Map<string, number>();
+    withLeadersCached(() => {
+      for (const u of parts) for (const b of badgesFor(u.id)) if (b.earned) holders.set(b.id, (holders.get(b.id) ?? 0) + 1);
+    });
+    const rare = earnedIds
+      .map((id, i) => ({ id, i, n: holders.get(id) ?? 0 }))
+      .sort((a, b) => a.n - b.n || b.i - a.i)[0];
+    out.rarestBadge = rare ? { id: rare.id, holders: rare.n, pct: Math.max(1, Math.ceil((100 * Math.max(rare.n, 1)) / Math.max(parts.length, 1))) } : null;
+    const overall = rankedParticipants();
+    const campus = rankedParticipants(user.campus);
+    out.rankOverall = overall.find((r) => r.userId === user.id)?.rank ?? overall.length;
+    out.rankCampus = campus.find((r) => r.userId === user.id)?.rank ?? campus.length;
+    out.participants = overall.length;
+    out.campusParticipants = campus.length;
+    out.topPctOverall = Math.max(1, Math.ceil((100 * out.rankOverall) / Math.max(1, overall.length)));
+    out.topPctCampus = Math.max(1, Math.ceil((100 * out.rankCampus) / Math.max(1, campus.length)));
+  } else {
+    const start = Date.parse(CYCLE.start);
+    const end = Date.parse(CYCLE.end);
+    const hosted = d.events.filter((e) => d.eventCreators[e.id] === user.id);
+    const sb = staffBadgesFor(user.id).filter((b) => b.earned);
+    out.staff = {
+      reviews: d.submissions.filter((x) => x.reviewerId === user.id && x.status !== 'pending').length,
+      eventsHosted: hosted.length,
+      checkinsAtHosted: hosted.reduce((n, e) => n + e.attendeeCount, 0),
+      announcements: Object.values(d.announcementSenders).filter((id) => id === user.id).length,
+      heroCrowns: d.heroReigns.filter((r) => r.userId === user.id && Date.parse(r.crownedAt) >= start && Date.parse(r.crownedAt) <= end).length,
+      councilBadges: sb.length,
+      councilBadgeIds: sb.map((b) => b.id),
+    };
+  }
+  return out;
+}
+
+/** SERVER RULE (my_wrapped, 0028): 'not_open' before WRAPPED.opensAt except for YACquest Chairs (preview). */
+export async function myWrapped(): Promise<WrappedData> {
+  await delay(200);
+  const user = me();
+  if (!wrappedWindow(Date.now()).open && user.role !== 'chair' && !WRAPPED.mockAlwaysOpen) {
+    const at = new Date(WRAPPED.opensAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'America/New_York' });
+    fail('not_open', `Your YACquest Wrapped opens on ${at}. Keep questing!`);
+  }
+  return wrappedFor(user);
+}
+
+/** SERVER RULE (queue_wrapped_notifications, 0028): once per cycle, inside the wrap-up window; everyone; email if opted in. */
+function queueWrappedNotifications(nowMs: number = Date.now()): number {
+  const w = wrappedWindow(nowMs);
+  if (!w.wrapUp) return 0;
+  const d = load();
+  d.wrappedSends ??= {};
+  if (d.wrappedSends[CYCLE.name]) return 0;
+  let n = 0;
+  let mailed = 0;
+  const badgeCount = new Map<string, number>();
+  withLeadersCached(() => d.users.forEach((u) => badgeCount.set(u.id, badgesFor(u.id).filter((b) => b.earned).length)));
+  for (const u of d.users) {
+    const events = new Set(d.ledger.filter((l) => l.userId === u.id && l.source === 'checkin' && l.amount > 0).map((l) => l.refId)).size;
+    const badges = badgeCount.get(u.id) ?? 0;
+    const pts = pointsOf(u.id);
+    const teaser = `${pts} ${pts === 1 ? 'point' : 'points'} · ${events} ${events === 1 ? 'event' : 'events'} · ${badges} ${badges === 1 ? 'badge' : 'badges'}`;
+    notify(u.id, 'wrapped', 'Your YACquest Wrapped is here! 🎁',
+      `Your ${CYCLE.name} in YACquest: ${teaser}. Open Wrapped from Home to see your best month, rarest badge, your YAC personality and a card to share.`);
+    n++;
+    if (u.emailOptIn && u.email) {
+      const link = 'https://ncssmyac.github.io/YACquest/#/wrapped';
+      if (enqueueEmail('wrapped', [u.email], 'Your YACquest Wrapped is here! 🎁',
+        `Your ${CYCLE.name} in a nutshell: ${teaser}.\n\nSee the whole story and a card to share: ${link}`,
+        emailHtml('Your YACquest Wrapped is here! 🎁', `<p>Your ${esc(CYCLE.name)} in a nutshell: <b>${esc(teaser)}</b>.</p><p><a href="${link}">Open my Wrapped 🎁</a></p>`),
+        `wrapped:${CYCLE.name}:${u.id}`)) mailed++;
+    }
+  }
+  d.wrappedSends[CYCLE.name] = { sentAt: new Date(nowMs).toISOString(), notified: n, emailed: mailed };
+  logAction('wrapped_sent', undefined, { cycle: CYCLE.name, notified: n, emailed: mailed }, null);
+  save();
+  return n;
+}
+
+const EOY_ITEMS: EoyItemId[] = ['ledger_backup', 'confirm_winners', 'deliver_gift_cards', 'thank_you', 'reset'];
+
+/** SERVER RULE (eoy_checklist, 0028): staff only. */
+export async function eoyChecklist(): Promise<EoyChecklist> {
+  await delay(80);
+  requireRole('admin', 'chair');
+  const d = load();
+  const w = wrappedWindow(Date.now());
+  const sent = d.wrappedSends?.[CYCLE.name];
+  return {
+    cycleName: CYCLE.name,
+    opensAt: WRAPPED.opensAt,
+    endsAt: CYCLE.end,
+    windowEndsAt: new Date(w.wrapUpEndsAt).toISOString(),
+    inWindow: w.wrapUp,
+    cycleEnded: Date.now() >= Date.parse(CYCLE.end),
+    fulfillBy: PRIZE.fulfillBy,
+    wrapped: sent ? { ...sent } : null,
+    items: EOY_ITEMS.map((id) => {
+      const x = d.eoy?.[id];
+      return { id, done: !!x?.done, doneAt: x?.done ? x.at ?? null : null, doneBy: x?.done && x.by ? nameOf(x.by) : null };
+    }),
+  };
+}
+
+/** SERVER RULE (set_eoy_item, 0028): staff; 'reset' = YACquest Chair, only after the cycle ends; 'wrapped_sent' is automatic. */
+export async function setEoyItem(item: EoyItemId | 'wrapped_sent', done: boolean): Promise<void> {
+  await delay(80);
+  const u = requireRole('admin', 'chair');
+  if (item === 'wrapped_sent') fail('auto', 'That one ticks itself when Wrapped goes out.');
+  if (!EOY_ITEMS.includes(item as EoyItemId)) fail('unknown', 'That isn’t on the checklist.');
+  if (item === 'reset') {
+    if (u.role !== 'chair') fail('forbidden', 'Only a YACquest Chair can tick the reset.');
+    if (Date.now() < Date.parse(CYCLE.end)) fail('too_early', 'Reset only after the cycle ends.');
+  }
+  const d = load();
+  d.eoy ??= {};
+  d.eoy[item as EoyItemId] = done ? { done: true, by: u.id, at: now() } : { done: false };
+  logAction(done ? 'eoy_item_checked' : 'eoy_item_unchecked', undefined, { item, cycle: CYCLE.name });
+  save();
+}
+
+// ───────────────────────────── 0030: in-app event feedback survey ─────────────────────────────
+
+const hasCheckIn = (userId: string, eventId: string) =>
+  load().ledger.some((l) => l.userId === userId && l.source === 'checkin' && l.refId === eventId);
+
+/** SERVER RULE (my_survey_status, 0030): any signed-in user, about themselves. */
+export async function mySurveyStatus(eventId: string): Promise<EventSurveyStatus> {
+  await delay(80);
+  const user = me();
+  const d = load();
+  const e = d.events.find((x) => x.id === eventId);
+  if (!e) return fail('not_found', 'That event no longer exists.');
+  const checkedIn = hasCheckIn(user.id, e.id);
+  const done = (d.surveys ?? []).some((s) => s.eventId === e.id && s.userId === user.id);
+  return {
+    eventId: e.id, title: e.title, startsAt: e.startsAt, endsAt: e.endsAt, checkedIn, done,
+    closesAt: new Date(surveyClosesAt(e.endsAt)).toISOString(),
+    open: checkedIn && !done && surveyWindowOpen(e.endsAt, Date.now()),
+    points: SURVEY_POINTS,
+  };
+}
+
+/**
+ * SERVER RULE (submit_event_survey, 0030): only people who checked in, from check-in until 14 days after the
+ * event ends, once per event. Rating 1–5 + favorite part required; lengths limited. Saves the answer and
+ * awards Tier 3 points together (ledger source 'survey', ref = event id). NOT counted toward the digital cap.
+ */
+export async function submitEventSurvey(input: EventSurveyInput): Promise<{ points: number }> {
+  await delay();
+  const user = me();
+  const d = load();
+  const e = d.events.find((x) => x.id === input.eventId);
+  if (!e) return fail('not_found', 'That event no longer exists.');
+  if (!hasCheckIn(user.id, e.id)) fail('not_attended', 'Only people who checked in to this event can rate it.');
+  if (!surveyWindowOpen(e.endsAt, Date.now())) fail('closed', 'This survey closed 14 days after the event. Thanks anyway!');
+  const err = surveyError({ rating: input.rating, favorite: input.favorite, leastFavorite: input.leastFavorite, comments: input.comments });
+  if (err) fail(err.code, err.message);
+  const surveys = (d.surveys ??= []);
+  if (surveys.some((s) => s.eventId === e.id && s.userId === user.id)) fail('duplicate', 'You already rated this event. Thanks!');
+  const at = now();
+  surveys.push({
+    id: nextId('srv'), eventId: e.id, userId: user.id, rating: input.rating,
+    favorite: cleanSurveyText(input.favorite).slice(0, SURVEY_LIMITS.favorite),
+    leastFavorite: cleanSurveyText(input.leastFavorite).slice(0, SURVEY_LIMITS.leastFavorite),
+    comments: cleanSurveyText(input.comments).slice(0, SURVEY_LIMITS.comments),
+    anonymous: !!input.anonymous, createdAt: at,
+  });
+  addLedger({ userId: user.id, amount: SURVEY_POINTS, source: 'survey', activityId: 'event_survey', refId: e.id, reason: `Event feedback survey: ${e.title}` }, at);
+  save();
+  return { points: SURVEY_POINTS };
+}
+
+/** Staff view of one event's answers. Anonymous answers never carry a name, campus or id. */
+function surveyRowsFor(eventId: string): EventSurveyResults['rows'] {
+  const d = load();
+  return (d.surveys ?? [])
+    .filter((s) => s.eventId === eventId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map((s) => {
+      const u = s.anonymous ? undefined : d.users.find((x) => x.id === s.userId);
+      return {
+        name: s.anonymous ? null : (u?.displayName ?? 'Former player'), ...(u ? { campus: u.campus } : {}), anonymous: s.anonymous,
+        rating: s.rating, favorite: s.favorite, leastFavorite: s.leastFavorite, comments: s.comments, createdAt: s.createdAt,
+      };
+    });
+}
+
+/** SERVER RULE (admin_event_survey, 0030): admins + YACquest Chairs only. */
+export async function adminEventSurvey(eventId: string): Promise<EventSurveyResults> {
+  await delay();
+  requireRole('admin', 'chair');
+  const d = load();
+  const e = d.events.find((x) => x.id === eventId);
+  if (!e) return fail('not_found', 'That event no longer exists.');
+  const rows = surveyRowsFor(e.id);
+  const distribution = [1, 2, 3, 4, 5].map((n) => rows.filter((r) => r.rating === n).length);
+  const came = new Set(d.ledger.filter((l) => l.source === 'checkin' && l.refId === e.id && l.amount > 0).map((l) => l.userId)).size;
+  return {
+    eventId: e.id, title: e.title, startsAt: e.startsAt,
+    attendees: Math.max(e.attendeeCount, came),
+    responses: rows.length,
+    average: rows.length ? Math.round((rows.reduce((n, r) => n + r.rating, 0) / rows.length) * 10) / 10 : null,
+    distribution, rows,
+  };
 }

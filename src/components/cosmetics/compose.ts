@@ -56,9 +56,15 @@ export function composeLayers(id: AvatarId, look?: Look): Layer[] {
     }
   } else if (look?.accessory && ACCESSORY_ART[look.accessory]) {
     const art = ACCESSORY_ART[look.accessory];
-    const a = NECK_ANCHOR[char];
     const n = nudge(char, look.accessory);
-    layers.push({ grid: art.grid, x: a.x - Math.floor(width(art.grid) / 2) + (n.x ?? 0), y: a.y + (art.sink ?? 0) + (n.y ?? 0) });
+    if (art.anchor === 'side') {
+      // 0028 Diya: beside the character, on the left
+      const e = SIDE_ANCHOR[char];
+      layers.push({ grid: art.grid, x: e.x + (n.x ?? 0), y: e.y + (art.sink ?? 0) + (n.y ?? 0) });
+    } else {
+      const a = NECK_ANCHOR[char];
+      layers.push({ grid: art.grid, x: a.x - Math.floor(width(art.grid) / 2) + (n.x ?? 0), y: a.y + (art.sink ?? 0) + (n.y ?? 0) });
+    }
   }
 
   if (hat && look?.hat) {

@@ -11,6 +11,14 @@ const campusLabel = (c: unknown) => (c === 'all' ? 'all campuses' : CAMPUSES.fin
 const possessive = (name: string) => (name.endsWith('s') ? `${name}’` : `${name}’s`);
 const ROLE: Record<string, string> = { participant: 'a participant', admin: 'an admin', chair: 'a YACquest Chair' };
 
+const EOY_LABELS: Record<string, string> = {
+  ledger_backup: 'Export the ledger CSV',
+  confirm_winners: 'Confirm prize winners',
+  deliver_gift_cards: 'Deliver gift cards',
+  thank_you: 'Send a thank-you announcement',
+  reset: 'Reset for next year',
+};
+
 const SETTING_LABELS: Record<string, string> = {
   weeklyEnabled: 'weekly email on/off',
   weeklyDay: 'day',
@@ -107,6 +115,12 @@ export function describeAction(a: AdminAction): string {
       return `${actor} hid ${possessive(target)} photo from the ${s(d.title) ? `“${s(d.title)}” ` : ''}photo wall`;
     case 'photo_unhidden':
       return `${actor} put ${possessive(target)} photo back on the ${s(d.title) ? `“${s(d.title)}” ` : ''}photo wall`;
+    // 0028
+    case 'wrapped_sent':
+      return `YACquest Wrapped went out for ${s(d.cycle) || 'this cycle'} (${Number(d.notified) || 0} notified, ${Number(d.emailed) || 0} emailed)`;
+    case 'eoy_item_checked':
+    case 'eoy_item_unchecked':
+      return `${actor} ${a.action === 'eoy_item_checked' ? 'ticked' : 'unticked'} “${EOY_LABELS[s(d.item)] ?? s(d.item)}” on the end-of-year checklist`;
     case 'report_settings_changed':
       return `${actor} changed the weekly email settings${settingsChange(d)}`;
     default:
