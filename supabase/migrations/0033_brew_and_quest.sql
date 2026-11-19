@@ -223,6 +223,7 @@ declare
   v_n    int;
   v_pass public.reward_passes;
   v_out  jsonb;
+  v_had  int;
 begin
   -- Row lock per event: concurrent check-ins to the same event queue here, so pass numbers are
   -- handed out strictly in order and never beyond limit_count.
@@ -231,11 +232,14 @@ begin
     return null;
   end if;
   v_items := public.event_outfit_items(r.outfit_set);
+  -- already owned every piece (a second event of the same series) → the app says so instead of "NEW OUTFIT"
+  select count(*) into v_had from public.event_unlocks where user_id = p_user and item_id = any (v_items);
   insert into public.event_unlocks (user_id, item_id, event_id, unlocked_at)
   select p_user, i, p_event, p_at from unnest(v_items) i
   on conflict (user_id, item_id) do nothing;
 
-  v_out := jsonb_build_object('outfitSet', r.outfit_set, 'items', to_jsonb(v_items));
+  v_out := jsonb_build_object('outfitSet', r.outfit_set, 'items', to_jsonb(v_items),
+                             'alreadyOwned', v_had >= coalesce(array_length(v_items, 1), 0));
 
   -- Staff earn points + the outfit but never use up a pass.
   if not public.is_staff_user(p_user)

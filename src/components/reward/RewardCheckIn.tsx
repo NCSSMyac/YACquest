@@ -19,8 +19,13 @@ export function RewardCheckIn({ reward, points, eventTitle, onClose }: { reward:
   useEffect(() => {
     if (!user || saved.current) return;
     saved.current = true;
-    if (reward.pass) rememberPass(user.id, reward.pass);
-    rememberNewOutfit(user.id, reward.items);
+    if (reward.pass) {
+      rememberPass(user.id, reward.pass);
+      // Load the Coffee Pass screen now, while the network is surely up (a dropped connection after
+      // check-in would otherwise crash the lazy route on Continue).
+      void import('../../screens/CoffeePassPage').catch(() => {});
+    }
+    if (!reward.alreadyOwned) rememberNewOutfit(user.id, reward.items);
   }, [user, reward]);
   async function wear(look: Look) {
     await api.equipLook(look);

@@ -281,6 +281,11 @@ function CoffeePassChip() {
   const { passes } = useEventRewards();
   const now = useSecondTick(passes.length > 0);
   const p = homePass(passes, now);
+  const has = !!p;
+  // Keep the pass screen loaded while a pass is live, so it still opens if the connection drops.
+  useEffect(() => {
+    if (has) void import('./CoffeePassPage').catch(() => {});
+  }, [has]);
   if (!p) return null;
   const st = passState(p, now);
   return (

@@ -4313,6 +4313,10 @@ do $$ declare v_state text; r jsonb; begin
   perform t.ok(r ? 'items' and not (r ? 'pass'), '0033 order: #3 of a limit of 2 → no pass, never over the limit');
   perform t.eq((select count(*) from reward_passes where event_id = '00000000-0000-0000-0000-0000000033e4'), 2::bigint, '0033: exactly limit_count passes');
   perform t.eq(((r->'pass') is null), true, '0033: no pass info for #3');
+  perform t.eq((r->>'alreadyOwned')::boolean, false, '0033: first time → alreadyOwned false (NEW OUTFIT)');
+  r := grant_event_reward('00000000-0000-0000-0000-0000000033e4', t.u('ref2'), '2026-12-05 14:04-05');
+  perform t.eq((r->>'alreadyOwned')::boolean, true, '0033: owned every piece already → alreadyOwned true');
+  perform t.ok(not (r ? 'pass'), '0033: …and no second pass');
   begin
     insert into reward_passes (event_id, user_id, series, pass_no) values ('00000000-0000-0000-0000-0000000033e4', t.u('ref4'), 'x', 2);
   exception when others then v_state := sqlstate; end;

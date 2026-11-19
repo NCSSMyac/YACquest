@@ -214,9 +214,9 @@ export function continueFraction(startedAt: number, now: number, total = REVEAL_
   return Math.max(0, Math.min(1, 1 - (now - startedAt) / (total * 1000)));
 }
 
-/** "+20 points · new outfit (3 pieces)" (+ "+ Early Bird ☕ badge" for pass holders). */
-export function rewardLines(points: number, items: number, earlyBird: boolean): string[] {
-  const lines = [`+${points} points · new outfit (${items} ${items === 1 ? 'piece' : 'pieces'})`];
+/** "+20 points · new outfit (3 pieces)" (+ "+ Early Bird ☕ badge" for pass holders); already owned → "outfit already in your wardrobe". */
+export function rewardLines(points: number, items: number, earlyBird: boolean, alreadyOwned = false): string[] {
+  const lines = [alreadyOwned ? `+${points} points · outfit already in your wardrobe` : `+${points} points · new outfit (${items} ${items === 1 ? 'piece' : 'pieces'})`];
   if (earlyBird) lines.push('+ Early Bird ☕ badge');
   return lines;
 }

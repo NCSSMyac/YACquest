@@ -706,8 +706,9 @@ function grantEventReward(e: YacEvent, user: User, at: string): CheckInReward | 
   if (!r) return undefined;
   const items = outfitItems(r.outfitSet);
   d.eventUnlocks ??= [];
+  const had = items.filter((itemId) => d.eventUnlocks!.some((x) => x.userId === user.id && x.itemId === itemId)).length;
   for (const itemId of items) if (!d.eventUnlocks.some((x) => x.userId === user.id && x.itemId === itemId)) d.eventUnlocks.push({ userId: user.id, itemId, eventId: e.id, at });
-  const out: CheckInReward = { outfitSet: r.outfitSet, items };
+  const out: CheckInReward = { outfitSet: r.outfitSet, items, ...(had >= items.length ? { alreadyOwned: true } : {}) };
   d.rewardPasses ??= [];
   if (user.role === 'participant' && !d.rewardPasses.some((p) => p.series === r.outfitSet && p.userId === user.id)) {
     const n = d.rewardPasses.filter((p) => p.eventId === e.id).length;

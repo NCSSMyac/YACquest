@@ -756,6 +756,7 @@ export async function checkIn(eventId: string, password: string): Promise<{ poin
   const reward: CheckInReward = {
     outfitSet: str(pick(rw, 'outfit_set')),
     items: strList(rw.items),
+    ...(pick(rw, 'already_owned') === true ? { alreadyOwned: true } : {}),
     ...(rw.badge === 'early_bird' ? { badge: 'early_bird' as const } : {}),
     ...(pass ? { pass: toPass(pass) } : {}),
   };

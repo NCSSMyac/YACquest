@@ -570,7 +570,7 @@ Additive; run after 0032. Normal events are unchanged.
 - `cosmetics.rule_type` adds `'event'` (rule_value = outfit set): `cozy_beanie` (hat), `latte_aplus` (accessory), `moonlit_nook` (background). `unlocks_for()` = copy of 0028 + owned event items.
 
 ### Check-in
-`check_in()` = copy of 0003 + `grant_event_reward(event, user, now())` after a successful check-in. Returns `{points, activityId, reward}`; `reward` is null for normal events, else `{outfitSet, items[], badge?: 'early_bird', pass?: {eventId, eventTitle, campus, passNo, limit, venue, item, secretWord, checkedInAt, validUntil (= +30 min), usedAt, usedBy}}`. `pass` is only present for the person who just got one; nobody else is told counts.
+`check_in()` = copy of 0003 + `grant_event_reward(event, user, now())` after a successful check-in. Returns `{points, activityId, reward}`; `reward` is null for normal events, else `{outfitSet, items[], alreadyOwned (true when the person already had every piece, e.g. a second event of the series), badge?: 'early_bird', pass?: {eventId, eventTitle, campus, passNo, limit, venue, item, secretWord, checkedInAt, validUntil (= +30 min), usedAt, usedBy}}`. `pass` is only present for the person who just got one; nobody else is told counts.
 `grant_event_reward` locks the event's `event_rewards` row (`for update`), unlocks the set for everyone, and for **participants only** (staff: points + outfit, never a pass) with no pass in that series yet, inserts pass `count + 1` while `count < limit_count` (a concurrent `unique (series, user)` violation → no pass).
 
 ### Badges

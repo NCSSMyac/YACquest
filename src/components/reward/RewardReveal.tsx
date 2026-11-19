@@ -195,7 +195,7 @@ export default function RewardReveal({ reward, points, eventTitle, onContinue, o
     }
   }
 
-  const lines = rewardLines(points, reward.items.length, reward.badge === 'early_bird');
+  const lines = rewardLines(points, reward.items.length, reward.badge === 'early_bird', !!reward.alreadyOwned);
   return (
     <div className={`rr-wrap${still ? ' still' : ''}`} role="dialog" aria-modal="true" aria-labelledby="rr-title" aria-describedby="rr-rewards">
       {!still && stage === 'reveal' && <Confetti />}
@@ -214,7 +214,7 @@ export default function RewardReveal({ reward, points, eventTitle, onContinue, o
               <h2 id="rr-title" className="rr-name">{set.name.toUpperCase()}</h2>
               <div className="rr-chips">
                 <span className="rr-rarity">★ Limited</span>
-                <span className="rr-new">NEW OUTFIT</span>
+                <span className="rr-new">{reward.alreadyOwned ? 'IN YOUR WARDROBE' : 'NEW OUTFIT'}</span>
               </div>
               <ul className="rr-rewards" id="rr-rewards">
                 {lines.map((l) => <li key={l}>{l}</li>)}

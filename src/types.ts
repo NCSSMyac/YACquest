@@ -136,6 +136,8 @@ export interface CheckInReward {
   outfitSet: string;
   /** Cosmetic ids unlocked (kept forever). */
   items: string[];
+  /** True when the person already owned every piece (e.g. a second Brew & Quest event): no "NEW OUTFIT". */
+  alreadyOwned?: boolean;
   badge?: 'early_bird';
   pass?: CoffeePass;
 }

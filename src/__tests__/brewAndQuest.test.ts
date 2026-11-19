@@ -91,6 +91,7 @@ describe('Coffee Pass + reveal helpers', () => {
     expect(continueFraction(t0, t0 + 4_000)).toBeCloseTo(0.5);
     expect(rewardLines(20, 3, true)).toEqual(['+20 points · new outfit (3 pieces)', '+ Early Bird ☕ badge']);
     expect(rewardLines(20, 3, false)).toEqual(['+20 points · new outfit (3 pieces)']);
+    expect(rewardLines(20, 3, false, true)).toEqual(['+20 points · outfit already in your wardrobe']);
   });
 });
 
@@ -165,6 +166,7 @@ describe('Brew & Quest check-ins (mock API)', () => {
     expect(r1.reward?.pass).toMatchObject({ passNo: 1, limit: 2, venue: 'Cup of Joe', item: 'free coffee', secretWord: 'MOCHA-42' });
     expect(Date.parse(r1.reward!.pass!.validUntil) - Date.parse(r1.reward!.pass!.checkedInAt)).toBe(30 * MIN);
     expect(r1.reward?.badge).toBe('early_bird');
+    expect(r1.reward?.alreadyOwned).toBeUndefined();
     expect((await api.myBadges()).find((x) => x.id === 'early_bird')?.earned).toBe(true);
 
     asUser(p2);
@@ -188,6 +190,7 @@ describe('Brew & Quest check-ins (mock API)', () => {
     const again = await api.checkIn(b.id, 'brewtest');
     expect(again.reward?.pass).toBeUndefined();
     expect(again.reward?.items).toHaveLength(3);
+    expect(again.reward?.alreadyOwned).toBe(true); // reveal says "already in your wardrobe", not NEW OUTFIT
     asUser(p4);
     expect((await api.checkIn(b.id, 'brewtest')).reward?.pass?.passNo).toBe(1);
 
