@@ -116,6 +116,15 @@ export const ACTIVITIES: Activity[] = [
     limitLabel: DIGITAL_LIMIT,
   },
   {
+    // 0034: seasonal (QUEST_WINDOWS in config.ts): only during finals season. Counts toward the weekly digital limit.
+    id: 'finals_study_break',
+    tier: 3,
+    title: 'Finals Study Break',
+    description: `Share your favorite study spot or snack! Post it (tag ${INSTAGRAM_HANDLE} if you like) or just snap a photo, then upload it here.`,
+    method: 'screenshot',
+    limitLabel: DIGITAL_LIMIT,
+  },
+  {
     id: 'story_game',
     tier: 3,
     title: 'Play an Insta Story Game',

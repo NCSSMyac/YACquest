@@ -8,10 +8,19 @@
  * numbers, keeps the secret word staff-only and decides who owns the outfit.
  */
 import { CAMPUSES, type CampusId } from '../config';
-import type { CoffeePass, EventReward, YacEvent } from '../types';
+import type { CoffeePass, EventReward, RewardCampaign, YacEvent } from '../types';
 import type { EventForm } from './duplicateEvent';
 
 // ───────────── Outfit sets ─────────────
+//
+// HOW TO ADD A NEW OUTFIT SET (e.g. for a "Snack Attack" campaign) — docs/SETUP.md has the long version:
+//  1. Art: draw the pieces (a hat, an accessory and/or a background) in src/components/cosmetics/
+//     (pixel grids like limitedArt.ts, or vector art like limitedVec.ts) and register them where
+//     limitedArt.ts registers latte_aplus / cozy_beanie / moonlit_nook.
+//  2. Catalogue: add the items to COSMETICS in src/lib/cosmetics.ts with rule { type: 'event', id: '<set id>' }.
+//  3. ONE config entry: add the set to OUTFIT_SETS below (id, name, edition, items, about).
+//  4. Database: a new migration with one cosmetics row per item (rule_type 'event', rule_value '<set id>'),
+//     like section 2 of 0033_brew_and_quest.sql. Then Admin → Events → Campaigns → New campaign → pick it.
 
 export interface OutfitSet {
   id: string;
@@ -35,6 +44,68 @@ export const OUTFIT_SETS: OutfitSet[] = [
 ];
 
 export const outfitSetById = (id?: string) => OUTFIT_SETS.find((s) => s.id === id) ?? OUTFIT_SETS[0];
+
+// ───────────── 0034 Campaigns (labels) ─────────────
+
+/** Brew & Quest 2026: the default campaign (seeded by 0034). Used when the server has no campaign for a set. */
+export const DEFAULT_CAMPAIGN: RewardCampaign = {
+  id: 'brew_quest_2026',
+  name: 'Brew & Quest 2026',
+  itemLabel: 'free coffee',
+  passName: 'Coffee Pass',
+  emoji: '☕',
+  outfitSet: 'latte_night_scholar',
+  message: 'First quest: meet us at {venue}! The first {limit} people to meet us get {item} on us ☕',
+};
+
+export interface CampaignLabels {
+  name: string;
+  passName: string;
+  emoji: string;
+  itemLabel: string;
+}
+
+/** Labels for an outfit set: its campaign, else Brew & Quest's (the only set before 0034), else a gift. */
+export function campaignLabels(outfitSet: string | undefined, campaigns?: readonly RewardCampaign[] | null): CampaignLabels {
+  const c = (campaigns ?? []).find((x) => x.outfitSet === outfitSet) ?? (!outfitSet || outfitSet === DEFAULT_CAMPAIGN.outfitSet ? DEFAULT_CAMPAIGN : null);
+  if (c) return { name: c.name, passName: c.passName, emoji: c.emoji, itemLabel: c.itemLabel };
+  const set = OUTFIT_SETS.find((x) => x.id === outfitSet);
+  return { name: set?.edition ?? 'Special event', passName: 'Reward Pass', emoji: '🎁', itemLabel: 'free treat' };
+}
+
+/** Pass / reward labels carried on a pass or an event's reward (0034), with the Coffee Pass defaults. */
+export const passLabels = (x: { passName?: string; emoji?: string } | null | undefined) => ({
+  passName: x?.passName?.trim() || DEFAULT_CAMPAIGN.passName,
+  emoji: x?.emoji?.trim() || DEFAULT_CAMPAIGN.emoji,
+});
+
+/** True for coffee-themed sets/campaigns (coffee beans in the confetti, the café ding, steam). */
+export const isCoffee = (x: { emoji?: string; outfitSet?: string; itemLabel?: string } | null | undefined) =>
+  !!x && (x.emoji === '☕' || x.outfitSet === 'latte_night_scholar' || /coffee|latte|espresso|mocha/i.test(x.itemLabel ?? ''));
+
+/** "free coffee" ×10 → "10 free coffees"; "free merch" stays "free merch"; 1 → "1 free coffee". */
+export function pluralItem(label: string, n: number): string {
+  const t = label.trim() || 'free item';
+  if (n === 1 || /(merch|swag|gear|stuff|food|candy)$/i.test(t) || /s$/i.test(t)) return `${n} ${t}`;
+  return `${n} ${t}${/(ch|sh|x)$/i.test(t) ? 'es' : 's'}`;
+}
+
+/** Campaign editor checks (same rules as save_reward_campaign). null = OK. */
+export function campaignInputError(c: Pick<RewardCampaign, 'name' | 'itemLabel' | 'passName' | 'emoji' | 'outfitSet' | 'message'>, others: readonly RewardCampaign[] = [], id?: string): string | null {
+  if (c.name.trim().length < 2 || c.name.trim().length > 60) return 'Campaign name: 2 to 60 characters.';
+  if (!/[a-z0-9]/i.test(c.name)) return 'Use letters or numbers in the campaign name.';
+  if (c.itemLabel.trim().length > 40) return 'Free item: at most 40 characters.';
+  if (c.passName.trim() && (c.passName.trim().length < 2 || c.passName.trim().length > 30)) return 'Pass name: 2 to 30 characters.';
+  if ([...c.emoji.trim()].length > 4) return 'Emoji: one emoji.';
+  if (!OUTFIT_SETS.some((s) => s.id === c.outfitSet)) return 'Pick a reward outfit set.';
+  const clash = others.find((o) => o.outfitSet === c.outfitSet && o.id !== id);
+  if (clash) return `That outfit already belongs to “${clash.name}”. Each campaign has its own outfit.`;
+  if (c.message.trim().length > 300) return 'Countdown message: 1 to 300 characters.';
+  return null;
+}
+
+/** Same slug as the server: "Brew & Quest 2026" → "brew_quest_2026". */
+export const campaignSlug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
 export const outfitSetOfItem = (itemId: string) => OUTFIT_SETS.find((s) => s.items.includes(itemId));
 
 // ───────────── Admin form: defaults + "Brew & Quest preset" ─────────────
@@ -156,14 +227,15 @@ export function countdown(e: Pick<YacEvent, 'title' | 'startsAt' | 'endsAt'> & {
   const start = new Date(e.startsAt).getTime();
   const end = new Date(e.endsAt).getTime();
   const message = fillMessage(e.reward.message, e.reward);
+  const emoji = passLabels(e.reward).emoji;
   if (now < start) {
     const clock = fmtStartsIn(start - now);
-    return { phase: 'before', headline: `☕ ${rewardEventName(e.title)} starts in ${clock}`, message, clock };
+    return { phase: 'before', headline: `${emoji} ${rewardEventName(e.title)} starts in ${clock}`, message, clock };
   }
   if (now < end) {
     const clock = fmtLeft(end - now);
-    const plain = message.replace(/\s*☕\s*$/u, '');
-    return { phase: 'live', headline: `☕ ${plain} · ${clock} left`, message: plain, clock };
+    const plain = message.replace(/\s*(☕|\p{Extended_Pictographic})\s*$/u, '');
+    return { phase: 'live', headline: `${emoji} ${plain} · ${clock} left`, message: plain, clock };
   }
   return { phase: 'over', headline: '', message, clock: '' };
 }

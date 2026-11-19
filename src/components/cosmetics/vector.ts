@@ -14,6 +14,8 @@ export interface VecShape {
   op?: number;
   /** Seconds of delay for a twinkling shape (stars); static in canvas + reduced motion. */
   twinkle?: number;
+  /** 0034: seconds of delay for a rising steam curl (latte); static in canvas + reduced motion. */
+  steam?: number;
 }
 
 export interface VecArt {

@@ -8,9 +8,10 @@ import { OfflineBannerInChrome, useRegisterChrome } from './OfflineBanner';
 import { Sprite } from './Sprite';
 import { TodayEventProvider, useTodayEvent } from './TodayEvent';
 import { localTourDone, setLocalTourDone, shouldAutoShowTour, useTourRequest } from '../lib/tour';
-import { claimToasts } from '../lib/seasonal';
+import { claimToastLines } from '../lib/seasonal';
 import { useToast } from './ui';
 import { EventRewardsProvider, useEventRewards } from '../lib/useEventRewards';
+import { VerifyBar } from './promo/VerifyBar';
 
 /** 0028: once per session per person, claim seasonal items whose window is open today; toast what's new. */
 const seasonalClaimedFor = new Set<string>();
@@ -20,7 +21,7 @@ function SeasonalClaimer({ userId }: { userId: string }) {
     if (seasonalClaimedFor.has(userId)) return;
     seasonalClaimedFor.add(userId);
     api.claimSeasonalItems().then(
-      (r) => claimToasts(r.claimed).forEach((t, i) => setTimeout(() => toast(t, 'info'), 600 + i * 1800)),
+      (r) => claimToastLines(r.claimed).forEach((t, i) => setTimeout(() => toast(t, 'info'), 600 + i * 1800)),
       () => seasonalClaimedFor.delete(userId),
     );
   }, [userId, toast]);
@@ -96,6 +97,8 @@ function Shell() {
         </Link>
         <OfflineBannerInChrome />
       </header>
+      {/* 0034: red "confirm your email" bar for quick-start accounts (every screen in the chrome, admin too) */}
+      <VerifyBar />
       <main>
         <Outlet />
       </main>

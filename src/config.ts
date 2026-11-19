@@ -139,7 +139,10 @@ export const WRAPPED = {
   mockAlwaysOpen: false,
 } as const;
 
-export type SeasonalHolidayId = 'indigenous_peoples_day' | 'dia_de_muertos' | 'diwali' | 'thanksgiving' | 'heritage_month';
+export type SeasonalHolidayId =
+  | 'indigenous_peoples_day' | 'dia_de_muertos' | 'diwali' | 'thanksgiving' | 'heritage_month'
+  // 0035 winter
+  | 'hanukkah' | 'christmas' | 'kwanzaa' | 'winter_solstice' | 'new_year' | 'three_kings_day' | 'lunar_new_year';
 
 export interface SeasonalHoliday {
   id: SeasonalHolidayId;
@@ -158,7 +161,13 @@ export interface SeasonalHoliday {
   /** 0031: more links for the About modal (each opens in a new tab). */
   links?: { label: string; url: string }[];
   /** 0031: word used in the "New limited-time … for …" notification/toast (default 'item'). Mirrors seasonal_holidays.item_noun. */
-  noun?: 'item' | 'background';
+  noun?: 'item' | 'items' | 'background';
+  /** 0035: About adds "2027 is the Year of the Goat (also called Sheep or Ram)." for the window's year (zodiacFor()). */
+  zodiac?: boolean;
+  /** 0035: shown as "Winter 2026–27" in the Collection. */
+  season?: 'winter';
+  /** 0036: one short line per item (cosmetic id → text), shown under that item in the About modal. */
+  itemAbout?: Record<string, string>;
 }
 
 /**
@@ -167,7 +176,7 @@ export interface SeasonalHoliday {
  *
  * ⚠️ VERIFY THESE DATES EVERY YEAR (Diwali follows the lunar calendar; Thanksgiving is the 4th Thursday of
  * November) and keep the database copy in sync: seasonal_windows in supabase/migrations/0028_pace_wrapped_seasonal.sql
- * and 0031_seasonal_november.sql (add a new migration with the next year's rows). Descriptions and art should be reviewed by members of
+ * 0031_seasonal_november.sql, 0035_winter_seasonal.sql and 0036_winter_windows_kwanzaa.sql (add a new migration with the next year's rows). Descriptions and art should be reviewed by members of
  * these communities (e.g. campus cultural organizations) before they go live — see docs/SETUP.md.
  */
 export const SEASONAL: SeasonalHoliday[] = [
@@ -188,7 +197,7 @@ export const SEASONAL: SeasonalHoliday[] = [
     emoji: '🌼',
     windows: { 2026: ['2026-10-25', '2026-11-09'], 2027: ['2027-10-25', '2027-11-09'] },
     about:
-      'Día de los Muertos (Nov 1–2) is a joyful Mexican tradition of remembering and celebrating loved ones who have passed — not a spooky holiday or part of Halloween. Families build ofrendas decorated with cempasúchil (marigolds), whose color and scent are said to guide spirits home, and papel picado. This item is a flower crown honoring the tradition — not a costume.',
+      'Día de los Muertos (Nov 1–2) is a joyful Mexican tradition of remembering and celebrating loved ones who have passed — not a spooky holiday or part of Halloween. Families build ofrendas decorated with cempasúchil (marigolds), whose color and scent are said to guide spirits home, and papel picado. This flower crown honors the tradition.',
   },
   {
     id: 'diwali',
@@ -218,10 +227,136 @@ export const SEASONAL: SeasonalHoliday[] = [
     windows: { 2026: ['2026-11-01', '2026-11-30'], 2027: ['2027-11-01', '2027-11-30'] },
     noun: 'background',
     about:
-      'November is Native American Heritage Month in the United States, a time to honor the histories, cultures and continuing presence of Native peoples. Many people also mark Thanksgiving week as “Truthsgiving” — a time to learn the full history behind the holiday and center Indigenous voices. Since 1970, Native people have gathered in Plymouth, Massachusetts on Thanksgiving Day for a National Day of Mourning. The Three Sisters — corn, beans and squash planted together so each helps the others grow — are Indigenous agricultural knowledge practiced by many Native nations for generations. This background celebrates that knowledge; it isn’t a costume.',
+      'November is Native American Heritage Month in the United States, a time to honor the histories, cultures and continuing presence of Native peoples. Many people also mark Thanksgiving week as “Truthsgiving” — a time to learn the full history behind the holiday and center Indigenous voices. Since 1970, Native people have gathered in Plymouth, Massachusetts on Thanksgiving Day for a National Day of Mourning. The Three Sisters — corn, beans and squash planted together so each helps the others grow — are Indigenous agricultural knowledge practiced by many Native nations for generations.',
     links: [
       { label: 'Learn about North Carolina’s tribes', url: 'https://ncadmin.nc.gov/divisions/american-indian-affairs' },
       { label: 'Whose land are you on?', url: 'https://native-land.ca/' },
     ],
   },
+  // ───────────── 0035 WINTER (0035_winter_seasonal.sql) ─────────────
+  // ⚠️ VERIFY YEARLY (lunar / lunisolar calendars and astronomy): Hanukkah, Winter Solstice, Lunar New Year.
+  {
+    id: 'hanukkah',
+    name: 'Hanukkah',
+    emoji: '🕎',
+    // 0036: Nov 30 – Dec 31 every season (covers Hanukkah 2026: sundown Dec 4 – Dec 12; and 2027: sundown
+    // Dec 24, 2027 – Jan 1, 2028 — verify yearly; widen the end if a later Hanukkah runs past Dec 31).
+    windows: { 2026: ['2026-11-30', '2026-12-31'], 2027: ['2027-11-30', '2027-12-31'] },
+    noun: 'items',
+    season: 'winter',
+    about:
+      'Hanukkah, the Jewish Festival of Lights, lasts eight nights. Each night another candle is lit on the hanukkiah (a nine-branched menorah — the ninth is the shamash, the helper candle used to light the others), remembering the rededication of the Temple in Jerusalem and the story of a small amount of oil lasting eight nights. Families play dreidel, a spinning-top game, and eat foods fried in oil like latkes and sufganiyot (jelly doughnuts).',
+  },
+  {
+    id: 'christmas',
+    name: 'Christmas',
+    emoji: '🎄',
+    // Dec 1–31 every year (Christmas = Dec 25).
+    windows: { 2026: ['2026-12-01', '2026-12-31'], 2027: ['2027-12-01', '2027-12-31'] },
+    noun: 'items',
+    season: 'winter',
+    about:
+      'Christmas, on December 25, is celebrated by Christians as the birth of Jesus and by many people around the world as a time for family, giving and lights. Evergreen trees, twinkling lights and gifts are common traditions.',
+  },
+  {
+    id: 'kwanzaa',
+    name: 'Kwanzaa',
+    emoji: '🕯️',
+    // Kwanzaa is Dec 26 – Jan 1 every year → 0036: Dec 1 – Jan 8.
+    windows: { 2026: ['2026-12-01', '2027-01-08'], 2027: ['2027-12-01', '2028-01-08'] },
+    noun: 'items',
+    season: 'winter',
+    about:
+      'Kwanzaa (December 26 – January 1) is a celebration of African American and Pan-African culture and community, created in 1966 by Dr. Maulana Karenga. Each night a candle is lit on the kinara for one of the seven principles, the Nguzo Saba: unity, self-determination, collective work and responsibility, cooperative economics, purpose, creativity and faith. Its colors are red, black and green.',
+    itemAbout: {
+      kikombe_cha_umoja:
+        'The kikombe cha umoja, or unity cup, is shared during the Karamu feast near the end of Kwanzaa. A little is poured as a tribute to the ancestors, and family and friends drink to unity.',
+      zawadi:
+        'Zawadi are gifts given near the end of Kwanzaa, often handmade or educational, like a book, to encourage learning, creativity and growth.',
+      kwanzaa_scarf:
+        'A cozy knit scarf in the Kwanzaa colors: red for the struggle, black for the people, and green for the future and hope.',
+    },
+  },
+  {
+    id: 'winter_solstice',
+    name: 'Winter Solstice',
+    emoji: '✨',
+    // Solstice Dec 21, 2026 and Dec 21, 2027 (evening in New York) → 0036: all of December.
+    windows: { 2026: ['2026-12-01', '2026-12-31'], 2027: ['2027-12-01', '2027-12-31'] },
+    noun: 'items',
+    season: 'winter',
+    about:
+      'The winter solstice (around December 21 in the Northern Hemisphere) is the longest night of the year. After it, days start getting longer again. Many cultures around the world have marked this turning point with lights, gatherings and celebrations of the return of the sun.',
+  },
+  {
+    id: 'new_year',
+    name: 'New Year’s',
+    emoji: '🎆',
+    // 0036: Dec 1 – Jan 7 every season. The party hat shows the year being welcomed (newYearHatYear()).
+    windows: { 2026: ['2026-12-01', '2027-01-07'], 2027: ['2027-12-01', '2028-01-07'] },
+    noun: 'items',
+    season: 'winter',
+    about:
+      'A fresh start! New Year’s Eve and Day (December 31 – January 1) are celebrated around the world with countdowns, fireworks and resolutions. Here’s to your best quest year yet.',
+  },
+  {
+    id: 'three_kings_day',
+    name: 'Three Kings Day',
+    emoji: '⭐',
+    // Día de Reyes = January 6 every year → 0036: Dec 1 – Jan 13. Keyed by the January's year (as in 0035).
+    windows: { 2027: ['2026-12-01', '2027-01-13'], 2028: ['2027-12-01', '2028-01-13'] },
+    noun: 'background',
+    season: 'winter',
+    about:
+      'Three Kings Day (Día de Reyes), on January 6, is celebrated in Latin America, Spain, the Philippines, Puerto Rico and by many Christian communities as the Epiphany — the day the Three Wise Men, guided by a star, are said to have visited the baby Jesus. Families share a Rosca de Reyes, a ring-shaped sweet bread with a small figure hidden inside — whoever finds it often hosts the next gathering. Children may leave shoes out (and grass for the camels) the night before for gifts.',
+  },
+  {
+    id: 'lunar_new_year',
+    name: 'Lunar New Year',
+    emoji: '🧧',
+    // Lunar New Year = Sat Feb 6, 2027 (Year of the Goat); Wed Jan 26, 2028 (Year of the Monkey).
+    // 0036: Dec 1 – Feb 20 every season (keyed by the year of the New Year). Verify yearly that Feb 20 still
+    // covers the Lantern Festival (Feb 20, 2027; Feb 9, 2028).
+    windows: { 2027: ['2026-12-01', '2027-02-20'], 2028: ['2027-12-01', '2028-02-20'] },
+    noun: 'items',
+    season: 'winter',
+    zodiac: true,
+    about:
+      'Lunar New Year marks the start of the year on the lunar calendar and is celebrated across East and Southeast Asia and around the world — as Chinese New Year or Spring Festival, Seollal in Korea, and Tết in Vietnam, among others. Families reunite, homes are decorated in red for luck, and elders give red envelopes with money to wish good fortune.',
+  },
 ];
+
+/**
+ * 0034 QUICK START: new accounts play right away; the app confirms the email itself (#/verify?t=…).
+ * The database has its own copies: email_verify_days() = linkDays, app_config.verify_resends_per_hour.
+ */
+export const VERIFY = {
+  /** The confirmation link works this long. */
+  linkDays: 7,
+  /** "Resend" on Home, per person per hour. */
+  resendsPerHour: 3,
+} as const;
+
+/** 0034: seasonal quests (New York dates, inclusive). Keep in sync with quest_windows in 0034_quickstart_promo_collection.sql. */
+export const QUEST_WINDOWS: Record<string, [string, string][]> = {
+  finals_study_break: [
+    ['2026-12-01', '2026-12-18'],
+    ['2027-04-20', '2027-05-01'],
+  ],
+};
+
+/** 0034 promo: mystery teaser (days before a special series), live campus scoreboard window + refresh. */
+export const PROMO = {
+  teaserDays: 14,
+  scoreboardDaysBefore: 3,
+  scoreboardDaysAfter: 1,
+  scoreboardPollMs: 30_000,
+} as const;
+
+/** 0034 recap card: "Thank you, Tar Heels!" */
+export const CAMPUS_THANKS: Record<CampusId | 'all', string> = {
+  duke: 'Thank you, Blue Devils!',
+  unc: 'Thank you, Tar Heels!',
+  ncsu: 'Thank you, Wolfpack!',
+  all: 'Thank you, Triangle!',
+};

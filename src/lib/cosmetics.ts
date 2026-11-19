@@ -54,8 +54,27 @@ export const COSMETICS: CosmeticDef[] = [
   { id: 'rangoli_diyas', slot: 'background', name: 'Rangoli & Diyas', rule: { type: 'seasonal', id: 'diwali' } },
   { id: 'harvest_scarf', slot: 'accessory', name: 'Harvest Scarf', rule: { type: 'seasonal', id: 'thanksgiving' } },
   { id: 'autumn_harvest', slot: 'background', name: 'Autumn Harvest', rule: { type: 'seasonal', id: 'thanksgiving' } },
-  // 0031 Native American Heritage Month (November): a background, never a costume.
+  // 0031 Native American Heritage Month (November): a background.
   { id: 'three_sisters', slot: 'background', name: 'Three Sisters Garden', rule: { type: 'seasonal', id: 'heritage_month' } },
+  // 0035 Winter (vector art in winterVec.ts): backgrounds and everyday held objects.
+  { id: 'festival_of_lights', slot: 'background', name: 'Festival of Lights', rule: { type: 'seasonal', id: 'hanukkah' } },
+  { id: 'dreidel', slot: 'accessory', name: 'Dreidel', rule: { type: 'seasonal', id: 'hanukkah' } },
+  { id: 'snowy_pine', slot: 'background', name: 'Snowy Pine & Lights', rule: { type: 'seasonal', id: 'christmas' } },
+  { id: 'holiday_hat', slot: 'hat', name: 'Cozy Holiday Hat', rule: { type: 'seasonal', id: 'christmas' } },
+  { id: 'candy_cane', slot: 'accessory', name: 'Candy Cane', rule: { type: 'seasonal', id: 'christmas' } },
+  { id: 'kinara_glow', slot: 'background', name: 'Kinara Glow', rule: { type: 'seasonal', id: 'kwanzaa' } },
+  // 0036 Kwanzaa accessories (held at the side; the scarf is worn at the neck)
+  { id: 'kikombe_cha_umoja', slot: 'accessory', name: 'Kikombe cha Umoja (Unity Cup)', rule: { type: 'seasonal', id: 'kwanzaa' } },
+  { id: 'zawadi', slot: 'accessory', name: 'Zawadi (Gift)', rule: { type: 'seasonal', id: 'kwanzaa' } },
+  { id: 'kwanzaa_scarf', slot: 'accessory', name: 'Red, Black & Green Scarf', rule: { type: 'seasonal', id: 'kwanzaa' } },
+  { id: 'longest_night', slot: 'background', name: 'Longest Night', rule: { type: 'seasonal', id: 'winter_solstice' } },
+  { id: 'starlight_lantern', slot: 'accessory', name: 'Starlight Lantern', rule: { type: 'seasonal', id: 'winter_solstice' } },
+  { id: 'new_year_hat', slot: 'hat', name: 'New Year’s Party Hat', rule: { type: 'seasonal', id: 'new_year' } },
+  { id: 'party_popper', slot: 'accessory', name: 'Party Popper', rule: { type: 'seasonal', id: 'new_year' } },
+  { id: 'midnight_fireworks', slot: 'background', name: 'Midnight Fireworks', rule: { type: 'seasonal', id: 'new_year' } },
+  { id: 'rosca_de_reyes', slot: 'background', name: 'Rosca de Reyes', rule: { type: 'seasonal', id: 'three_kings_day' } },
+  { id: 'lanterns_fireworks', slot: 'background', name: 'Lanterns & Fireworks', rule: { type: 'seasonal', id: 'lunar_new_year' } },
+  { id: 'red_envelope', slot: 'accessory', name: 'Red Envelope', rule: { type: 'seasonal', id: 'lunar_new_year' } },
   // 0033 Limited edition: "Latte Night Scholar" (Brew & Quest 2026). Only by checking in at a Brew & Quest event.
   { id: 'cozy_beanie', slot: 'hat', name: 'Cozy Knit Beanie', rule: { type: 'event', id: 'latte_night_scholar' } },
   { id: 'latte_aplus', slot: 'accessory', name: 'A+ Latte', rule: { type: 'event', id: 'latte_night_scholar' } },

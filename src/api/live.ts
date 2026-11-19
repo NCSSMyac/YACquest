@@ -87,6 +87,10 @@ import type {
   EventReward,
   EventRewardInput,
   MyEventRewards,
+  RewardCampaign,
+  RewardTeaser,
+  RewardScoreboard,
+  EventRecap,
 } from '../types';
 import { cleanSurveyText, surveyError } from '../lib/eventSurvey';
 import { ApiError, emitChange } from './shared';
@@ -195,7 +199,11 @@ function toLook(r: AnyRow): Look | undefined {
   return hat || accessory || background ? look : undefined;
 }
 
-function toUser(r: AnyRow, emailVerified?: boolean): User {
+function toUser(r: AnyRow, authConfirmed?: boolean): User {
+  // 0034: the app's own confirmation (profiles.email_verified_at); older servers: Supabase's flag.
+  const has0034 = 'email_verified_at' in r;
+  const emailVerifiedAt = has0034 ? opt(r.email_verified_at) ?? null : undefined;
+  const emailVerified = has0034 ? emailVerifiedAt !== null : authConfirmed;
   return {
     id: str(r.id),
     handle: str(pick(r, 'handle')),
@@ -209,6 +217,7 @@ function toUser(r: AnyRow, emailVerified?: boolean): User {
     createdAt: str(pick(r, 'created_at')),
     emailOptIn: pick(r, 'email_opt_in') !== false,
     emailVerified,
+    ...(has0034 ? { emailVerifiedAt } : {}),
     look: toLook(r),
     // 0026: only when the row has the columns (undefined = server without 0026 → the app falls back to this device).
     ...('tour_done_at' in r ? { tourDoneAt: opt(r.tour_done_at) ?? null } : {}),
@@ -359,12 +368,20 @@ async function uid(): Promise<string> {
 
 /** 0026 profile columns. Read separately-tolerant: a server without 0026 just doesn't return them. */
 const PROFILE_COLS_0026: string = `${PROFILE_COLS}, tour_done_at, photo_wall_opt_out`;
+/** 0034: + email_verified_at (the app's own email confirmation). */
+const PROFILE_COLS_0034: string = `${PROFILE_COLS_0026}, email_verified_at`;
 let has0026Cols = true;
+let has0034Cols = true;
 
 async function loadProfile(authUser: AuthUser): Promise<User | null> {
-  const cols: string = has0026Cols ? PROFILE_COLS_0026 : PROFILE_COLS;
-  let res = await sb().from('profiles').select(cols).eq('id', authUser.id).maybeSingle();
-  if (res.error && has0026Cols && /tour_done_at|photo_wall_opt_out|42703/.test(`${(res.error as { code?: string }).code} ${res.error.message}`)) {
+  const missing = (e: { code?: string; message: string }) => /tour_done_at|photo_wall_opt_out|email_verified_at|42703/.test(`${e.code} ${e.message}`);
+  const colsNow = () => (has0034Cols && has0026Cols ? PROFILE_COLS_0034 : has0026Cols ? PROFILE_COLS_0026 : PROFILE_COLS);
+  let res = await sb().from('profiles').select(colsNow()).eq('id', authUser.id).maybeSingle();
+  if (res.error && has0034Cols && missing(res.error as { code?: string; message: string })) {
+    has0034Cols = false;
+    res = await sb().from('profiles').select(colsNow()).eq('id', authUser.id).maybeSingle();
+  }
+  if (res.error && has0026Cols && missing(res.error as { code?: string; message: string })) {
     has0026Cols = false;
     res = await sb().from('profiles').select(PROFILE_COLS).eq('id', authUser.id).maybeSingle();
   }
@@ -656,7 +673,9 @@ export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Pr
     // 0033: special reward events (public part only). Nothing if the server doesn't have 0033 yet.
     rpc<AnyRow[] | null>('event_rewards_public').catch(() => null),
   ]);
-  const rewardOf = new Map((rewards ?? []).map((r) => [str(pick(r, 'event_id')), toReward(r)]));
+  // 0034: campaign labels (emoji, pass name) for the special events. None on a server without 0034.
+  const campaigns = rewards?.length ? await listRewardCampaigns().catch(() => []) : [];
+  const rewardOf = new Map((rewards ?? []).map((r) => [str(pick(r, 'event_id')), toReward(r, campaigns)]));
   const attended = new Set(((checkins as AnyRow[]) ?? []).map((r) => str(r.ref_id)));
   const pw = new Map(((secrets as AnyRow[]) ?? []).map((r) => [str(r.event_id), str(r.password)]));
   // Participants never receive passwords (RLS on event_secrets enforces this too).
@@ -765,14 +784,51 @@ export async function checkIn(eventId: string, password: string): Promise<{ poin
 
 // ───────────────────────────── 0033: Brew & Quest (limited reward events) ─────────────────────────────
 
-function toReward(r: AnyRow): EventReward {
+function toReward(r: AnyRow, campaigns?: RewardCampaign[] | null): EventReward {
+  const outfitSet = str(pick(r, 'outfit_set'));
+  const c = campaigns?.find((x) => x.outfitSet === outfitSet);
   return {
     itemLabel: str(pick(r, 'item_label')),
     limit: num(pick(r, 'limit_count') ?? r.limit),
     venue: str(r.venue),
+    outfitSet,
+    message: str(r.message),
+    ...(c ? { emoji: c.emoji, passName: c.passName, campaignName: c.name } : {}),
+  };
+}
+
+function toRewardCampaign(r: AnyRow): RewardCampaign {
+  return {
+    id: str(r.id),
+    name: str(r.name),
+    itemLabel: str(pick(r, 'item_label')),
+    passName: str(pick(r, 'pass_name')),
+    emoji: str(r.emoji),
     outfitSet: str(pick(r, 'outfit_set')),
     message: str(r.message),
+    ...(opt(pick(r, 'updated_at')) ? { updatedAt: str(pick(r, 'updated_at')) } : {}),
   };
+}
+
+/** 0034 reward_campaigns_list(). Empty on a server without 0034 (the app falls back to Brew & Quest labels). */
+export async function listRewardCampaigns(): Promise<RewardCampaign[]> {
+  try {
+    return ((await rpc<AnyRow[] | null>('reward_campaigns_list')) ?? []).map(toRewardCampaign);
+  } catch (e) {
+    if (e instanceof ApiError && /reward_campaigns_list|function|PGRST202/i.test(e.message)) return [];
+    throw e;
+  }
+}
+
+export async function saveRewardCampaign(input: Omit<RewardCampaign, 'id' | 'updatedAt'> & { id?: string }): Promise<RewardCampaign> {
+  const r = one(await rpc<AnyRow | AnyRow[] | null>('save_reward_campaign', { p: { ...input } }));
+  emitChange();
+  return toRewardCampaign(r ?? {});
+}
+
+export async function deleteRewardCampaign(id: string): Promise<void> {
+  await rpc('delete_reward_campaign', { p_id: id });
+  emitChange();
 }
 
 function toPass(p: AnyRow): CoffeePass {
@@ -790,6 +846,10 @@ function toPass(p: AnyRow): CoffeePass {
     validUntil: str(pick(p, 'valid_until')),
     ...(opt(pick(p, 'used_at')) ? { usedAt: str(pick(p, 'used_at')) } : {}),
     ...(usedBy === 'self' || usedBy === 'staff' ? { usedBy } : {}),
+    // 0034: campaign labels
+    ...(opt(pick(p, 'outfit_set')) ? { outfitSet: str(pick(p, 'outfit_set')) } : {}),
+    ...(opt(pick(p, 'pass_name')) ? { passName: str(pick(p, 'pass_name')) } : {}),
+    ...(opt(p.emoji) ? { emoji: str(p.emoji) } : {}),
   };
 }
 
@@ -1078,7 +1138,7 @@ export async function reviewSubmission(id: string, decision: 'approved' | 'rejec
 }
 
 export async function searchUsers(query: string, limit = 20): Promise<AdminUserRow[]> {
-  return ((await rpc<AnyRow[]>('search_users', { p_query: query.trim(), p_limit: limit })) ?? []).map((r) => ({
+  const list = ((await rpc<AnyRow[]>('search_users', { p_query: query.trim(), p_limit: limit })) ?? []).map((r) => ({
     id: str(r.id),
     handle: str(r.handle),
     displayName: str(pick(r, 'display_name')),
@@ -1087,6 +1147,11 @@ export async function searchUsers(query: string, limit = 20): Promise<AdminUserR
     role: r.role as Role,
     points: num(r.points),
   }));
+  // 0034: "Unverified" chip (staff read profiles through RLS). Nothing on a server without 0034.
+  if (!list.length) return list;
+  const v = await sb().from('profiles').select('id, email_verified_at').in('id', list.map((u) => u.id))
+    .then((r) => (r.error ? null : new Map(((r.data as AnyRow[] | null) ?? []).map((x) => [str(x.id), x.email_verified_at != null]))), () => null);
+  return v ? list.map((u) => ({ ...u, emailVerified: v.get(u.id) ?? true })) : list;
 }
 
 export async function userLedger(userId: string): Promise<LedgerEntry[]> {
@@ -2208,4 +2273,92 @@ export async function adminEventSurvey(eventId: string): Promise<EventSurveyResu
       createdAt: str(pick(x, 'created_at')),
     })),
   };
+}
+
+// ───────────────────────────── 0034: quick start (email confirmation) + promo ─────────────────────────────
+
+/**
+ * verify_email_token(p_token) — works logged in or out (the token is enough). Errors: invalid, used, expired.
+ * Refreshes this browser's profile so the Home banner disappears right away.
+ */
+export async function verifyEmail(token: string): Promise<{ status: 'verified' | 'already' }> {
+  const r = (one(await rpc<AnyRow | AnyRow[] | null>('verify_email_token', { p_token: token.trim() })) ?? {}) as AnyRow;
+  const s = await session().catch(() => null);
+  if (s) {
+    const u = await loadProfile(s.user).catch(() => null);
+    if (u) notifyAuth(u);
+  }
+  emitChange();
+  return { status: r.status === 'already' ? 'already' : 'verified' };
+}
+
+/** resend_verification_email() — 3 per hour (`rate_limit`), `already_verified` once confirmed. */
+export async function resendVerification(): Promise<{ sentTo: string; resendsLeft: number }> {
+  const r = (one(await rpc<AnyRow | AnyRow[] | null>('resend_verification_email')) ?? {}) as AnyRow;
+  return { sentTo: str(pick(r, 'sent_to')), resendsLeft: num(pick(r, 'resends_left')) };
+}
+
+/** reward_teaser() — anon OK: upcoming special series within 14 days. Empty on a server without 0034. */
+export async function rewardTeaser(): Promise<RewardTeaser[]> {
+  try {
+    return arr(await rpc<AnyRow[] | null>('reward_teaser')).map((t) => ({
+      outfitSet: str(pick(t, 'outfit_set')),
+      name: str(t.name),
+      emoji: str(t.emoji) || '🎁',
+      startsAt: str(pick(t, 'starts_at')),
+      events: arr(t.events).map((e) => ({ campus: (str(e.campus) || 'all') as CampusId | 'all', startsAt: str(pick(e, 'starts_at')) })),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** reward_scoreboard() — the live series' participant check-ins per campus (null = no series right now). */
+export async function rewardScoreboard(): Promise<RewardScoreboard | null> {
+  let r: AnyRow | null;
+  try {
+    r = one(await rpc<AnyRow | AnyRow[] | null>('reward_scoreboard'));
+  } catch (e) {
+    if (e instanceof ApiError && e.code === 'network') throw e;
+    return null; // server without 0034
+  }
+  if (!r || !r.campuses) return null;
+  return {
+    outfitSet: str(pick(r, 'outfit_set')),
+    name: str(r.name),
+    ...(opt(r.campaign) ? { campaign: str(r.campaign) } : {}),
+    emoji: str(r.emoji) || '🎁',
+    startsAt: str(pick(r, 'starts_at')),
+    endsAt: str(pick(r, 'ends_at')),
+    events: num(r.events),
+    campuses: arr(r.campuses).map((c) => ({ campus: str(c.campus) as CampusId, count: num(c.count) })),
+  };
+}
+
+/** admin_event_recap(p_event_id) — staff: the Instagram recap card's numbers + up to 12 characters (no names). */
+export async function adminEventRecap(eventId: string): Promise<EventRecap> {
+  const r = (one(await rpc<AnyRow | AnyRow[] | null>('admin_event_recap', { p_event_id: eventId })) ?? {}) as AnyRow;
+  const w = r.reward as AnyRow | null | undefined;
+  return {
+    eventId: str(pick(r, 'event_id')),
+    title: str(r.title),
+    location: str(r.location),
+    venue: str(r.venue),
+    campus: (str(r.campus) || 'all') as EventRecap['campus'],
+    startsAt: str(pick(r, 'starts_at')),
+    endsAt: str(pick(r, 'ends_at')),
+    attendees: num(r.attendees),
+    ...(w ? { reward: { itemLabel: str(pick(w, 'item_label')), limit: num(w.limit), outfitSet: str(pick(w, 'outfit_set')), given: num(w.given), passName: str(pick(w, 'pass_name')) || 'Coffee Pass', emoji: str(w.emoji) || '☕', ...(opt(w.campaign) ? { campaign: str(w.campaign) } : {}) } } : {}),
+    characters: arr(r.characters).map((c) => ({ avatar: (str(c.avatar) || 'yak') as AvatarId, look: toLook(c) })),
+  };
+}
+
+/** Admin → Stats: how many participants confirmed their email (null on a server without 0034). */
+export async function adminVerificationStats(): Promise<{ participants: number; verified: number } | null> {
+  const [all, ok] = await Promise.all([
+    sb().from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'participant'),
+    sb().from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'participant').not('email_verified_at', 'is', null),
+  ]);
+  if (all.error || ok.error) return null;
+  return { participants: all.count ?? 0, verified: ok.count ?? 0 };
 }

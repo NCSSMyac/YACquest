@@ -112,6 +112,20 @@ end $$;
 -- pg_cron / SQL Editor: database superuser, no API user, no JWT:
 \set as_cron    'reset role; set request.jwt.claim.role = ''''; set request.jwt.claim.sub = '''';'
 
+-- 0034 TEST STAND-IN for the backfill: the accounts these tests create with a confirmed email play the
+-- part of accounts that existed before 0034 (backfill_email_verified() marks those verified). Fires after
+-- on_auth_user_created (profile made) and before on_auth_user_quickstart (triggers run in name order).
+-- Section 0034 below disables it to test brand-new quick-start accounts.
+create function t.mark_preexisting_verified() returns trigger language plpgsql as $$
+begin
+  if new.email_confirmed_at is not null then
+    update public.profiles set email_verified_at = new.email_confirmed_at where id = new.id and email_verified_at is null;
+  end if;
+  return null;
+end $$;
+create trigger on_auth_user_mark_test_verified after insert on auth.users
+  for each row execute function t.mark_preexisting_verified();
+
 -- =============================================================================
 -- 0. CONFIG (0004: 4 prizes × $75, Sheets sync removed)
 -- =============================================================================
@@ -181,7 +195,7 @@ do $$ begin
   perform t.eq(handle_available('bad name'), false, 'handle_available: bad chars');
   perform t.eq(friend_code_exists('YAC-0000'), false, 'friend_code_exists: unknown');
   perform t.ok((select count(*) from app_config) = 1, 'anon can read app_config');
-  perform t.ok((select count(*) from activities) = 16, 'anon can read 16 activities (0030: + event_survey)');
+  perform t.ok((select count(*) from activities) = 17, 'anon can read 17 activities (0030: + event_survey; 0034: + finals_study_break)');
   perform t.denied('select dashboard_stats()', 'anon cannot call dashboard_stats');
   perform t.denied('select count(*) from profiles', 'anon cannot read profiles');
 end $$;
@@ -1269,7 +1283,7 @@ values ((select id from cycles where not is_active order by starts_at limit 1), 
 do $$ begin
   perform t.denied('select * from my_badges()', 'anon cannot call my_badges');
   perform t.denied('select monthly_shoutout()', 'anon cannot call monthly_shoutout');
-  perform t.eq((select count(*) from cosmetics), 28::bigint, 'anon can read the cosmetics catalogue (17 + 7 seasonal from 0028 + Three Sisters Garden from 0031 + 3 Latte Night Scholar from 0033)');
+  perform t.eq((select count(*) from cosmetics), 45::bigint, 'anon can read the cosmetics catalogue (17 + 7 seasonal from 0028 + Three Sisters Garden from 0031 + 3 Latte Night Scholar from 0033 + 14 winter from 0035 + 3 Kwanzaa from 0036)');
 end $$;
 :as_gina
 do $$
@@ -3330,7 +3344,7 @@ do $$ begin
                '0031 seasonal: Native American Heritage Month 2026 + 2027 windows Nov 1–30');
   perform t.ok((select starts_on = '2026-10-25' and ends_on = '2026-11-09' from seasonal_windows where holiday = 'dia_de_muertos' and year = 2026),
                '0031 seasonal: Día de los Muertos unchanged');
-  perform t.eq((select count(*) from cosmetics where rule_type = 'seasonal'), 8::bigint, '0031 seasonal: 8 seasonal items');
+  perform t.eq((select count(*) from cosmetics where rule_type = 'seasonal' and rule_value not in (select id from seasonal_holidays where sort_order >= 6)), 8::bigint, '0031 seasonal: 8 autumn seasonal items (+ 17 winter from 0035/0036)');
   perform t.ok((select slot = 'background' and name = 'Three Sisters Garden' and rule_value = 'heritage_month' from cosmetics where id = 'three_sisters'),
                '0031 seasonal: Three Sisters Garden is a Heritage Month background');
   perform t.eq((select name || '|' || emoji || '|' || item_noun from seasonal_holidays where id = 'heritage_month'), 'Native American Heritage Month|🌽|background',
@@ -3339,11 +3353,11 @@ do $$ begin
                array['dia_de_muertos', 'diwali', 'heritage_month', 'thanksgiving'], '0031 seasonal: Nov 5, 2026 → all four November holidays open');
   perform t.eq((select array_agg(holiday order by holiday) from seasonal_active('2026-11-20 12:00-05')), array['diwali', 'heritage_month', 'thanksgiving'],
                '0031 seasonal: Nov 20 → Diwali + Heritage Month + Thanksgiving');
-  perform t.eq((select array_agg(holiday order by holiday) from seasonal_active('2026-12-01 03:00Z')), array['diwali', 'heritage_month', 'thanksgiving'],
+  perform t.eq((select array_agg(holiday order by holiday) from seasonal_active('2026-12-01 03:00Z')), array['diwali', 'hanukkah', 'heritage_month', 'thanksgiving'],
                '0031 seasonal: 10 PM Nov 30 in New York (03:00Z Dec 1) still counts as Nov 30');
-  perform t.ok(not exists (select 1 from seasonal_active('2026-12-01 12:00-05')), '0031 seasonal: Dec 1 → nothing open');
+  perform t.eq((select array_agg(holiday order by holiday) from seasonal_active('2026-12-01 12:00-05')), array['christmas', 'hanukkah', 'kwanzaa', 'lunar_new_year', 'new_year', 'three_kings_day', 'winter_solstice'], '0031/0036 seasonal: Dec 1 → November is over (every winter holiday opens)');
   perform t.eq((select array_agg(holiday order by holiday) from seasonal_active('2027-10-22 12:00-04')), array['diwali'], '0031 seasonal: Oct 22, 2027 → Diwali opens');
-  perform t.ok(not exists (select 1 from seasonal_active('2026-12-15 12:00-05')), '0028 seasonal: mid-December → nothing open');
+  perform t.eq((select array_agg(holiday order by holiday) from seasonal_active('2026-12-15 12:00-05')), array['christmas', 'hanukkah', 'kwanzaa', 'lunar_new_year', 'new_year', 'three_kings_day', 'winter_solstice'], '0036 seasonal: mid-December → every winter holiday');
   perform t.ok(position('queue_wrapped_notifications' in pg_get_functiondef('public.enqueue_weekly_report_if_due()'::regprocedure)) > 0,
                '0028: the every-10-minutes job also queues Wrapped');
   perform t.ok(position('queue_event_followups' in pg_get_functiondef('public.enqueue_weekly_report_if_due()'::regprocedure)) > 0,
@@ -3405,7 +3419,7 @@ do $$ declare v text[]; begin
   perform t.ok(exists (select 1 from notifications where user_id = t.u('alice') and kind = 'seasonal'
                         and title = '🍂 New limited-time item for Thanksgiving — see what it honors'), '0031 seasonal: other holidays still say "item"');
   perform t.eq(claim_seasonal_for(t.u('alice'), '2026-11-29 12:00-05'), '{}'::text[], '0031 seasonal: claiming again → nothing new');
-  perform t.eq(claim_seasonal_for(t.u('bob'), '2026-12-01 12:00-05'), '{}'::text[], '0031 seasonal: Dec 1 → too late');
+  perform t.ok('three_sisters' <> all (claim_seasonal_for(t.u('bob'), '2026-12-01 12:00-05')), '0031 seasonal: Dec 1 → too late for Three Sisters Garden');
   delete from seasonal_windows; -- November is over
 end $$;
 :as_alice
@@ -3416,6 +3430,80 @@ end $$;
 :as_bob
 do $$ begin
   perform t.throws('select equip_look(null, null, ''three_sisters'')', 'locked', '0031 seasonal: missed November → locked');
+end $$;
+:as_super
+rollback;
+
+-- ---- 0035 + 0036: winter seasonal wardrobe (fixed dates; 0036 widened the windows + Kwanzaa accessories) ----
+do $$ begin
+  perform t.eq((select count(*) from cosmetics where rule_type = 'seasonal'), 25::bigint, '0036 seasonal: 25 seasonal items (8 autumn + 14 winter + 3 Kwanzaa)');
+  perform t.eq((select string_agg(id || '=' || slot || '=' || name, ',' order by sort_order) from cosmetics where rule_value = 'kwanzaa'),
+               'kinara_glow=background=Kinara Glow,kikombe_cha_umoja=accessory=Kikombe cha Umoja (Unity Cup),zawadi=accessory=Zawadi (Gift),kwanzaa_scarf=accessory=Red, Black & Green Scarf',
+               '0036 seasonal: Kwanzaa items');
+  perform t.eq((select string_agg(id || ':' || item_noun, ',' order by sort_order) from seasonal_holidays where sort_order >= 6),
+               'hanukkah:items,christmas:items,kwanzaa:items,winter_solstice:items,new_year:items,three_kings_day:background,lunar_new_year:items',
+               '0035/0036 seasonal: 7 winter holidays + notification nouns (Kwanzaa: items)');
+  perform t.eq((select string_agg(holiday || year || '=' || starts_on || '..' || ends_on, ',' order by holiday, year) from seasonal_windows
+                 where holiday in ('hanukkah', 'christmas', 'kwanzaa', 'winter_solstice', 'new_year', 'three_kings_day', 'lunar_new_year')),
+               'christmas2026=2026-12-01..2026-12-31,christmas2027=2027-12-01..2027-12-31,hanukkah2026=2026-11-30..2026-12-31,hanukkah2027=2027-11-30..2027-12-31,'
+               || 'kwanzaa2026=2026-12-01..2027-01-08,kwanzaa2027=2027-12-01..2028-01-08,lunar_new_year2027=2026-12-01..2027-02-20,lunar_new_year2028=2027-12-01..2028-02-20,'
+               || 'new_year2026=2026-12-01..2027-01-07,new_year2027=2027-12-01..2028-01-07,three_kings_day2027=2026-12-01..2027-01-13,three_kings_day2028=2027-12-01..2028-01-13,'
+               || 'winter_solstice2026=2026-12-01..2026-12-31,winter_solstice2027=2027-12-01..2027-12-31',
+               '0036 seasonal: winter windows match SEASONAL in src/config.ts (14 rows, 0035 dates replaced)');
+  perform t.eq((select string_agg(id || '=' || slot, ',' order by sort_order) from cosmetics where rule_value = 'new_year'),
+               'new_year_hat=hat,party_popper=accessory,midnight_fireworks=background', '0035 seasonal: New Year''s items');
+  perform t.eq((select array_agg(holiday order by holiday) from seasonal_active('2026-12-27 12:00-05')), array['christmas', 'hanukkah', 'kwanzaa', 'lunar_new_year', 'new_year', 'three_kings_day', 'winter_solstice'],
+               '0036 seasonal: Dec 27 → every winter window open');
+  perform t.eq((select array_agg(holiday order by holiday) from seasonal_active('2026-12-01 04:30Z')), array['diwali', 'hanukkah', 'heritage_month', 'thanksgiving'],
+               '0036 seasonal: 11:30 PM Nov 30 in New York → only Hanukkah of the winter holidays');
+  perform t.eq((select array_agg(holiday order by holiday) from seasonal_active('2027-01-06 23:30-05')), array['kwanzaa', 'lunar_new_year', 'new_year', 'three_kings_day'], '0036 seasonal: Jan 6 (New York)');
+  perform t.eq((select array_agg(holiday order by holiday) from seasonal_active('2027-01-09 12:00-05')), array['lunar_new_year', 'three_kings_day'], '0036 seasonal: Jan 9 → Kwanzaa ended Jan 8');
+  perform t.eq((select array_agg(holiday order by holiday) from seasonal_active('2027-02-20 23:30-05')), array['lunar_new_year'], '0036 seasonal: Lunar New Year through Feb 20');
+  perform t.ok(not exists (select 1 from seasonal_active('2027-02-21 12:00-05')), '0036 seasonal: Feb 21 → nothing open');
+  perform t.eq((select array_agg(holiday order by holiday) from seasonal_active('2027-12-27 12:00-05')), array['christmas', 'hanukkah', 'kwanzaa', 'lunar_new_year', 'new_year', 'three_kings_day', 'winter_solstice'], '0036 seasonal: same pattern in 2027–28');
+  perform t.ok(not exists (select 1 from seasonal_active('2028-02-21 12:00-05')), '0036 seasonal: Feb 21, 2028 → nothing open');
+end $$;
+begin;
+delete from seasonal_unlocks;
+update profiles set role = 'participant' where id in (t.u('alice'), t.u('bob'));
+update profiles set role = 'admin' where id = t.u('admin');
+do $$ declare v text[]; begin
+  v := claim_seasonal_for(t.u('alice'), '2026-12-27 12:00-05');
+  perform t.eq(v, array['candy_cane', 'dreidel', 'festival_of_lights', 'holiday_hat', 'kikombe_cha_umoja', 'kinara_glow', 'kwanzaa_scarf', 'lanterns_fireworks', 'longest_night',
+                  'midnight_fireworks', 'new_year_hat', 'party_popper', 'red_envelope', 'rosca_de_reyes', 'snowy_pine', 'starlight_lantern', 'zawadi'],
+               '0036 seasonal: Dec 27 → every winter item, Kwanzaa accessories included');
+  perform t.eq((select count(*) from notifications where user_id = t.u('alice') and kind = 'seasonal'), 7::bigint, '0036 seasonal: one notification per holiday');
+  perform t.ok(exists (select 1 from notifications where user_id = t.u('alice') and kind = 'seasonal'
+                        and title = '🎄 New limited-time items for Christmas — see what they honor'), '0035 seasonal: plural notification text');
+  perform t.ok(exists (select 1 from notifications where user_id = t.u('alice') and kind = 'seasonal'
+                        and title = '🕯️ New limited-time items for Kwanzaa — see what they honor'), '0036 seasonal: Kwanzaa notification text (several items now)');
+  perform t.ok(exists (select 1 from notifications where user_id = t.u('alice') and kind = 'seasonal'
+                        and body like 'Free in Prize → Wardrobe → Collection%'), '0035 seasonal: body points to the Collection');
+  perform t.eq(claim_seasonal_for(t.u('alice'), '2026-12-28 12:00-05'), '{}'::text[], '0035 seasonal: claiming again → nothing new');
+  perform t.eq(claim_seasonal_for(t.u('alice'), '2027-02-06 12:00-05'), '{}'::text[], '0036 seasonal: Lunar New Year items were already claimed in December');
+  perform t.eq(claim_seasonal_for(t.u('bob'), '2027-01-09 12:00-05'), array['lanterns_fireworks', 'red_envelope', 'rosca_de_reyes'], '0036 seasonal: Jan 9 → too late for Kwanzaa');
+  perform t.ok(exists (select 1 from notifications where user_id = t.u('alice') and kind = 'seasonal'
+                        and title = '🧧 New limited-time items for Lunar New Year — see what they honor'), '0035 seasonal: Lunar New Year notification');
+  perform t.eq(claim_seasonal_for(t.u('admin'), '2026-12-05 12:00-05'), array['candy_cane', 'dreidel', 'festival_of_lights', 'holiday_hat', 'kikombe_cha_umoja', 'kinara_glow', 'kwanzaa_scarf', 'lanterns_fireworks', 'longest_night',
+                  'midnight_fireworks', 'new_year_hat', 'party_popper', 'red_envelope', 'rosca_de_reyes', 'snowy_pine', 'starlight_lantern', 'zawadi'],
+               '0036 seasonal: staff get them too (Dec 5: every winter holiday)');
+  delete from seasonal_windows; -- winter is over
+end $$;
+:as_alice
+do $$ begin
+  perform t.eq(equip_look('new_year_hat', 'party_popper', 'midnight_fireworks')->>'hat', 'new_year_hat', '0035 seasonal: owned → wear any time');
+  perform t.eq(equip_look('holiday_hat', 'kwanzaa_scarf', 'kinara_glow')->>'accessory', 'kwanzaa_scarf', '0036 seasonal: Kwanzaa scarf owned → wear any time');
+  perform t.eq(equip_look(null, 'zawadi', 'rosca_de_reyes')->>'accessory', 'zawadi', '0036 seasonal: Zawadi + Rosca de Reyes owned');
+  perform t.eq(equip_look(null, 'kikombe_cha_umoja', null)->>'accessory', 'kikombe_cha_umoja', '0036 seasonal: unity cup owned');
+  perform t.throws('select equip_look(''zawadi'', null, null)', 'look', '0036 seasonal: wrong slot → look');
+  perform t.throws('select equip_look(''candy_cane'', null, null)', 'look', '0035 seasonal: wrong slot → look');
+end $$;
+:as_bob
+do $$ begin
+  perform t.throws('select equip_look(''holiday_hat'', null, null)', 'locked', '0035 seasonal: never opened the app in December → locked');
+  perform t.throws('select equip_look(null, ''dreidel'', null)', 'locked', '0035 seasonal: missed Hanukkah → locked');
+  perform t.throws('select equip_look(null, ''kwanzaa_scarf'', null)', 'locked', '0036 seasonal: missed Kwanzaa → locked');
+  perform t.eq(equip_look(null, 'red_envelope', 'rosca_de_reyes')->>'background', 'rosca_de_reyes', '0036 seasonal: claimed Jan 9 → wearable');
 end $$;
 :as_super
 rollback;
@@ -4331,6 +4419,307 @@ do $$ declare v_state text; r jsonb; begin
   perform t.ok(position('for update' in pg_get_functiondef('public.grant_event_reward(uuid, uuid, timestamptz)'::regprocedure)) > 0, '0033: pass assignment takes a row lock per event');
   perform t.ok((select earned from badges_for(t.u('ref2')) where id = 'early_bird') and not (select earned from badges_for(t.u('ref4')) where id = 'early_bird'), '0033: Early Bird only for pass holders');
 end $$;
+rollback;
+
+-- =============================================================================
+-- 0034. QUICK START sign-ups (own email verification), prize race / roles / emails for unverified
+--       people, campaigns, mystery teaser, campus scoreboard, recap card, Finals Study Break quest.
+-- Windows and series use fixed dates (p_now); token expiry is moved by hand.
+-- =============================================================================
+\set as_qs1  'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000034a1''; set role authenticated;'
+\set as_qs2  'reset role; set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000034a2''; set role authenticated;'
+:as_super
+begin;
+-- brand-new accounts from here on: no stand-in
+alter table auth.users disable trigger on_auth_user_mark_test_verified;
+update profiles set role = 'participant' where id in (t.u('alice'), t.u('bob'), t.u('carol'), t.u('dave'), t.u('erin'), t.u('ref2'), t.u('ref3'), t.u('ref4'));
+update profiles set role = 'admin' where id = t.u('admin');
+update profiles set role = 'chair' where id = t.u('chair1');
+
+-- ---- backfill ----
+do $$
+declare v_old uuid := '00000000-0000-0000-0000-0000000034f1'; v_new uuid := '00000000-0000-0000-0000-0000000034f2';
+begin
+  perform t.ok((select quickstart_since is not null from app_config), '0034: quickstart_since cut-off recorded on first run');
+  insert into auth.users (id, email, email_confirmed_at, created_at, raw_user_meta_data) values
+    (v_old, 'old.timer@example.edu', '2026-10-20 12:00-04', '2026-10-20 11:00-04', '{"handle":"oldtimer","display_name":"Old Timer","campus":"unc"}'),
+    (v_new, 'new.comer@example.edu', '2026-11-20 12:00-05', '2026-11-20 12:00-05', '{"handle":"newcomer","display_name":"New Comer","campus":"unc"}');
+  perform t.ok((select email_verified_at is null from profiles where id = v_old), '0034: a new row starts unverified');
+  perform t.eq(backfill_email_verified('2026-11-01 00:00-04'), 1, '0034 backfill: only accounts created before the cut-off');
+  perform t.eq((select email_verified_at from profiles where id = v_old), '2026-10-20 12:00-04'::timestamptz, '0034 backfill: verified at their Supabase confirmation time');
+  perform t.ok((select email_verified_at is null from profiles where id = v_new), '0034 backfill: auto-confirmed (quick start) accounts are NOT verified by the backfill');
+  perform t.eq(backfill_email_verified('2026-11-01 00:00-04'), 0, '0034 backfill: re-running changes nothing');
+end $$;
+
+-- ---- a quick-start sign-up (Supabase "Confirm email" OFF: confirmed inside the sign-up itself) ----
+insert into auth.users (id, email, raw_user_meta_data) values
+  ('00000000-0000-0000-0000-0000000034a1', 'Quinn.Q@Example.edu', '{"handle":"quinnq","display_name":"Quinn Q","campus":"unc","avatar":"yak"}'),
+  ('00000000-0000-0000-0000-0000000034a2', 'robin@example.edu', '{"handle":"robinr","display_name":"Robin","campus":"duke","avatar":"knight","email_opt_in":"false"}');
+update auth.users set email_confirmed_at = created_at + interval '1 second' where id in ('00000000-0000-0000-0000-0000000034a1', '00000000-0000-0000-0000-0000000034a2');
+
+do $$
+declare m email_messages; v_tok text;
+begin
+  perform t.ok((select email_verified_at is null from profiles where id = '00000000-0000-0000-0000-0000000034a1'), '0034: Supabase auto-confirm inside the sign-up does NOT verify');
+  select * into m from email_messages where kind = 'verify_email' and email = 'quinn.q@example.edu';
+  perform t.ok(m.id is not null and m.status = 'queued' and m.priority = 1, '0034: confirmation email queued at sign-up, priority 1');
+  perform t.eq(m.subject, 'Confirm your YACquest email', '0034: plain subject, no emoji');
+  perform t.ok(m.body_text like 'Hi Quinn,%' and m.body_html like '%Hi Quinn,%', '0034: personalized "Hi {first_name}"');
+  perform t.ok(m.body_text ~ '#/verify\?t=[0-9a-f]{48}' and m.body_html like '%Confirm my email%', '0034: link to #/verify?t=<token>');
+  perform t.ok(m.body_text not like '%Admin → System%' and m.body_text not like '%Unsubscribe%', '0034: transactional (no staff footer, no unsubscribe)');
+  perform t.eq(m.send_before, m.created_at + interval '7 days', '0034: expires with the link (7 days)');
+  perform t.ok((select body_text = '' and body_html = '' from email_outbox where id = m.outbox_id), '0034: the link isn''t kept in the outbox copy');
+  v_tok := substring(m.body_text from '#/verify\?t=([0-9a-f]+)');
+  perform t.ok(not exists (select 1 from email_verify_tokens where token_hash = v_tok), '0034: tokens are stored hashed');
+  perform t.ok(exists (select 1 from email_verify_tokens where token_hash = email_token_hash(v_tok) and expires_at = created_at + interval '7 days'), '0034: token valid 7 days');
+  perform set_config('t.tok1', v_tok, false);
+  perform t.eq((select status from email_messages where kind = 'verify_email' and email = 'robin@example.edu'), 'queued', '0034: confirmation email goes out even with "email me announcements" off');
+end $$;
+
+:as_anon
+do $$ begin
+  perform t.denied('select count(*) from email_verify_tokens', '0034: tokens table not readable');
+  perform t.denied('select resend_verification_email()', '0034: anon can''t resend');
+  perform t.throws($q$select verify_email_token('not-a-token')$q$, 'invalid', '0034 verify: malformed token');
+  perform t.throws($q$select verify_email_token(repeat('ab', 24))$q$, 'invalid', '0034 verify: unknown token');
+end $$;
+:as_qs1
+do $$ begin
+  perform t.throws(format('select set_role(%L, ''admin'')', t.u('alice')), 'forbidden', '0034: (sanity) participants can''t set roles');
+  perform t.ok(not (select earned from my_badges() where id = 'first_checkin'), '0034: unverified people play normally (badges etc.)');
+  perform t.ok((select email_verified_at is null from profiles where id = auth.uid()), '0034: I can see my own email_verified_at');
+end $$;
+
+-- ---- unverified: staff roles refused ----
+:as_chair1
+do $$ begin
+  perform t.throws($q$select set_role('00000000-0000-0000-0000-0000000034a1', 'admin')$q$, 'not_verified', '0034 roles: unverified can''t be made admin');
+  perform t.throws($q$select set_role('00000000-0000-0000-0000-0000000034a1', 'chair')$q$, 'not_verified', '0034 roles: unverified can''t be made YACquest Chair');
+  perform t.throws($q$select transfer_chair('00000000-0000-0000-0000-0000000034a1')$q$, 'not_verified', '0034 roles: no chair hand-over to unverified');
+  perform t.ok(position('email_confirmed_at' in pg_get_functiondef('public.set_role(uuid, text)'::regprocedure)) = 0
+               and position('email_verified_at' in pg_get_functiondef('public.transfer_chair(uuid)'::regprocedure)) > 0, '0034 roles: checks use email_verified_at, not Supabase''s flag');
+end $$;
+
+-- ---- unverified: participant emails skipped (in-app still), verification never skipped ----
+:as_admin
+do $$ begin
+  perform send_announcement('Quick hello', 'Hi there!', 'user', null, '00000000-0000-0000-0000-0000000034a1', true);
+end $$;
+:as_super
+do $$ begin
+  perform t.eq((select status from email_messages where kind = 'announcement' and email = 'quinn.q@example.edu'), 'skipped_unverified', '0034 emails: announcement skipped until verified');
+  perform t.ok(exists (select 1 from notifications where user_id = '00000000-0000-0000-0000-0000000034a1' and title = 'Quick hello'), '0034 emails: … but the in-app message arrives');
+  perform t.ok((select body_text = '' and error like 'Email not confirmed%' from email_messages where kind = 'announcement' and email = 'quinn.q@example.edu'), '0034 emails: skipped rows keep no body');
+end $$;
+
+-- ---- prize race skips unverified; verifying refills by crossing time ----
+update app_config set prize_goal = 2000, prize_count = 2;
+update prize_claims set status = 'revoked', revoked_at = now(), revoke_reason = 'test' where cycle_id = active_cycle_id() and status <> 'revoked';
+insert into ledger (cycle_id, user_id, amount, source, reason, created_at) values
+  (active_cycle_id(), '00000000-0000-0000-0000-0000000034a1', 2000, 'manual', 'test: Quinn crosses first', '2026-12-01 10:00-05');
+insert into ledger (cycle_id, user_id, amount, source, reason, created_at) values
+  (active_cycle_id(), t.u('carol'), 2000, 'manual', 'test: Carol crosses second', '2026-12-01 11:00-05');
+do $$ begin
+  perform t.ok(not exists (select 1 from prize_claims where user_id = '00000000-0000-0000-0000-0000000034a1' and status <> 'revoked'), '0034 prize: unverified person past the goal gets no spot');
+  perform t.eq((select spot from prize_claims where user_id = t.u('carol') and status <> 'revoked'), 1, '0034 prize: verified person who crossed later takes spot #1');
+  perform t.eq((select count(*) from notifications where user_id = '00000000-0000-0000-0000-0000000034a1' and title = 'Confirm your email to claim a prize spot'), 1::bigint, '0034 prize: one friendly nudge to confirm');
+end $$;
+-- a second ledger row doesn't nudge again
+insert into ledger (cycle_id, user_id, amount, source, reason) values (active_cycle_id(), '00000000-0000-0000-0000-0000000034a1', 5, 'manual', 'test');
+do $$ begin
+  perform t.eq((select count(*) from notifications where user_id = '00000000-0000-0000-0000-0000000034a1' and title = 'Confirm your email to claim a prize spot'), 1::bigint, '0034 prize: nudge only once');
+end $$;
+
+-- ---- verify (anon, token only) ----
+:as_anon
+do $$ declare r json; begin
+  r := verify_email_token(current_setting('t.tok1'));
+  perform t.eq(r->>'status', 'verified', '0034 verify: token verifies the email (no login needed)');
+  perform t.throws(format('select verify_email_token(%L)', current_setting('t.tok1')), 'used', '0034 verify: single use');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok((select email_verified_at is not null from profiles where id = '00000000-0000-0000-0000-0000000034a1'), '0034 verify: email_verified_at set');
+  perform t.ok((select used_at is not null from email_verify_tokens where token_hash = email_token_hash(current_setting('t.tok1'))), '0034 verify: token marked used');
+  perform t.eq((select spot from prize_claims where user_id = '00000000-0000-0000-0000-0000000034a1' and status <> 'revoked'), 2, '0034 prize: on verify the open spot is filled');
+  perform t.eq((select qualified_at from prize_claims where user_id = '00000000-0000-0000-0000-0000000034a1' and status <> 'revoked'), '2026-12-01 10:00-05'::timestamptz, '0034 prize: … with their real (earlier) crossing time, not the verify time');
+  perform t.ok(exists (select 1 from notifications where user_id = '00000000-0000-0000-0000-0000000034a1' and title = 'Email confirmed ✓'), '0034 verify: in-app confirmation');
+end $$;
+:as_chair1
+do $$ begin
+  perform set_role('00000000-0000-0000-0000-0000000034a1', 'admin');
+  perform t.eq((select role from profiles where id = '00000000-0000-0000-0000-0000000034a1'), 'admin', '0034 roles: verified → can be made admin');
+  perform t.ok((select email_verified from list_team() where id = '00000000-0000-0000-0000-0000000034a1'), '0034: list_team shows verified');
+  perform set_role('00000000-0000-0000-0000-0000000034a1', 'participant');
+end $$;
+
+-- ---- expiry + resend limit ----
+:as_super
+do $$ declare v_tok text; begin
+  v_tok := (select substring(body_text from '#/verify\?t=([0-9a-f]+)') from email_messages where kind = 'verify_email' and email = 'robin@example.edu');
+  update email_verify_tokens set expires_at = now() - interval '1 minute' where token_hash = email_token_hash(v_tok);
+  perform set_config('t.tok2', v_tok, false);
+end $$;
+:as_anon
+do $$ begin
+  perform t.throws(format('select verify_email_token(%L)', current_setting('t.tok2')), 'expired', '0034 verify: expired after 7 days');
+end $$;
+:as_qs2
+do $$ declare r json; begin
+  r := resend_verification_email();
+  perform t.ok(r->>'sentTo' = 'robin@example.edu' and (r->>'resendsLeft')::int = 2, '0034 resend: new link, 2 left this hour');
+  perform resend_verification_email();
+  perform resend_verification_email();
+  perform t.throws('select resend_verification_email()', 'rate_limit', '0034 resend: 3 per hour');
+end $$;
+:as_qs1
+do $$ begin
+  perform t.throws('select resend_verification_email()', 'already_verified', '0034 resend: nothing to do once verified');
+end $$;
+:as_super
+do $$ begin
+  perform t.eq((select count(*) from email_verify_tokens where user_id = '00000000-0000-0000-0000-0000000034a2'), 4::bigint, '0034 resend: sign-up + 3 resends');
+  perform t.eq((select count(*) from email_messages where kind = 'verify_email' and email = 'robin@example.edu'), 4::bigint, '0034 resend: each one is an email');
+  update email_verify_tokens set created_at = now() - interval '61 minutes' where user_id = '00000000-0000-0000-0000-0000000034a2';
+end $$;
+:as_qs2
+do $$ begin
+  perform t.ok(resend_verification_email() is not null, '0034 resend: allowed again after an hour');
+end $$;
+
+-- ---- global cap, Supabase confirmation later, bootstrap chair held back ----
+:as_super
+do $$ begin
+  update app_config set verify_emails_per_hour = (select count(*) from email_verify_tokens where created_at > now() - interval '1 hour');
+  insert into auth.users (id, email, raw_user_meta_data) values ('00000000-0000-0000-0000-0000000034a3', 'flood@example.edu', '{"handle":"floodx","display_name":"Flood","campus":"unc"}');
+  perform t.ok(not exists (select 1 from email_verify_tokens where user_id = '00000000-0000-0000-0000-0000000034a3'), '0034: global hourly cap stops sign-up emails (sign-up still works)');
+  perform t.ok(exists (select 1 from profiles where id = '00000000-0000-0000-0000-0000000034a3'), '0034: … the account exists');
+  update app_config set verify_emails_per_hour = 150;
+  -- confirmed through Supabase an hour after signing up (the "Confirm email ON" window)
+  update auth.users set created_at = now() - interval '1 hour' where id = '00000000-0000-0000-0000-0000000034a3';
+  update auth.users set email_confirmed_at = now() where id = '00000000-0000-0000-0000-0000000034a3';
+  perform t.ok((select email_verified_at is not null from profiles where id = '00000000-0000-0000-0000-0000000034a3'), '0034: a later Supabase confirmation verifies too');
+  -- a bootstrap YACquest Chair email signing up unverified
+  update app_config set max_chairs = 9;
+  insert into chair_bootstrap (email) values ('new.chair@example.edu') on conflict do nothing;
+  insert into auth.users (id, email, raw_user_meta_data) values ('00000000-0000-0000-0000-0000000034c1', 'new.chair@example.edu', '{"handle":"newchair","display_name":"New Chair","campus":"duke"}');
+  perform t.eq((select role from profiles where id = '00000000-0000-0000-0000-0000000034c1'), 'participant', '0034: bootstrap chair email starts as a participant until verified');
+  perform t.eq((select role from quickstart_pending_roles where user_id = '00000000-0000-0000-0000-0000000034c1'), 'chair', '0034: … the seat is held');
+  perform t.ok(mark_email_verified('00000000-0000-0000-0000-0000000034c1', now()), '0034: verifying');
+  perform t.eq((select role from profiles where id = '00000000-0000-0000-0000-0000000034c1'), 'chair', '0034: … gives the YACquest Chair seat');
+end $$;
+
+-- ---- campaigns ----
+:as_alice
+do $$ declare l json; begin
+  l := reward_campaigns_list();
+  perform t.ok(exists (select 1 from json_array_elements(l) x where x->>'id' = 'brew_quest_2026' and x->>'passName' = 'Coffee Pass' and x->>'emoji' = '☕'
+                         and x->>'itemLabel' = 'free coffee' and x->>'outfitSet' = 'latte_night_scholar'), '0034 campaigns: Brew & Quest 2026 is the default');
+  perform t.throws($q$select save_reward_campaign('{"name":"Snack Attack","outfitSet":"latte_night_scholar"}')$q$, 'forbidden', '0034 campaigns: participants can''t save');
+end $$;
+:as_super
+insert into cosmetics (id, slot, name, rule_type, rule_value, sort_order) values ('test_snack_hat', 'hat', 'Snack Hat', 'event', 'snack_set', 299);
+:as_admin
+do $$ declare c json; begin
+  perform t.throws($q$select save_reward_campaign('{"name":"Brew Again","outfitSet":"latte_night_scholar"}')$q$, 'outfitSet', '0034 campaigns: one campaign per outfit set');
+  perform t.throws($q$select save_reward_campaign('{"name":"Snack","outfitSet":"nope"}')$q$, 'outfitSet', '0034 campaigns: unknown outfit set');
+  c := save_reward_campaign('{"name":"Snack Attack 2027","itemLabel":"free snack","passName":"Snack Pass","emoji":"🍪","outfitSet":"snack_set"}');
+  perform t.ok(c->>'id' = 'snack_attack_2027' and c->>'passName' = 'Snack Pass' and c->>'message' like '%🍪', '0034 campaigns: saved with a slug id and a default message');
+  perform delete_reward_campaign('snack_attack_2027');
+  perform t.ok(not exists (select 1 from json_array_elements(reward_campaigns_list()) x where x->>'id' = 'snack_attack_2027'), '0034 campaigns: unused campaign deleted');
+end $$;
+
+-- ---- a Brew & Quest series (3 events) for teaser / scoreboard / recap / pass labels ----
+:as_super
+insert into events (id, cycle_id, title, campus, kind, location, starts_at, ends_at, activity_id) values
+  ('00000000-0000-0000-0000-0000000034e1', active_cycle_id(), 'Brew & Quest @ Cup of Joe', 'ncsu', 'active', 'Cup of Joe', '2026-12-02 14:00-05', '2026-12-02 16:00-05', 'home_event'),
+  ('00000000-0000-0000-0000-0000000034e2', active_cycle_id(), 'Brew & Quest @ Epilogue', 'unc', 'active', 'Epilogue', '2026-12-03 14:00-05', '2026-12-03 16:00-05', 'home_event'),
+  ('00000000-0000-0000-0000-0000000034e3', active_cycle_id(), 'Brew & Quest @ Duke', 'duke', 'active', 'TBD', '2026-12-05 14:00-05', '2026-12-05 16:00-05', 'home_event');
+insert into event_rewards (event_id, limit_count, venue, secret_word, outfit_set, message) values
+  ('00000000-0000-0000-0000-0000000034e1', 10, 'Cup of Joe', 'MOCHA-11', 'latte_night_scholar', 'x'),
+  ('00000000-0000-0000-0000-0000000034e2', 30, 'Epilogue', 'LATTE-22', 'latte_night_scholar', 'x'),
+  ('00000000-0000-0000-0000-0000000034e3', 6, 'TBD', 'CHAI-33', 'latte_night_scholar', 'x');
+insert into ledger (cycle_id, user_id, amount, source, activity_id, ref_id, reason, created_at) values
+  (active_cycle_id(), t.u('bob'),   20, 'checkin', 'home_event', '00000000-0000-0000-0000-0000000034e2', 'Checked in', '2026-12-03 14:05-05'),
+  (active_cycle_id(), t.u('dave'),  20, 'checkin', 'home_event', '00000000-0000-0000-0000-0000000034e2', 'Checked in', '2026-12-03 14:06-05'),
+  (active_cycle_id(), t.u('ref2'),  20, 'checkin', 'home_event', '00000000-0000-0000-0000-0000000034e2', 'Checked in', '2026-12-03 14:07-05'),
+  (active_cycle_id(), t.u('erin'),  20, 'checkin', 'home_event', '00000000-0000-0000-0000-0000000034e1', 'Checked in', '2026-12-02 14:05-05'),
+  (active_cycle_id(), t.u('alice'), 20, 'checkin', 'home_event', '00000000-0000-0000-0000-0000000034e3', 'Checked in', '2026-12-05 14:05-05'),
+  (active_cycle_id(), t.u('admin'), 20, 'checkin', 'home_event', '00000000-0000-0000-0000-0000000034e3', 'Checked in', '2026-12-05 14:06-05');
+insert into reward_passes (event_id, user_id, series, pass_no, created_at) values
+  ('00000000-0000-0000-0000-0000000034e2', t.u('bob'), 'latte_night_scholar', 1, '2026-12-03 14:05-05'),
+  ('00000000-0000-0000-0000-0000000034e2', t.u('dave'), 'latte_night_scholar', 2, '2026-12-03 14:06-05');
+update profiles set hat = 'cozy_beanie', accessory = 'latte_aplus' where id = t.u('bob');
+
+:as_anon
+do $$ declare r json; begin
+  r := reward_teaser('2026-11-20 12:00-05');
+  perform t.eq(json_array_length(r), 1, '0034 teaser: series starting within 14 days is shown (anon OK)');
+  perform t.ok(r->0->>'outfitSet' = 'latte_night_scholar' and r->0->>'name' = 'Brew & Quest' and r->0->>'emoji' = '☕'
+               and json_array_length(r->0->'events') = 3, '0034 teaser: name, emoji, outfit set, 3 campuses');
+  perform t.ok(position('Cup of Joe' in r::text) = 0 and position('MOCHA' in r::text) = 0 and position('limit' in r::text) = 0, '0034 teaser: no venue, secret or counts');
+  perform t.eq(json_array_length(reward_teaser('2026-11-10 12:00-05')), 0, '0034 teaser: hidden more than 14 days before');
+  perform t.eq(json_array_length(reward_teaser('2026-12-06 12:00-05')), 0, '0034 teaser: hidden after the last event');
+  perform t.denied('select reward_scoreboard()', '0034 scoreboard: anon can''t read it');
+end $$;
+:as_alice
+do $$ declare s json; begin
+  perform t.ok(reward_scoreboard('2026-11-28 12:00-05') is null, '0034 scoreboard: hidden more than 3 days before the first event');
+  s := reward_scoreboard('2026-11-29 15:00-05');
+  perform t.ok(s is not null and s->>'name' = 'Brew & Quest' and s->>'campaign' = 'Brew & Quest 2026' and (s->>'events')::int = 3, '0034 scoreboard: on from 3 days before the first event');
+  s := reward_scoreboard('2026-12-05 18:00-05');
+  perform t.eq((select string_agg((x->>'campus') || '=' || (x->>'count'), ',') from json_array_elements(s->'campuses') x), 'duke=1,unc=3,ncsu=1',
+               '0034 scoreboard: participant check-ins by campus (staff not counted)');
+  perform t.ok(reward_scoreboard('2026-12-06 15:00-05') is not null, '0034 scoreboard: still on 1 day after the last event');
+  perform t.ok(reward_scoreboard('2026-12-06 17:00-05') is null, '0034 scoreboard: off after that');
+  perform t.throws($q$select admin_event_recap('00000000-0000-0000-0000-0000000034e2')$q$, 'forbidden', '0034 recap: staff only');
+end $$;
+:as_admin
+do $$ declare r json; begin
+  r := admin_event_recap('00000000-0000-0000-0000-0000000034e2');
+  perform t.ok(r->>'title' = 'Brew & Quest @ Epilogue' and r->>'venue' = 'Epilogue' and r->>'campus' = 'unc' and (r->>'attendees')::int = 3, '0034 recap: title, venue, campus, attendees');
+  perform t.ok((r->'reward'->>'given')::int = 2 and r->'reward'->>'itemLabel' = 'free coffee' and r->'reward'->>'emoji' = '☕', '0034 recap: free items given');
+  perform t.eq(json_array_length(r->'characters'), 3, '0034 recap: one character per check-in (up to 12)');
+  perform t.ok(r->'characters'->0->>'avatar' is not null and r->'characters'->0->>'hat' = 'cozy_beanie', '0034 recap: characters wear their look (first check-in first)');
+  perform t.ok(position('Bob' in r::text) = 0 and position('handle' in r::text) = 0 and position('example.edu' in r::text) = 0, '0034 recap: no names (privacy)');
+  perform t.eq(admin_event_recap('00000000-0000-0000-0000-0000000034e3')->>'venue', 'Duke', '0034 recap: venue TBD → event location');
+  perform t.throws($q$select delete_reward_campaign('brew_quest_2026')$q$, 'in_use', '0034 campaigns: can''t delete a campaign events use');
+end $$;
+:as_super
+do $$ declare p reward_passes; j jsonb; begin
+  select * into p from reward_passes where user_id = t.u('bob') and event_id = '00000000-0000-0000-0000-0000000034e2';
+  j := reward_pass_json(p, false);
+  perform t.ok(exists (select 1 from admin_actions where action = 'reward_campaign_saved' and details->>'name' = 'Snack Attack 2027'), '0034 campaigns: logged');
+  perform t.ok(j->>'passName' = 'Coffee Pass' and j->>'emoji' = '☕' and j->>'outfitSet' = 'latte_night_scholar', '0034: passes carry the campaign''s labels');
+end $$;
+
+-- ---- Finals Study Break quest ----
+do $$ begin
+  perform t.ok(exists (select 1 from activities where id = 'finals_study_break' and tier = 3 and method = 'screenshot'), '0034 finals: Tier 3 screenshot quest');
+  perform t.ok(quest_open('finals_study_break', '2026-12-01 00:05-05') and quest_open('finals_study_break', '2026-12-18 23:55-05'), '0034 finals: open Dec 1–18, 2026 (New York days)');
+  perform t.ok(not quest_open('finals_study_break', '2026-11-30 23:55-05') and not quest_open('finals_study_break', '2026-12-19 00:05-05'), '0034 finals: closed outside');
+  perform t.ok(quest_open('finals_study_break', '2027-04-20 09:00-04') and quest_open('finals_study_break', '2027-05-01 21:00-04') and not quest_open('finals_study_break', '2027-05-02 09:00-04'), '0034 finals: open Apr 20 – May 1, 2027');
+  perform t.ok(quest_open('repost', '2026-07-04 12:00-04'), '0034 finals: other quests have no window');
+  delete from submissions where user_id = t.u('ref3');
+  delete from quest_windows where activity_id = 'finals_study_break' and starts_on <= (now() at time zone 'America/New_York')::date and ends_on >= (now() at time zone 'America/New_York')::date;
+end $$;
+:as_ref3
+do $$ begin
+  perform t.eq(can_submit('finals_study_break'), 'This quest is only open during finals season. It’ll be back!', '0034 finals: can''t submit outside finals season');
+end $$;
+:as_super
+insert into quest_windows (activity_id, starts_on, ends_on) values ('finals_study_break', ((now() at time zone 'America/New_York')::date - 1), ((now() at time zone 'America/New_York')::date + 1));
+:as_ref3
+do $$ begin
+  perform t.ok(can_submit('finals_study_break') is null, '0034 finals: open during the window');
+end $$;
+:as_super
+insert into submissions (cycle_id, user_id, activity_id, image_path, note) values (active_cycle_id(), t.u('ref3'), 'repost', t.u('ref3') || '/x.jpg', '');
+:as_ref3
+do $$ begin
+  perform t.eq(can_submit('finals_study_break'), 'Digital quests are limited to 1 per week. Come back Monday!', '0034 finals: counts toward the weekly digital limit');
+end $$;
+:as_super
 rollback;
 
 -- =============================================================================

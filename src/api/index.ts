@@ -160,4 +160,14 @@ export const {
   markPassUsed,
   adminEventPasses,
   adminMarkPassUsed,
+  // 0034: quick start (email confirmation), promo (teaser, scoreboard, recap), reusable campaigns
+  verifyEmail,
+  resendVerification,
+  rewardTeaser,
+  rewardScoreboard,
+  adminEventRecap,
+  listRewardCampaigns,
+  saveRewardCampaign,
+  deleteRewardCampaign,
+  adminVerificationStats,
 } = impl;

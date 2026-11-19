@@ -37,12 +37,12 @@ function audio(): AudioContext | null {
   }
 }
 
-/** One square-wave note. `at` and `len` are seconds from now. */
-function note(ac: AudioContext, freq: number, at: number, len: number, vol = 0.08) {
+/** One square-wave note (or a soft sine for bells). `at` and `len` are seconds from now. */
+function note(ac: AudioContext, freq: number, at: number, len: number, vol = 0.08, type: OscillatorType = 'square') {
   const t = ac.currentTime + at;
   const osc = ac.createOscillator();
   const gain = ac.createGain();
-  osc.type = 'square';
+  osc.type = type;
   osc.frequency.setValueAtTime(freq, t);
   gain.gain.setValueAtTime(vol, t);
   gain.gain.exponentialRampToValueAtTime(0.0001, t + len);
@@ -88,4 +88,24 @@ export function playBloop(): void {
     [392, 0, 0.1],
     [294, 0.11, 0.22],
   ]);
+}
+
+/**
+ * 0034: a soft café "ding" (coffee reward reveal): two bell-like sine tones with a shimmer partial,
+ * like the little bell on a café counter. Synthesized, no audio files; silent when sound is off.
+ */
+export function playDing(): void {
+  if (!getSoundOn()) return;
+  const ac = audio();
+  if (!ac) return;
+  try {
+    for (const [f, at, len, vol] of [
+      [1318.5, 0, 1.1, 0.07], // E6
+      [2637, 0, 0.5, 0.018], // shimmer
+      [1760, 0.16, 1.3, 0.06], // A6
+      [3520, 0.16, 0.4, 0.012],
+    ] as const) note(ac, f, at, len, vol, 'sine');
+  } catch {
+    /* never let a sound break the app */
+  }
 }

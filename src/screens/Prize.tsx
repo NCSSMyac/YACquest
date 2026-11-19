@@ -10,6 +10,7 @@ import { ErrorText, Loading, Panel, ProgressBar, useToast } from '../components/
 import { Accordion, Card } from '../components/Blocks';
 import type { BadgeProgress, PrizeClaim } from '../types';
 import { useAuth } from '../lib/auth';
+import { isVerified } from '../lib/quickstart';
 import { useCelebrate } from '../lib/celebrate';
 import { badgeById } from '../lib/badges';
 import { cosmeticById } from '../lib/cosmetics';
@@ -27,10 +28,10 @@ const GIFT_CARDS = ['Amazon', 'Target', 'Starbucks', 'Chick-fil-A', 'DoorDash', 
 const campusColor = (id: string) => CAMPUSES.find((c) => c.id === id)?.color ?? 'var(--navy-800)';
 
 type HubTab = 'treasure' | 'badges' | 'wardrobe';
-const HUB_TABS: { id: HubTab; label: string }[] = [
+const HUB_TABS: { id: HubTab; label: string; icon?: string }[] = [
   { id: 'treasure', label: 'Treasure' },
   { id: 'badges', label: 'Badges' },
-  { id: 'wardrobe', label: 'Wardrobe' },
+  { id: 'wardrobe', label: 'Wardrobe', icon: '👕' },
 ];
 
 /** Quest hub: the prize race, the badge collection and the wardrobe. Deep link with /prize?tab=badges|wardrobe. */
@@ -88,7 +89,7 @@ export default function Prize() {
       <div className="tabs" role="tablist" aria-label="Quest hub">
         {HUB_TABS.map((t) => (
           <button key={t.id} role="tab" id={`hub-tab-${t.id}`} aria-selected={tab === t.id} aria-controls="hub-panel" onClick={() => select(t.id)}>
-            {t.label}
+            {t.icon && <span aria-hidden="true">{t.icon} </span>}{t.label}
             {t.id === 'wardrobe' && newOutfit && tab !== 'wardrobe' && <span className="new-dot inline">NEW<span className="sr-only"> outfit</span></span>}
           </button>
         ))}
@@ -195,6 +196,11 @@ function Treasure() {
             <p className="pixel" style={{ fontSize: 16 }}>Delivered! Enjoy your {PRIZE.name}!</p>
           ) : s.remaining === 0 ? (
             <p style={{ margin: 0 }}>All prizes claimed. Keep climbing the leaderboard and chase the Campus Cup!</p>
+          ) : dash.data && !isVerified(dash.data.user) ? (
+            // 0034: prize spots need a confirmed email (the race skips unconfirmed accounts)
+            <p style={{ margin: 0 }}>
+              <strong>{Math.max(0, s.goal - points)}</strong> more points to go. 📬 <b>Confirm your email</b> (link in your inbox, or “Resend email” in the red bar) so you can hold a prize spot when you get there.
+            </p>
           ) : (
             <p style={{ margin: 0 }}>
               <strong>{Math.max(0, s.goal - points)}</strong> more points to go. Only {s.remaining} {s.remaining === 1 ? 'spot' : 'spots'} left, so hurry!

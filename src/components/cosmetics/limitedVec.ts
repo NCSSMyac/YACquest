@@ -86,8 +86,8 @@ function latte(): VecArt {
     h: 16,
     shapes: [
       // steam: dark halo + white core, so it reads on light pages and on the night background
-      ...wisps.map<VecShape>((d) => ({ d, stroke: '#7d8aa3', sw: 1.05, op: 0.55 })),
-      ...wisps.map<VecShape>((d) => ({ d, stroke: '#ffffff', sw: 0.55 })),
+      ...wisps.map<VecShape>((d, i) => ({ d, stroke: '#7d8aa3', sw: 1.05, op: 0.55, steam: i * 0.7 })),
+      ...wisps.map<VecShape>((d, i) => ({ d, stroke: '#ffffff', sw: 0.55, steam: i * 0.7 })),
       // saucer
       { d: ellipse(cx, rimY + 5.75, 6.3, 1.55), fill: '#e6ecf5', stroke: INK, sw: 0.7 },
       { d: ellipse(cx, rimY + 5.45, 4.6, 0.95), fill: '#ffffff' },

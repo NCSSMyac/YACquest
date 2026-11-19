@@ -45,7 +45,7 @@ export default function Players() {
           {list.data.map((u) => (
             <li key={u.id} style={{ padding: '2px 0' }}>
               <button type="button" className="row-btn" onClick={() => setSel(u)}>
-                <span><strong>{u.displayName}</strong> <span className="muted">@{u.handle} · {campusName(u.campus)}</span>{bounceSet.has(u.id) && <> <span className="chip rejected">Bouncing email</span></>}</span>
+                <span><strong>{u.displayName}</strong> <span className="muted">@{u.handle} · {campusName(u.campus)}</span>{bounceSet.has(u.id) && <> <span className="chip rejected">Bouncing email</span></>}{u.emailVerified === false && <> <span className="chip pending" title="Hasn’t confirmed their email yet: can play, but can’t hold a prize spot or be made staff">Unverified</span></>}</span>
                 <strong>{u.points} pts</strong>
               </button>
             </li>
@@ -124,6 +124,9 @@ function PlayerModal({ user, onClose, bouncing = false, onBounceCleared }: { use
     <Modal open onClose={onClose} title={user.displayName}>
       <div className="stack">
         <p className="muted wrap-anywhere">@{user.handle} · {campusName(user.campus)} · {user.role === 'chair' ? 'YACquest Chair' : user.role === 'admin' ? 'Admin' : 'Adventurer'} · {user.email}</p>
+        {user.emailVerified === false && (
+          <p className="verify-note" style={{ margin: 0, fontSize: 14 }}><span className="chip pending">Unverified</span> Hasn’t confirmed their email yet. They can play and earn points, but can’t hold a prize spot or be made staff until they tap the link (they can resend it from Home).</p>
+        )}
         <div className="stat panel"><div className="num">{user.points}</div><div className="lbl">points</div></div>
 
         <button className="btn green block" disabled={busy} onClick={() => award(gameWin.id, '')}>

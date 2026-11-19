@@ -7,6 +7,7 @@ import * as api from '../api';
 import { campusName } from '../config';
 import { AVATAR_IDS, AVATAR_NAMES } from '../components/Sprite';
 import { Avatar } from '../components/Avatar';
+import { AvatarWardrobeLink } from '../components/WardrobeLink';
 import { ErrorText, Loading, Modal, Panel, useToast } from '../components/ui';
 import { Accordion, Card, ShowMore, useShowMore } from '../components/Blocks';
 import { useAuth } from '../lib/auth';
@@ -146,7 +147,9 @@ export default function Me() {
     <div className="stack">
       <Panel>
         <div className="row">
-          <Avatar id={user.avatar} look={user.look} campus={user.campus} size={64} hero={!!staff?.isHero} />
+          <AvatarWardrobeLink>
+            <Avatar id={user.avatar} look={user.look} campus={user.campus} size={64} hero={!!staff?.isHero} title="" />
+          </AvatarWardrobeLink>
           <div style={{ flex: 1, minWidth: 0 }}>
             <h1 style={{ margin: 0, fontSize: 20, overflowWrap: 'anywhere' }}>{user.displayName}</h1>
             <div className="muted" style={{ fontSize: 14 }}>@{user.handle} · {campusName(user.campus)} · {ROLE[user.role]}</div>
@@ -160,7 +163,7 @@ export default function Me() {
           </div>
         </div>
         <div className="grid-2" style={{ marginTop: 10 }}>
-          <Link to="/prize?tab=wardrobe" className="btn small">👒 Wardrobe</Link>
+          <Link to="/prize?tab=wardrobe" className="btn small">👕 Wardrobe</Link>
           <Link to="/prize?tab=badges" className="btn small ghost">🏅 Badges</Link>
         </div>
       </Panel>

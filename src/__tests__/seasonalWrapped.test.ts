@@ -20,11 +20,13 @@ const code = async (p: Promise<unknown>) => p.then(() => 'ok', (e: { code?: stri
 const at = (iso: string) => vi.setSystemTime(Date.parse(iso));
 const MIGRATION_0028 = readFileSync(new URL('../../supabase/migrations/0028_pace_wrapped_seasonal.sql', import.meta.url), 'utf8');
 const MIGRATION_0031 = readFileSync(new URL('../../supabase/migrations/0031_seasonal_november.sql', import.meta.url), 'utf8');
-const MIGRATION = MIGRATION_0028 + '\n' + MIGRATION_0031;
+const MIGRATION_0035 = readFileSync(new URL('../../supabase/migrations/0035_winter_seasonal.sql', import.meta.url), 'utf8');
+const MIGRATION_0036 = readFileSync(new URL('../../supabase/migrations/0036_winter_windows_kwanzaa.sql', import.meta.url), 'utf8');
+const MIGRATION = MIGRATION_0028 + '\n' + MIGRATION_0031 + '\n' + MIGRATION_0035 + '\n' + MIGRATION_0036;
 /** The windows the database ends up with after every migration ran in order: the last upsert per (holiday, year) wins. */
 function sqlWindows(): Map<string, [string, string]> {
   const m = new Map<string, [string, string]>();
-  for (const sql of [MIGRATION_0028, MIGRATION_0031])
+  for (const sql of [MIGRATION_0028, MIGRATION_0031, MIGRATION_0035, MIGRATION_0036])
     for (const r of sql.matchAll(/\('([a-z_]+)',\s+(\d{4}), '(\d{4}-\d\d-\d\d)', '(\d{4}-\d\d-\d\d)'\)/g)) m.set(`${r[1]}/${r[2]}`, [r[3], r[4]]);
   return m;
 }
@@ -62,10 +64,10 @@ describe('seasonal dates', () => {
     expect(ids('2026-10-31T12:00:00-04:00')).toEqual(['dia_de_muertos']);
     expect(ids('2026-11-01T00:30:00-04:00')).toEqual(['dia_de_muertos', 'diwali', 'heritage_month', 'thanksgiving']);
     expect(ids('2026-11-20T12:00:00-05:00')).toEqual(['diwali', 'heritage_month', 'thanksgiving']);
-    expect(ids('2026-12-01T03:00:00Z')).toEqual(['diwali', 'heritage_month', 'thanksgiving']); // 10 PM Nov 30 in New York
-    expect(ids('2026-12-01T12:00:00-05:00')).toEqual([]);
+    expect(ids('2026-12-01T03:00:00Z')).toEqual(['diwali', 'hanukkah', 'heritage_month', 'thanksgiving']); // 0035: Hanukkah window opens Nov 30 // 10 PM Nov 30 in New York
+    expect(ids('2026-12-01T12:00:00-05:00')).toEqual(['christmas', 'hanukkah', 'kwanzaa', 'lunar_new_year', 'new_year', 'three_kings_day', 'winter_solstice']); // 0036: November is over, every winter holiday opens Dec 1
     expect(ids('2027-10-22T12:00:00-04:00')).toEqual(['diwali']);
-    expect(ids('2027-11-30T12:00:00-05:00')).toEqual(['diwali', 'heritage_month', 'thanksgiving']);
+    expect(ids('2027-11-30T12:00:00-05:00')).toEqual(['diwali', 'hanukkah', 'heritage_month', 'thanksgiving']); // 0036: Hanukkah from Nov 30
     // countdown follows the window
     expect(untilText('2026-11-30', daysLeft('2026-11-30', Date.parse('2026-11-20T12:00:00-05:00')))).toBe('Available until Nov 30 · 11 days left');
   });
@@ -73,10 +75,10 @@ describe('seasonal dates', () => {
     const ids = (iso: string) => activeHolidays(Date.parse(iso)).map((h) => h.id);
     expect(ids('2026-11-05T12:00:00-05:00')).toEqual(['dia_de_muertos', 'diwali', 'thanksgiving', 'heritage_month']);
     expect(nyDate(Date.parse('2026-11-16T03:00:00Z'))).toBe('2026-11-15'); // 10 PM in New York
-    expect(ids('2026-12-15T12:00:00-05:00')).toEqual([]);
+    expect(ids('2026-12-15T12:00:00-05:00')).toEqual(['hanukkah', 'christmas', 'kwanzaa', 'winter_solstice', 'new_year', 'three_kings_day', 'lunar_new_year']); // 0036 winter
     expect(ids('2027-10-11T12:00:00-04:00')).toEqual(['indigenous_peoples_day']);
   });
-  it('the database seeds the same windows as SEASONAL in config.ts (0028 + 0031, last upsert wins)', () => {
+  it('the database seeds the same windows as SEASONAL in config.ts (0028 + 0031 + 0035 + 0036, last upsert wins)', () => {
     const sql = sqlWindows();
     for (const h of SEASONAL)
       for (const [year, w] of Object.entries(h.windows))
@@ -97,7 +99,11 @@ describe('seasonal dates', () => {
   });
   it('every seasonal item has art and a holiday; descriptions are filled in', () => {
     const items = COSMETICS.filter((c) => c.rule.type === 'seasonal');
-    expect(items.map((c) => c.id).sort()).toEqual(['autumn_harvest', 'cempasuchil_crown', 'diya', 'harvest_scarf', 'land_of_longleaf', 'papel_picado', 'rangoli_diyas', 'three_sisters']);
+    expect(items.map((c) => c.id).sort()).toEqual([
+      'autumn_harvest', 'candy_cane', 'cempasuchil_crown', 'diya', 'dreidel', 'festival_of_lights', 'harvest_scarf', 'holiday_hat', 'kikombe_cha_umoja', 'kinara_glow',
+      'kwanzaa_scarf', 'land_of_longleaf', 'lanterns_fireworks', 'longest_night', 'midnight_fireworks', 'new_year_hat', 'papel_picado', 'party_popper', 'rangoli_diyas',
+      'red_envelope', 'rosca_de_reyes', 'snowy_pine', 'starlight_lantern', 'three_sisters', 'zawadi',
+    ]);
     for (const c of items) {
       if (c.slot === 'hat') expect(HAT_ART[c.id]).toBeTruthy();
       if (c.slot === 'accessory') expect(ACCESSORY_ART[c.id]).toBeTruthy();
@@ -105,11 +111,11 @@ describe('seasonal dates', () => {
       expect(MIGRATION).toContain(`('${c.id}',`);
     }
     expect(seasonalItems('indigenous_peoples_day').map((c) => c.slot)).toEqual(['background']); // no wearable item
-    expect(seasonalItems('heritage_month').map((c) => [c.id, c.slot, c.name])).toEqual([['three_sisters', 'background', 'Three Sisters Garden']]); // never a costume
+    expect(seasonalItems('heritage_month').map((c) => [c.id, c.slot, c.name])).toEqual([['three_sisters', 'background', 'Three Sisters Garden']]); // a background only
     const nahm = holidayById('heritage_month')!;
     expect(nahm.name).toBe('Native American Heritage Month');
     expect(nahm.about).toContain('Since 1970, Native people have gathered in Plymouth, Massachusetts on Thanksgiving Day for a National Day of Mourning.');
-    expect(nahm.about).toContain('This background celebrates that knowledge; it isn’t a costume.');
+    expect(nahm.about).toMatch(/are Indigenous agricultural knowledge practiced by many Native nations for generations\.$/); // 0036: no disclaimer line
     expect(nahm.links).toEqual([
       { label: 'Learn about North Carolina’s tribes', url: 'https://ncadmin.nc.gov/divisions/american-indian-affairs' },
       { label: 'Whose land are you on?', url: 'https://native-land.ca/' },
@@ -147,6 +153,9 @@ describe('0031 Wardrobe order (fixed dates)', () => {
     expect(seasonalOrder((h) => owned.has(h.id), nov20).map((g) => [g.h.id, g.st.kind])).toEqual([
       ['diwali', 'available'], ['heritage_month', 'available'], ['thanksgiving', 'available'],
       ['dia_de_muertos', 'owned'],
+      // winter holidays coming up, by window start (0036: Hanukkah Nov 30, the rest Dec 1 → by window end, then name)
+      ['hanukkah', 'returns'], ['christmas', 'returns'], ['winter_solstice', 'returns'], ['new_year', 'returns'], ['kwanzaa', 'returns'],
+      ['three_kings_day', 'returns'], ['lunar_new_year', 'returns'],
       ['indigenous_peoples_day', 'returns'],
     ]);
     // Oct 2027: Indigenous Peoples' Day (Oct 4) before Diwali (Oct 22) before Día de los Muertos (Oct 25)
@@ -225,7 +234,9 @@ describe('seasonal unlocks persist; equip rules (mock, fixed dates)', () => {
   it('missed the window → still locked next time', async () => {
     at('2026-12-01T12:00:00-05:00');
     asUser('yak001');
-    expect((await api.claimSeasonalItems()).claimed).toEqual([]);
+    // 0036: Dec 1 opens every winter holiday, but nothing from November
+    expect((await api.claimSeasonalItems()).claimed).toEqual(['candy_cane', 'dreidel', 'festival_of_lights', 'holiday_hat', 'kikombe_cha_umoja', 'kinara_glow', 'kwanzaa_scarf', 'lanterns_fireworks', 'longest_night',
+      'midnight_fireworks', 'new_year_hat', 'party_popper', 'red_envelope', 'rosca_de_reyes', 'snowy_pine', 'starlight_lantern', 'zawadi']);
     expect(await code(api.equipLook({ accessory: 'harvest_scarf' }))).toBe('locked');
   });
 });

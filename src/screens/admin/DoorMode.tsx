@@ -4,6 +4,7 @@
  * "N going / M here" bar, and the last few arrivals popping in. Keeps the screen awake where the browser
  * allows it (Wake Lock) and can go full screen. Helpers: src/lib/doorMode.ts.
  */
+import { campaignLabels, pluralItem } from '../../lib/rewardEvents';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import * as api from '../../api';
@@ -307,7 +308,6 @@ function DoorPasses({ passes, error, title, eventId, onChanged }: { passes: Even
   const [busy, setBusy] = useState<string | null>(null);
   if (!passes) return error ? <p className="door-stale" role="status">{error}</p> : <Loading lines={2} />;
   const left = Math.max(0, passes.limit - passes.issued);
-  const item = passes.itemLabel.replace(/^free\s+/i, '');
   async function toggle(userId: string, used: boolean) {
     setBusy(userId);
     try {
@@ -319,15 +319,15 @@ function DoorPasses({ passes, error, title, eventId, onChanged }: { passes: Even
   }
   const csv = () =>
     downloadCsv(
-      csvFilename('coffee-passes', title),
+      csvFilename(`${campaignLabels(passes.outfitSet).passName.toLowerCase().replace(/\s+/g, '-')}es`, title), // coffee-passes
       toCsv(['pass_no', 'name', 'handle', 'campus', 'checked_in', 'valid_until', 'used', 'used_at', 'marked_by'],
         passes.passes.map((p) => [p.passNo, p.displayName, p.handle, campusName(p.campus), csvDateTime(p.createdAt), csvDateTime(p.validUntil), !!p.usedAt, csvDateTime(p.usedAt), p.usedBy ?? ''])),
     );
   return (
-    <section className="door-bq" aria-label="Coffee passes (staff only)">
+    <section className="door-bq" aria-label={`${campaignLabels(passes.outfitSet).passName}es (staff only)`}>
       <div className="door-bq-top">
         <div className="door-bq-left" aria-live="polite">
-          <span className="door-bq-label">Free {item}s left</span>
+          <span className="door-bq-label">{pluralItem(passes.itemLabel, 2).replace(/^2\s+/, '').replace(/^free /i, 'Free ')} left</span>
           <span className="door-bq-num"><b>{left}</b> / {passes.limit}</span>
           <span className="door-bq-staff">Staff only · {passes.used} used</span>
         </div>

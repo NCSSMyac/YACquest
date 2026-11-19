@@ -25,7 +25,7 @@ export function StarterTips({ title = '🧭 Start here' }: { title?: string }) {
             <span aria-hidden className="starter-icon">{t.icon}</span>
             <span className="starter-text">{t.text}</span>
             {t.to === 'copy-code' ? (
-              <button type="button" className="btn small ghost" onClick={copy} aria-label={`Copy your friend code ${user?.friendCode ?? ''}`}>{t.cta}</button>
+              <button type="button" className="btn small ghost" onClick={copy} aria-label={`${t.cta} ${user?.friendCode ?? ''}`.trim()}>{t.cta}</button>
             ) : t.to.startsWith('http') ? (
               <a className="btn small ghost" href={t.to} target="_blank" rel="noreferrer">{t.cta} ↗</a>
             ) : (

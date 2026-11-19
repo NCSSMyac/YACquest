@@ -4,6 +4,7 @@
  * and the weekly email preview (collapsed). One column on phones, two columns on wider screens.
  * Chair-only rows and buttons are hidden from plain admins.
  */
+import { CampusScoreboard } from '../../components/promo/CampusScoreboard';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import * as api from '../../api';
@@ -71,6 +72,8 @@ export default function AdminHome() {
     // 0028
     pace: <PaceCard key="pace" />,
     eoy: <EndOfYearCard key="eoy" isChair={isChair} />,
+    // 0034: live campus scoreboard during a special series (hidden otherwise)
+    score: <CampusScoreboard key="score" admin />,
   };
   // 0028: the End-of-year checklist shows during the wrap-up window (Wrapped opens → 14 days after the end).
   const eoy = wrappedWindow().wrapUp ? [cards.eoy] : [];
@@ -81,11 +84,11 @@ export default function AdminHome() {
       <QuickNav sections={sections} badge={badge} />
       {wide ? (
         <div className="dash-cols">
-          <div className="stack">{[...eoy, cards.hero, cards.event, cards.cup]}</div>
+          <div className="stack">{[...eoy, cards.hero, cards.event, cards.score, cards.cup]}</div>
           <div className="stack">{[cards.todo, cards.kpis, cards.prize, cards.pace, cards.star]}</div>
         </div>
       ) : (
-        <div className="stack">{[...eoy, cards.hero, cards.todo, cards.kpis, cards.event, cards.prize, cards.pace, cards.cup, cards.star]}</div>
+        <div className="stack">{[...eoy, cards.hero, cards.todo, cards.kpis, cards.event, cards.score, cards.prize, cards.pace, cards.cup, cards.star]}</div>
       )}
       <EmailPreview isChair={isChair} />
     </div>

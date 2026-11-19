@@ -10,6 +10,7 @@ import { playCoin } from '../lib/sound';
 import { QUEST_TZ } from '../lib/todayEvent';
 import { Avatar } from './Avatar';
 import { SURVEY_POINTS } from '../lib/eventSurvey';
+import { BringFriendCard } from './promo/BringFriend';
 
 export interface CheckInPass {
   eventTitle: string;
@@ -61,6 +62,8 @@ export function CheckInConfirm({ pass, onDone }: { pass: CheckInPass; onDone: ()
         </div>
         <p className="ci-pass-hint">Live clock: show this screen at the door if asked.</p>
         <p className="ci-pass-survey">⭐ After the event, rate it for +{SURVEY_POINTS} points</p>
+        {/* 0034: bring-a-friend moment (hidden once 3/3 friend bonuses are used) */}
+        <BringFriendCard />
         <button ref={btn} type="button" className="btn block" onClick={() => done.current()}>Done</button>
       </div>
     </div>

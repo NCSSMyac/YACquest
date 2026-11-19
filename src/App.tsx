@@ -51,6 +51,8 @@ const Wrapped = lazy(() => import('./screens/Wrapped'));
 const Survey = lazy(() => import('./screens/Survey'));
 // 0033: the YACquest Coffee Pass (Brew & Quest pass holders only) is a full-screen page, lazy-loaded.
 const CoffeePassPage = lazy(() => import('./screens/CoffeePassPage'));
+// 0034: #/verify?t=<token> — the app's own email confirmation link (public: works logged in or out).
+const VerifyEmail = lazy(() => import('./screens/VerifyEmail'));
 const lazyPage = (el: JSX.Element) => <Suspense fallback={<Loading lines={3} />}>{el}</Suspense>;
 
 function RequireAuth() {
@@ -126,7 +128,7 @@ function PendingCheckInRedirect() {
       return;
     }
     // Login/Signup navigate to Home themselves right after logging in: wait until we're there.
-    if (resetPending.current || ['/checkin', '/login', '/signup', '/forgot', '/check-email'].includes(pathname)) return;
+    if (resetPending.current || ['/checkin', '/login', '/signup', '/forgot', '/check-email', '/verify'].includes(pathname)) return;
     const p = takePendingCheckIn();
     if (!p) return;
     const q = new URLSearchParams({ event: p.eventId, code: p.code });
@@ -160,6 +162,7 @@ export default function App() {
             {/* 0027: public privacy summary + the page shown after deleting an account. */}
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/goodbye" element={<Goodbye />} />
+            <Route path="/verify" element={<Suspense fallback={<div className="app-shell"><Loading /></div>}><VerifyEmail /></Suspense>} />
             <Route path="/unsubscribe" element={<Suspense fallback={<div className="app-shell"><Loading /></div>}><Unsubscribe /></Suspense>} />
             {/* Event QR codes open this; it handles logged-in and logged-out visitors itself. */}
             <Route path="/checkin" element={<CheckInLink />} />

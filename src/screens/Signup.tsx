@@ -6,7 +6,8 @@ import { CAMPUSES, CYCLE, type CampusId } from '../config';
 import { fmtCycleRange } from '../lib/format';
 import { AVATAR_IDS, AVATAR_NAMES } from '../components/Sprite';
 import { Avatar } from '../components/Avatar';
-import { ErrorText, Modal, Panel } from '../components/ui';
+import { ErrorText, Modal, Panel, useToast } from '../components/ui';
+import { PublicMysteryTeaser } from '../components/promo/MysteryTeaser';
 import { useAuth } from '../lib/auth';
 import type { AvatarId } from '../types';
 import { NAME_NOT_ALLOWED, nameIsClean } from '../lib/nameFilter';
@@ -19,6 +20,7 @@ type Errors = Partial<Record<'handle' | 'displayName' | 'email' | 'password' | '
 export default function Signup() {
   const { setUser } = useAuth();
   const nav = useNavigate();
+  const toast = useToast();
   const [handle, setHandle] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
@@ -62,10 +64,13 @@ export default function Signup() {
       setSoundOn(sound);
       const res = await api.signup({ handle, displayName, email, password, campus, avatar, friendCode: friendCode.trim() || undefined, acceptedRules: true, emailOptIn });
       if (res.needsEmailConfirmation || !res.user) {
-        nav('/check-email', { state: { email: email.trim() } });
+        // Supabase "Confirm email" is still ON: the link must be clicked before logging in.
+        nav('/check-email', { state: { email: email.trim(), legacy: true } });
         return;
       }
+      // 0034 Quick start: straight into the app (welcome tour; a pending QR check-in continues by itself).
       setUser(res.user);
+      toast(`You’re in! We also sent a confirmation email to ${email.trim()}.`, 'success');
       nav('/');
     } catch (err) {
       const code = (err as api.ApiError).code;
@@ -85,6 +90,7 @@ export default function Signup() {
           <p className="muted" style={{ margin: 0 }}>This year’s quest runs {fmtCycleRange(CYCLE.displayStart, CYCLE.end)}.</p>
         </div>
         <PendingCheckInBanner />
+        <PublicMysteryTeaser cta={false} />
         <Panel title="Your account">
           <div className="stack">
             <label className="field">

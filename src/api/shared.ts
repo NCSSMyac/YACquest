@@ -34,7 +34,10 @@ export interface SignupInput {
   emailOptIn?: boolean;
 }
 
-/** Live backend: the account exists but can't log in until the email link is clicked. */
+/**
+ * needsEmailConfirmation: Supabase "Confirm email" is still ON (no session yet). Since 0034 it's OFF and
+ * sign-up logs in right away; the app confirms the email itself (Home banner + #/verify).
+ */
 export interface SignupResult {
   user: User | null;
   needsEmailConfirmation: boolean;
@@ -54,6 +57,8 @@ export interface AdminUserRow {
   campus: CampusId;
   role: Role;
   points: number;
+  /** 0034: false = hasn't confirmed their email yet ("Unverified" chip). Missing on older servers. */
+  emailVerified?: boolean;
 }
 
 export interface AdminOverview {

@@ -8,6 +8,7 @@ import { GRIDS } from '../Sprite';
 import { SEASONAL_ACCESSORY_ART, SEASONAL_HAT_ART, SEASONAL_PALETTE, type SeasonalArt } from './seasonalArt';
 import type { VecArt } from './vector';
 import { LIMITED_ACCESSORY_ART, LIMITED_HAT_ART, LIMITED_PALETTE } from './limitedArt';
+import { WINTER_ACCESSORY_ART, WINTER_HAT_ART, newYearHatArt } from './winterArt';
 
 /** Extra colors used by cosmetics/backgrounds (chars unused by the characters). */
 export const EXTRA_PALETTE: Record<string, string> = {
@@ -117,7 +118,11 @@ export const HAT_ART: Record<string, Art> = {
   ...SEASONAL_HAT_ART,
   // 0033 limited edition
   ...LIMITED_HAT_ART,
+  // 0035 winter seasonal (vector)
+  ...WINTER_HAT_ART,
 };
+// 0035: the New Year's Party Hat shows the year it celebrates ("2027" during the 2026–27 window), so it is a getter.
+Object.defineProperty(HAT_ART, 'new_year_hat', { get: () => newYearHatArt(), enumerable: true });
 
 /** `anchor: 'side'` (0028 Diya) sits beside the character (SIDE_ANCHOR) instead of at the neck. */
 export const ACCESSORY_ART: Record<string, SeasonalArt> = {
@@ -173,6 +178,8 @@ export const ACCESSORY_ART: Record<string, SeasonalArt> = {
   ...SEASONAL_ACCESSORY_ART,
   // 0033 limited edition
   ...LIMITED_ACCESSORY_ART,
+  // 0035 winter seasonal (vector, held at the side)
+  ...WINTER_ACCESSORY_ART,
 };
 
 /** Sparkle aura: twinkling stars placed around the character (frame coords, 32×32 grid). */
@@ -215,11 +222,12 @@ const NUDGE: Partial<Record<AvatarId, Record<string, { x?: number; y?: number }>
   // and the Cozy Knit Beanie pulled down a little where its pom-pom would poke out of the frame
   yak: { latte_aplus: { x: -1 } },
   golden_yak: { latte_aplus: { x: -1 } },
-  unicorn: { latte_aplus: { x: -1 }, cozy_beanie: { y: 1 } },
-  knight: { latte_aplus: { x: -1 }, cozy_beanie: { y: 1 } },
-  dragon: { latte_aplus: { x: -1, y: -1 }, cozy_beanie: { y: 1 } },
+  // 0035 winter hats: same idea (the party hat's pom-pom and the holiday hat stay inside the frame)
+  unicorn: { latte_aplus: { x: -1 }, cozy_beanie: { y: 1 }, new_year_hat: { y: 1 }, holiday_hat: { y: 1 } },
+  knight: { latte_aplus: { x: -1 }, cozy_beanie: { y: 1 }, new_year_hat: { y: 1 }, holiday_hat: { y: 1 } },
+  dragon: { latte_aplus: { x: -1, y: -1 }, cozy_beanie: { y: 1 }, new_year_hat: { y: 1 }, holiday_hat: { y: 1 } },
   mage: { latte_aplus: { x: -1, y: -1 } },
-  ranger: { latte_aplus: { x: -1, y: -1 }, cozy_beanie: { y: 3 } },
+  ranger: { latte_aplus: { x: -1, y: -1 }, cozy_beanie: { y: 3 }, new_year_hat: { y: 3 }, holiday_hat: { y: 3 } },
 };
 
 export function nudge(id: AvatarId, item: string) {

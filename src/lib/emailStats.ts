@@ -13,6 +13,7 @@ export const EMAIL_KIND_LABEL: Record<string, string> = {
   event_reminder: 'Event reminder',
   event_followup: 'Event follow-up',
   wrapped: 'Wrapped',
+  verify_email: 'Email confirmation',
 };
 
 export const EMAIL_STATUS_LABEL: Record<EmailStatus | 'queued', string> = {
@@ -25,6 +26,7 @@ export const EMAIL_STATUS_LABEL: Record<EmailStatus | 'queued', string> = {
   skipped_expired: 'Skipped — too late (budget)',
   skipped_opted_out: 'Skipped — emails off',
   skipped_bouncing: 'Skipped — address bouncing',
+  skipped_unverified: 'Skipped — email not confirmed',
 };
 
 /** Chip colour class for each status (theme.css chips). */
@@ -38,6 +40,7 @@ export const EMAIL_STATUS_CHIP: Record<EmailStatus | 'queued', string> = {
   skipped_expired: 'neutral',
   skipped_opted_out: 'neutral',
   skipped_bouncing: 'neutral',
+  skipped_unverified: 'neutral',
 };
 
 /** "Today: 132 / 450 sent · 40 waiting · next batch in ~6 min". */

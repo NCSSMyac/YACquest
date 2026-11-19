@@ -36,8 +36,10 @@ describe('Edge Functions carry the shared core verbatim', () => {
 });
 
 describe('priority', () => {
-  it('matches SQL email_priority(): staff/prize/test/weekly 1, reminders 2, follow-ups 3, announcements 4, Wrapped 5', () => {
-    const body = SQL.slice(SQL.indexOf('function public.email_priority'), SQL.indexOf('function public.email_is_participant_kind'));
+  it('matches SQL email_priority() (latest: 0034): staff/prize/test/weekly/verify 1, reminders 2, follow-ups 3, announcements 4, Wrapped 5', () => {
+    // 0034 re-created email_priority() (+ verify_email); it ends right before email_campaign().
+    const SQL34 = read('supabase/migrations/0034_quickstart_promo_collection.sql');
+    const body = SQL34.slice(SQL34.indexOf('function public.email_priority'), SQL34.indexOf('function public.email_campaign'));
     const sql = Object.fromEntries([...body.matchAll(/when '([a-z_]+)' then (\d)/g)].map((m) => [m[1], Number(m[2])]));
     expect(sql).toEqual(EMAIL_PRIORITY);
     expect(isParticipantKind('announcement') && isParticipantKind('event_reminder') && !isParticipantKind('weekly_report')).toBe(true);

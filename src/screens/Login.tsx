@@ -7,6 +7,7 @@ import { useAuth } from '../lib/auth';
 import { errorMessage } from '../lib/useAsync';
 import { yakPunOfTheDay } from '../lib/yakPuns';
 import { PendingCheckInBanner } from './CheckInLink';
+import { PublicMysteryTeaser } from '../components/promo/MysteryTeaser';
 
 export default function Login() {
   const { setUser } = useAuth();
@@ -39,7 +40,7 @@ export default function Login() {
     setResending(true);
     try {
       await api.resendConfirmation(handle.trim());
-      nav('/check-email', { state: { email: handle.trim(), justSent: true } });
+      nav('/check-email', { state: { email: handle.trim(), justSent: true, legacy: true } });
     } catch (err) {
       toast(errorMessage(err), 'error');
       setResending(false);
@@ -56,6 +57,7 @@ export default function Login() {
           <p className="muted" style={{ margin: '2px 0 0', fontSize: 13, fontStyle: 'italic' }}>🐂 {yakPunOfTheDay()}</p>
         </div>
         <PendingCheckInBanner />
+        <PublicMysteryTeaser />
         <Panel title="Log in">
           <form className="stack" onSubmit={submit}>
             <label className="field">

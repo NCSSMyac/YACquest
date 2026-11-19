@@ -54,7 +54,7 @@ export const isParticipantKind = (kind: string) => PARTICIPANT_KINDS.includes(ki
  * 1 staff + prize alerts + test + weekly report, 2 event reminders, 3 follow-ups, 4 announcements, 5 Wrapped.
  */
 export const EMAIL_PRIORITY: Record<string, number> = {
-  prize_qualified: 1, prize_info: 1, test: 1, weekly_report: 1,
+  prize_qualified: 1, prize_info: 1, test: 1, weekly_report: 1, verify_email: 1,
   event_reminder: 2, event_followup: 3, announcement: 4, wrapped: 5,
 };
 export const emailPriority = (kind: string) => EMAIL_PRIORITY[kind] ?? 4;
@@ -151,6 +151,8 @@ export function sendBeforeFor(
       return c.cycleEndsAt && c.cycleEndsAt > c.createdAt ? c.cycleEndsAt : addDays(c.createdAt, 3);
     case 'weekly_report':
       return endOfDayNewYork(c.createdAt);
+    case 'verify_email': // 0034: the confirmation link works for 7 days
+      return addDays(c.createdAt, 7);
     default:
       return null;
   }
@@ -167,6 +169,8 @@ export const unsubscribePostUrl = (base: string, token: string) => `${base}/u/${
 
 /** Unsubscribe links (app page or one-click endpoint) are never rewritten into tracked links. */
 export const isUnsubscribeUrl = (url: string) => /#\/unsubscribe\b|\/email-track\/u\//.test(url);
+/** 0034: links that are never rewritten into tracked links: unsubscribe + email confirmation (its token is never logged). */
+export const isUntrackedUrl = (url: string) => isUnsubscribeUrl(url) || /#\/verify\b/.test(url);
 
 const unescapeAttr = (s: string) =>
   s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
@@ -180,7 +184,7 @@ export function extractLinks(html: string): string[] {
   const out: string[] = [];
   for (const m of html.matchAll(HREF_RE)) {
     const url = unescapeAttr(m[3]);
-    if (!isUnsubscribeUrl(url) && !out.includes(url)) out.push(url);
+    if (!isUntrackedUrl(url) && !out.includes(url)) out.push(url);
   }
   return out;
 }
@@ -190,7 +194,7 @@ export function rewriteLinks(html: string, msgId: string, base: string, sigs: Re
   return html.replace(HREF_RE, (whole, pre: string, q: string, raw: string) => {
     const url = unescapeAttr(raw);
     const sig = sigs.get(url);
-    if (!sig || isUnsubscribeUrl(url)) return whole;
+    if (!sig || isUntrackedUrl(url)) return whole;
     return `${pre}${q}${escapeAttr(clickUrl(base, msgId, url, sig))}${q}`;
   });
 }

@@ -9,10 +9,11 @@ import { Link } from 'react-router-dom';
 import * as api from '../api';
 import { campusName, type CampusId } from '../config';
 import { useAuth } from '../lib/auth';
-import { countdown, rewardBanners, rewardEventName } from '../lib/rewardEvents';
+import { outfitSetById, countdown, passLabels, rewardBanners, rewardEventName } from '../lib/rewardEvents';
 import { useAsync } from '../lib/useAsync';
 import type { EventReward, YacEvent } from '../types';
 import { CosmeticIcon } from './Avatar';
+import { COSMETICS } from '../lib/cosmetics';
 
 /** Date.now(), refreshed every second while the page is visible. */
 export function useSecondTick(active = true): number {
@@ -40,6 +41,9 @@ export function useSecondTick(active = true): number {
   return now;
 }
 
+/** 0034: the set's accessory (the A+ Latte for Brew & Quest), else its first piece. */
+const bannerIcon = (set: string) => COSMETICS.find((c) => c.rule.type === 'event' && c.rule.id === set && c.slot === 'accessory')?.id ?? outfitSetById(set).items[0] ?? 'latte_aplus';
+
 type BannerEvent = Pick<YacEvent, 'id' | 'title' | 'campus' | 'startsAt' | 'endsAt'> & { reward: EventReward };
 
 /** One countdown card. `compact` = the line inside a Quest Board event card (no link, no campus chip). */
@@ -48,21 +52,22 @@ export function RewardBanner({ e, now, compact, own }: { e: BannerEvent; now: nu
   if (c.phase === 'over') return null;
   const live = c.phase === 'live';
   const name = rewardEventName(e.title);
+  const emoji = passLabels(e.reward).emoji; // 0034: the campaign's emoji (☕ for Brew & Quest)
   const where = e.campus === 'all' ? 'All campuses' : campusName(e.campus as CampusId);
   const body = (
     <>
-      <span className="bq-cup" aria-hidden="true"><CosmeticIcon id="latte_aplus" size={compact ? 34 : 44} /></span>
+      <span className="bq-cup" aria-hidden="true"><CosmeticIcon id={bannerIcon(e.reward.outfitSet)} size={compact ? 34 : 44} /></span>
       <span className="bq-text">
         {live ? (
           <>
-            <span className="bq-head">☕ {c.message}</span>
+            <span className="bq-head">{emoji} {c.message}</span>
             <span className="bq-sub">
               <span className="bq-live">● LIVE</span> <b className="bq-clock">{c.clock}</b> left
             </span>
           </>
         ) : (
           <>
-            <span className="bq-head">☕ {name} starts in <b className="bq-clock">{c.clock}</b></span>
+            <span className="bq-head">{emoji} {name} starts in <b className="bq-clock">{c.clock}</b></span>
             <span className="bq-sub">{c.message}</span>
           </>
         )}

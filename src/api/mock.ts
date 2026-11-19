@@ -94,8 +94,15 @@ import type {
   EventReward,
   EventRewardInput,
   MyEventRewards,
+  RewardCampaign,
+  RewardTeaser,
+  RewardScoreboard,
+  EventRecap,
 } from '../types';
-import { DEFAULT_REWARD_ITEM, DEFAULT_REWARD_MESSAGE, OUTFIT_SETS, genSecretWord, passValidUntil, rewardInputError } from '../lib/rewardEvents';
+import { DEFAULT_CAMPAIGN, DEFAULT_REWARD_ITEM, DEFAULT_REWARD_MESSAGE, OUTFIT_SETS, campaignInputError, campaignSlug, genSecretWord, passValidUntil, rewardInputError } from '../lib/rewardEvents';
+import { isVerified } from '../lib/quickstart';
+import { questOpen, seriesWindowOpen } from '../lib/promo';
+import { PROMO, VERIFY } from '../config';
 import { SPECIAL_BADGES } from '../lib/badges';
 import { BUDGET, emailPriority, planBatch, sendBeforeFor } from '../../supabase/functions/_shared/emailCore';
 import { announcementEmail, emailLayout, isParticipantEmail, renderForRecipient } from '../lib/emailRender';
@@ -190,6 +197,10 @@ interface Db {
   rewardPasses?: { eventId: string; userId: string; series: string; passNo: number; createdAt: string; usedAt?: string; usedBy?: 'self' | 'staff' }[];
   /** 0033: owned event outfit items (the real one is event_unlocks). */
   eventUnlocks?: { userId: string; itemId: string; eventId: string; at: string; seenAt?: string }[];
+  /** 0034: confirmation links (the real one is email_verify_tokens, hashed; the demo keeps the token). */
+  verifyTokens?: { token: string; userId: string; email: string; reason: 'signup' | 'resend'; createdAt: string; expiresAt: string; usedAt?: string }[];
+  /** 0034: reusable limited reward campaigns (the real one is reward_campaigns). */
+  campaigns?: RewardCampaign[];
   seq: number;
 }
 
@@ -229,7 +240,7 @@ const DB_KEY = 'yacquest-db-v1';
 /** app_config.app_url (0028): links in emails. */
 const APP_URL = 'https://ncssmyac.github.io/YACquest/';
 const SESSION_KEY = 'yacquest-session';
-const DB_VERSION = 15;
+const DB_VERSION = 16;
 
 let db: Db | null = null;
 
@@ -379,9 +390,15 @@ function refreshPrizeRace() {
   for (let n = 1; n <= PRIZE.count; n++) if (!taken.has(n)) free.push(n);
   if (!free.length) return;
   const eligible = d.users
-    .filter((u) => u.role === 'participant' && !activeUsers.has(u.id) && (totals.get(u.id) ?? 0) >= PRIZE.goal)
+    .filter((u) => u.role === 'participant' && !activeUsers.has(u.id) && (totals.get(u.id) ?? 0) >= PRIZE.goal && isVerified(u)) // 0034: confirmed email only
     .map((u) => ({ u, at: crossedGoalAt(u.id) ?? now() }))
     .sort((a, b) => a.at.localeCompare(b.at));
+  // 0034: past the goal but not confirmed → one nudge
+  for (const u of d.users) {
+    if (u.role !== 'participant' || isVerified(u) || (totals.get(u.id) ?? 0) < PRIZE.goal) continue;
+    if (d.notifications.some((n) => n.userId === u.id && n.title === 'Confirm your email to claim a prize spot')) continue;
+    notify(u.id, 'prize_update', 'Confirm your email to claim a prize spot', `You reached ${PRIZE.goal} points! Tap the link in your YACquest confirmation email (or “Resend email” in the red bar at the top of the app) to claim an open spot.`);
+  }
   for (const { u, at } of eligible) {
     const spot = free.shift();
     if (spot == null) break;
@@ -461,9 +478,13 @@ export async function signup(input: SignupInput): Promise<SignupResult> {
     emailOptIn: input.emailOptIn ?? true,
     tourDoneAt: null,
     photoWallOptOut: false,
+    // 0034 quick start: playing right away, email confirmed later (#/verify?t=…)
+    emailVerified: false,
+    emailVerifiedAt: null,
   };
   d.users.push(user);
   notify(user.id, 'announcement', 'Welcome to YACquest!', `Earn points all year. The first ${PRIZE.count} people to reach ${PRIZE.goal} win a ${PRIZE.name}.`);
+  queueVerification(user, 'signup');
   setSession(user.id);
   save();
   return { user, needsEmailConfirmation: false };
@@ -570,7 +591,7 @@ export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Pr
       // 0030: did I already answer this event's in-app survey?
       surveyDone: (d.surveys ?? []).some((s) => s.eventId === e.id && s.userId === user.id),
       // 0033 (event_rewards_public): never the secret word or pass counts here
-      ...(d.eventRewards?.[e.id] ? { reward: publicReward(d.eventRewards[e.id]) } : {}),
+      ...(d.eventRewards?.[e.id] ? { reward: withCampaign(publicReward(d.eventRewards[e.id])) } : {}),
     }));
 }
 
@@ -662,6 +683,13 @@ export async function checkIn(eventId: string, password: string): Promise<{ poin
 // ───────────────────────────── 0033: Brew & Quest (limited reward events) ─────────────────────────────
 
 const publicReward = (r: EventRewardInput) => ({ itemLabel: r.itemLabel, limit: r.limit, venue: r.venue, outfitSet: r.outfitSet, message: r.message });
+/** 0034: campaigns (reward_campaigns). Brew & Quest 2026 is always there. */
+const campaignsOf = (d: Db = load()): RewardCampaign[] => d.campaigns ?? [DEFAULT_CAMPAIGN];
+const campaignOfSet = (set: string) => campaignsOf().find((c) => c.outfitSet === set);
+function withCampaign<T extends { outfitSet: string }>(r: T): T & { emoji?: string; passName?: string; campaignName?: string } {
+  const c = campaignOfSet(r.outfitSet);
+  return c ? { ...r, emoji: c.emoji, passName: c.passName, campaignName: c.name } : r;
+}
 const outfitItems = (set: string) => COSMETICS.filter((c) => c.rule.type === 'event' && c.rule.id === set).map((c) => c.id);
 
 function checkRewardInput(eventId: string, r: EventRewardInput) {
@@ -696,6 +724,10 @@ function passJson(p: NonNullable<Db['rewardPasses']>[number], withSecret: boolea
     item: r?.itemLabel ?? DEFAULT_REWARD_ITEM, checkedInAt: p.createdAt, validUntil: passValidUntil(p.createdAt),
     ...(p.usedAt ? { usedAt: p.usedAt, usedBy: p.usedBy } : {}),
     ...(withSecret && r ? { secretWord: r.secretWord } : {}),
+    // 0034: campaign labels
+    outfitSet: r?.outfitSet ?? DEFAULT_CAMPAIGN.outfitSet,
+    passName: campaignOfSet(r?.outfitSet ?? '')?.passName ?? DEFAULT_CAMPAIGN.passName,
+    emoji: campaignOfSet(r?.outfitSet ?? '')?.emoji ?? DEFAULT_CAMPAIGN.emoji,
   };
 }
 
@@ -806,6 +838,8 @@ function submissionBlocker(user: User, activityId: string, eventId?: string): st
   const mine = d.submissions.filter((s) => s.userId === user.id && s.status !== 'rejected');
   const a = activityById(activityId);
   if (!a || (a.method !== 'screenshot' && a.method !== 'photo')) return 'That quest can’t be submitted with a screenshot.';
+  // 0034: seasonal quests (Finals Study Break) only during their window
+  if (!questOpen(a.id)) return 'This quest is only open during finals season. It’ll be back!';
   if (ONCE_PER_CYCLE.has(a.id) && mine.some((s) => s.activityId === a.id)) return 'You already submitted this one for this cycle.';
   const thisWeek = weekStart(now());
   if (a.tier === 3 && mine.some((s) => activityById(s.activityId)?.tier === 3 && weekStart(s.createdAt) === thisWeek))
@@ -1016,7 +1050,7 @@ export async function searchUsers(query: string, limit = 20): Promise<AdminUserR
   return load()
     .users.filter((u) => canManage(admin, u) && (!q || u.displayName.toLowerCase().includes(q) || u.handle.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)))
     .slice(0, limit)
-    .map((u) => ({ id: u.id, handle: u.handle, displayName: u.displayName, email: u.email, campus: u.campus, role: u.role, points: totals.get(u.id) ?? 0 }));
+    .map((u) => ({ id: u.id, handle: u.handle, displayName: u.displayName, email: u.email, campus: u.campus, role: u.role, points: totals.get(u.id) ?? 0, emailVerified: isVerified(u) }));
 }
 
 export async function userLedger(userId: string): Promise<LedgerEntry[]> {
@@ -1703,6 +1737,34 @@ export function seed(): Db {
       if (i === 0) u.look = { hat: 'cozy_beanie', accessory: 'latte_aplus', background: 'moonlit_nook' };
     }
     d.eventCreators[live.id] = d.users[0].id;
+    // 0034: yesterday's UNC stop of the same series (for the campus scoreboard + the recap card)
+    const past = { id: nextId('evt'), title: 'Brew & Quest @ Epilogue', campus: 'unc' as const, crossCampus: false, kind: 'active' as const, location: 'Epilogue', startsAt: iso(-D - 2 * H), endsAt: iso(-D), password: 'EPILOGUE', activityId: 'home_event', attendeeCount: 0, checkInGraceMinutes: 30 };
+    d.events.push(past);
+    d.eventRewards[past.id] = { itemLabel: 'free coffee', limit: 30, venue: 'Epilogue', secretWord: 'CHAI-23', outfitSet: 'latte_night_scholar', message: 'First quest: meet us at {venue}! The first {limit} people to meet us get {item} on us ☕' };
+    const pool = d.users.filter((u) => u.role === 'participant' && u !== demo && (u.campus === 'unc' || (u.campus === 'ncsu' && br() < 0.12)) && !d.eventUnlocks!.some((x) => x.userId === u.id));
+    for (let i = 0; i < 16 && pool.length; i++) {
+      const u = pool.splice(Math.floor(br() * pool.length), 1)[0];
+      const at = iso(-D - 2 * H + (5 + i * 4) * 60_000);
+      d.ledger.push({ id: nextId('led'), userId: u.id, amount: TIER_POINTS[2], source: 'checkin', activityId: 'home_event', refId: past.id, reason: `Checked in: ${past.title}`, createdAt: at });
+      past.attendeeCount++;
+      for (const itemId of ['cozy_beanie', 'latte_aplus', 'moonlit_nook']) d.eventUnlocks!.push({ userId: u.id, itemId, eventId: past.id, at, seenAt: at });
+      if (i < 13) d.rewardPasses!.push({ eventId: past.id, userId: u.id, series: 'latte_night_scholar', passNo: i + 1, createdAt: at, usedAt: at, usedBy: 'self' });
+      if (br() < 0.5) u.look = { ...u.look, hat: 'cozy_beanie', accessory: br() < 0.6 ? 'latte_aplus' : u.look?.accessory };
+    }
+    d.eventCreators[past.id] = d.users[1].id;
+    d.followups ??= {};
+    d.followups[past.id] = { sentAt: iso(-D + 30 * 60_000), attended: past.attendeeCount, missed: 0, emailed: 0 };
+  }
+  // 0034: the default campaign, and a few brand-new players who haven't confirmed their email yet
+  d.campaigns = [{ ...DEFAULT_CAMPAIGN, updatedAt: CYCLE.start }];
+  {
+    const vr = rng(3434);
+    const fresh = d.users.filter((u) => u.role === 'participant' && u !== demo);
+    for (let i = 0; i < 9; i++) {
+      const u = fresh[Math.floor(vr() * fresh.length)];
+      u.emailVerified = false;
+      u.emailVerifiedAt = null;
+    }
   }
   return d;
 }
@@ -1715,7 +1777,7 @@ const PHOTO_IMG = (sky: string, grass: string, variant: number) =>
   );
 
 // Expose for tests
-export const __test = { grantEventReward, expandOutbox, campaignFor, unsubTokenFor, surveyRowsFor, queueEventReminders, queueEventFollowups, queueWrappedNotifications, claimSeasonalFor, wrappedFor, load, pointsOf, rankedParticipants, setSession, addLedger, deliverOutbox, badgesFor, unlocksFor, shoutoutSync, staffStats, staffUnlocksFor, legendaryFor, streakFor };
+export const __test = { queueVerification, grantEventReward, expandOutbox, campaignFor, unsubTokenFor, surveyRowsFor, queueEventReminders, queueEventFollowups, queueWrappedNotifications, claimSeasonalFor, wrappedFor, load, pointsOf, rankedParticipants, setSession, addLedger, deliverOutbox, badgesFor, unlocksFor, shoutoutSync, staffStats, staffUnlocksFor, legendaryFor, streakFor };
 
 // ───────────────────────────── team (chairs only) ─────────────────────────────
 
@@ -1725,7 +1787,7 @@ export async function listTeam(): Promise<TeamMember[]> {
   return load()
     .users.filter((u) => u.role === 'admin' || u.role === 'chair')
     .sort((a, b) => Number(b.role === 'chair') - Number(a.role === 'chair') || a.displayName.localeCompare(b.displayName))
-    .map((u) => ({ id: u.id, displayName: u.displayName, handle: u.handle, email: u.email, role: u.role, emailVerified: true }));
+    .map((u) => ({ id: u.id, displayName: u.displayName, handle: u.handle, email: u.email, role: u.role, emailVerified: isVerified(u) }));
 }
 
 /** SERVER RULE (set_role, 0011): chair-only; chairs can't be demoted here; up to MAX_CHAIRS chairs (confirmed email). */
@@ -1737,8 +1799,9 @@ export async function setRole(userId: string, role: 'participant' | 'admin' | 'c
   const u = d.users.find((x) => x.id === userId);
   if (!u) return fail('not_found', 'Person not found.');
   if (u.role === 'chair') return fail('forbidden', role === 'chair' ? 'That person is already a YACquest Chair.' : 'A YACquest Chair can’t be changed here.');
+  // 0034: staff roles need a confirmed email
+  if ((role === 'chair' || role === 'admin') && !isVerified(u)) return fail('not_verified', `They need to confirm their email before they can be ${role === 'chair' ? 'a YACquest Chair' : 'an admin'}.`);
   if (role === 'chair') {
-    if (u.emailVerified === false) return fail('not_verified', 'They need to confirm their email first.');
     if (d.users.filter((x) => x.role === 'chair').length >= MAX_CHAIRS) return fail('chair_limit', `There are already ${MAX_CHAIRS} YACquest Chairs.`);
   }
   const from = u.role;
@@ -1793,6 +1856,7 @@ export async function transferChair(userId: string): Promise<void> {
   const target = d.users.find((x) => x.id === userId);
   if (!target) return fail('not_found', 'Person not found.');
   if (target.role === 'chair') return fail('chair_limit', 'That person is already a YACquest Chair.');
+  if (!isVerified(target)) return fail('not_verified', 'They need to confirm their email before they can be a YACquest Chair.');
   if (d.users.filter((u) => u.role === 'chair').length > MAX_CHAIRS) return fail('chair_limit', `There are already ${MAX_CHAIRS} YACquest Chairs.`);
   const from = target.role;
   target.role = 'chair';
@@ -1881,6 +1945,7 @@ function campaignFor(kind: string, dedupeKey: string, subject: string, createdAt
   }
   if (kind === 'prize_qualified' || kind === 'prize_info') return { id: `prize:${ref}`, label: subject, sendBefore: null };
   if (kind === 'test') return { id: 'test', label: 'Test emails', sendBefore: null };
+  if (kind === 'verify_email') return { id: 'verify_email', label: 'Email confirmations', sendBefore: sendBeforeFor(kind, { createdAt }) };
   return { id: `${kind}:${dedupeKey}`, label: subject, sendBefore: null };
 }
 
@@ -1900,17 +1965,26 @@ function expandOutbox(o: OutboxRow) {
   const participant = isParticipantEmail(o.kind);
   for (const email of [...new Set(o.toEmails.map((e) => e.trim().toLowerCase()).filter(Boolean))]) {
     const u = d.users.find((x) => x.email.toLowerCase() === email);
+    if (o.kind === 'verify_email') {
+      // 0034: the confirmation email is complete already (transactional: never skipped for "emails off")
+      d.messages.push({
+        id: nextId('msg'), outboxId: o.id, kind: o.kind, campaignId: camp.id, campaignLabel: camp.label, userId: u?.id, email,
+        subject: o.subject, text: o.text, html: o.html, priority: emailPriority(o.kind), sendBefore: camp.sendBefore,
+        status: u && d.emailBounced?.[u.id] ? 'skipped_bouncing' : 'pending', attempts: 0, createdAt: o.createdAt,
+      });
+      continue;
+    }
     const r = renderForRecipient(
       { kind: o.kind, subject: o.subject, text: o.text, html: o.html, campaignId: camp.id },
       u ? { displayName: u.displayName, campus: u.campus, points: pointsOf(u.id), friendCode: u.friendCode } : null,
       { unsubToken: u && participant ? unsubTokenFor(u.id) : null, events: d.events, now: new Date(o.createdAt), goal: PRIZE.goal },
     );
-    const status: EmailStatus = u && participant && !u.emailOptIn ? 'skipped_opted_out' : u && d.emailBounced?.[u.id] ? 'skipped_bouncing' : 'pending';
+    const status: EmailStatus = u && participant && !u.emailOptIn ? 'skipped_opted_out' : u && participant && !isVerified(u) ? 'skipped_unverified' : u && d.emailBounced?.[u.id] ? 'skipped_bouncing' : 'pending';
     d.messages.push({
       id: nextId('msg'), outboxId: o.id, kind: o.kind, campaignId: camp.id, campaignLabel: camp.label, userId: u?.id, email,
       subject: r.subject, text: r.text, html: r.html, priority: emailPriority(o.kind), sendBefore: camp.sendBefore,
       status, attempts: 0, createdAt: o.createdAt,
-      error: status === 'skipped_opted_out' ? 'Email updates are off for this person.' : status === 'skipped_bouncing' ? 'Paused: emails to this address bounce.' : undefined,
+      error: status === 'skipped_opted_out' ? 'Email updates are off for this person.' : status === 'skipped_unverified' ? 'Email not confirmed yet: in-app only.' : status === 'skipped_bouncing' ? 'Paused: emails to this address bounce.' : undefined,
     });
   }
   rollupOutbox(o.id);
@@ -3689,7 +3763,7 @@ function claimSeasonalFor(userId: string, nowMs: number = Date.now()): string[] 
       fresh.push(c.id);
     }
     notify(userId, 'seasonal', seasonalNoticeTitle(h),
-      'Free in Prize → Wardrobe → Seasonal while it lasts, and yours to keep. Tap “About this item” to learn what it celebrates.');
+      'Free in Prize → Wardrobe → Collection while it lasts, and yours to keep. Tap “About this item” to learn what it celebrates.');
   }
   return fresh.sort();
 }
@@ -3960,5 +4034,187 @@ export async function adminEventSurvey(eventId: string): Promise<EventSurveyResu
     responses: rows.length,
     average: rows.length ? Math.round((rows.reduce((n, r) => n + r.rating, 0) / rows.length) * 10) / 10 : null,
     distribution, rows,
+  };
+}
+
+// ───────────────────────────── 0034: quick start (email confirmation) ─────────────────────────────
+
+const randomHex = (n: number) => Array.from({ length: n }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('');
+
+/** SERVER RULE (queue_verification_email, 0034): one single-use link, 7 days, through the email outbox. */
+function queueVerification(user: User, reason: 'signup' | 'resend'): string | null {
+  const d = load();
+  if (isVerified(user)) return null;
+  d.verifyTokens ??= [];
+  const token = randomHex(48);
+  const at = now();
+  d.verifyTokens.push({ token, userId: user.id, email: user.email.toLowerCase(), reason, createdAt: at, expiresAt: new Date(Date.now() + VERIFY.linkDays * 86_400_000).toISOString() });
+  const url = `${APP_URL}#/verify?t=${token}`;
+  const first = user.displayName.trim().split(/\s+/)[0] || 'there';
+  const text = `Hi ${first},\n\nWelcome to YACquest! You can already check in, earn points and play. Tap the link below to confirm this is your email. It locks in your points and makes you eligible for a prize spot.\n\nConfirm my email: ${url}\n\nThe link works for 7 days. If you didn't sign up for YACquest, you can ignore this email.\n\n—\nYACquest · NCSSM Young Alumni Council`;
+  const html = emailHtml('Confirm your YACquest email', `<p>Hi ${esc(first)},</p><p>Welcome to YACquest! You can already check in, earn points and play. Tap the button to confirm this is your email.</p><p><a href="${esc(url)}">Confirm my email</a></p><p>The link works for 7 days.</p>`);
+  enqueueEmail('verify_email', [user.email.toLowerCase()], 'Confirm your YACquest email', text, html, `verify:${token}`);
+  return token;
+}
+
+/** SERVER RULE (verify_email_token, 0034): token only (works logged out); single use; 7 days. */
+export async function verifyEmail(token: string): Promise<{ status: 'verified' | 'already' }> {
+  await delay(250);
+  const d = load();
+  const t = (d.verifyTokens ?? []).find((x) => x.token === token.trim().toLowerCase());
+  if (!/^[0-9a-f]{32,128}$/i.test(token.trim())) return fail('invalid', 'That confirmation link isn’t complete. Open the newest email from YACquest and tap the button again.');
+  if (!t) return fail('invalid', 'That confirmation link isn’t valid. Open the newest email from YACquest, or send a new link from the app.');
+  if (t.usedAt) return fail('used', 'This link was already used, so your email is confirmed. You’re all set!');
+  if (Date.now() > new Date(t.expiresAt).getTime()) return fail('expired', 'This link expired (links work for 7 days). Log in and tap “Resend email” in the red bar at the top for a new one.');
+  const u = d.users.find((x) => x.id === t.userId);
+  if (!u || u.email.toLowerCase() !== t.email) return fail('invalid', 'This link was sent to a different email address. Log in and tap “Resend email” in the red bar at the top for a new one.');
+  t.usedAt = now();
+  if (isVerified(u)) {
+    save();
+    return { status: 'already' };
+  }
+  u.emailVerified = true;
+  u.emailVerifiedAt = now();
+  notify(u.id, 'announcement', 'Email confirmed ✓', 'Your points are locked in and you’re eligible for a prize spot. Thanks!');
+  refreshPrizeRace();
+  save();
+  return { status: 'verified' };
+}
+
+/** SERVER RULE (resend_verification_email, 0034): 3 per hour. */
+export async function resendVerification(): Promise<{ sentTo: string; resendsLeft: number }> {
+  await delay(200);
+  const user = me();
+  if (isVerified(user)) return fail('already_verified', 'Your email is already confirmed.');
+  const hourAgo = Date.now() - 3_600_000;
+  const used = (load().verifyTokens ?? []).filter((x) => x.userId === user.id && x.reason === 'resend' && new Date(x.createdAt).getTime() > hourAgo).length;
+  if (used >= VERIFY.resendsPerHour) return fail('rate_limit', `You can resend ${VERIFY.resendsPerHour} times an hour. Check Spam or Promotions, or try again a bit later.`);
+  queueVerification(user, 'resend');
+  save();
+  return { sentTo: user.email.toLowerCase(), resendsLeft: Math.max(0, VERIFY.resendsPerHour - used - 1) };
+}
+
+/** Admin → Stats: confirmed-email share among participants. */
+export async function adminVerificationStats(): Promise<{ participants: number; verified: number } | null> {
+  await delay(60);
+  requireRole('admin', 'chair');
+  const ps = load().users.filter((u) => u.role === 'participant');
+  return { participants: ps.length, verified: ps.filter((u) => isVerified(u)).length };
+}
+
+// ───────────────────────────── 0034: campaigns + promo ─────────────────────────────
+
+export async function listRewardCampaigns(): Promise<RewardCampaign[]> {
+  await delay(40);
+  me();
+  return campaignsOf().map((c) => ({ ...c }));
+}
+
+/** SERVER RULE (save_reward_campaign, 0034): staff; one campaign per outfit set; logged. */
+export async function saveRewardCampaign(input: Omit<RewardCampaign, 'id' | 'updatedAt'> & { id?: string }): Promise<RewardCampaign> {
+  await delay(120);
+  const admin = requireRole('admin', 'chair');
+  const d = load();
+  const list = campaignsOf(d);
+  const id = (input.id?.trim() || campaignSlug(input.name)).toLowerCase();
+  const err = campaignInputError(input, list, id);
+  if (err) fail(/name/i.test(err) ? 'name' : /outfit/i.test(err) ? 'outfitSet' : /Pass/.test(err) ? 'passName' : /Emoji/.test(err) ? 'emoji' : /message/i.test(err) ? 'message' : 'itemLabel', err);
+  const emoji = input.emoji.trim() || '🎁';
+  const c: RewardCampaign = {
+    id,
+    name: input.name.trim(),
+    itemLabel: input.itemLabel.trim() || 'free coffee',
+    passName: input.passName.trim() || 'Coffee Pass',
+    emoji,
+    outfitSet: input.outfitSet,
+    message: input.message.trim() || `First quest: meet us at {venue}! The first {limit} people to meet us get {item} on us ${emoji}`,
+    updatedAt: now(),
+  };
+  d.campaigns = [...list.filter((x) => x.id !== id), c];
+  logAction('reward_campaign_saved', undefined, { name: c.name, outfitSet: c.outfitSet }, admin);
+  save();
+  return c;
+}
+
+export async function deleteRewardCampaign(id: string): Promise<void> {
+  await delay(80);
+  const admin = requireRole('admin', 'chair');
+  const d = load();
+  const c = campaignsOf(d).find((x) => x.id === id);
+  if (!c) return fail('not_found', 'That campaign wasn’t found.');
+  if (Object.values(d.eventRewards ?? {}).some((r) => r.outfitSet === c.outfitSet)) return fail('in_use', 'Events use this campaign, so it can’t be deleted.');
+  d.campaigns = campaignsOf(d).filter((x) => x.id !== id);
+  logAction('reward_campaign_deleted', undefined, { name: c.name }, admin);
+  save();
+}
+
+/** SERVER RULE (reward_teaser, 0034): anon OK; series whose next event starts within 14 days. No venue, no secret, no counts. */
+export async function rewardTeaser(): Promise<RewardTeaser[]> {
+  await delay(60);
+  const d = load();
+  const t = Date.now();
+  const evs = d.events.filter((e) => inActiveCycle(d, e.id) && d.eventRewards?.[e.id] && new Date(e.endsAt).getTime() > t);
+  const sets = [...new Set(evs.map((e) => d.eventRewards![e.id].outfitSet))];
+  return sets
+    .map((set) => {
+      const list = evs.filter((e) => d.eventRewards![e.id].outfitSet === set).sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+      return { outfitSet: set, name: list[0].title.split(/\s+@\s+/)[0], emoji: campaignOfSet(set)?.emoji ?? '🎁', startsAt: list[0].startsAt, events: list.map((e) => ({ campus: e.campus, startsAt: e.startsAt })) };
+    })
+    .filter((x) => new Date(x.startsAt).getTime() <= t + PROMO.teaserDays * 86_400_000)
+    .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+}
+
+/** SERVER RULE (reward_scoreboard, 0034): the live series (3 days before → 1 day after); participants' check-ins per campus. */
+export async function rewardScoreboard(): Promise<RewardScoreboard | null> {
+  await delay(60);
+  me();
+  const d = load();
+  const t = Date.now();
+  const evs = d.events.filter((e) => inActiveCycle(d, e.id) && d.eventRewards?.[e.id]);
+  const sets = [...new Set(evs.map((e) => d.eventRewards![e.id].outfitSet))]
+    .map((set) => {
+      const list = evs.filter((e) => d.eventRewards![e.id].outfitSet === set).sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+      const last = list.map((e) => e.endsAt).sort().slice(-1)[0];
+      return { set, list, first: list[0].startsAt, last };
+    })
+    .filter((x) => seriesWindowOpen(x.first, x.last, t))
+    .sort((a, b) => a.first.localeCompare(b.first));
+  const s = sets[0];
+  if (!s) return null;
+  const ids = new Set(s.list.map((e) => e.id));
+  const counts = new Map<CampusId, number>();
+  for (const l of d.ledger) {
+    if (l.source !== 'checkin' || !ids.has(l.refId ?? '')) continue;
+    const u = d.users.find((x) => x.id === l.userId);
+    if (!u || u.role !== 'participant') continue;
+    counts.set(u.campus, (counts.get(u.campus) ?? 0) + 1);
+  }
+  const c = campaignOfSet(s.set);
+  return {
+    outfitSet: s.set, name: s.list[0].title.split(/\s+@\s+/)[0], ...(c ? { campaign: c.name } : {}), emoji: c?.emoji ?? '🎁',
+    startsAt: s.first, endsAt: s.last, events: s.list.length,
+    campuses: CAMPUSES.map((x) => ({ campus: x.id, count: counts.get(x.id) ?? 0 })),
+  };
+}
+
+/** SERVER RULE (admin_event_recap, 0034): staff; counts + the first 12 characters to check in (never names). */
+export async function adminEventRecap(eventId: string): Promise<EventRecap> {
+  await delay(80);
+  requireRole('admin', 'chair');
+  const d = load();
+  const e = d.events.find((x) => x.id === eventId);
+  if (!e) return fail('not_found', 'That event no longer exists.');
+  const r = d.eventRewards?.[e.id];
+  const c = r ? campaignOfSet(r.outfitSet) : undefined;
+  const rows = d.ledger.filter((l) => l.source === 'checkin' && l.refId === e.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const venue = r && r.venue !== 'TBD' ? r.venue : e.location.trim() && e.location.trim().toUpperCase() !== 'TBD' ? e.location : e.campus === 'all' ? 'YAC' : CAMPUSES.find((x) => x.id === e.campus)!.name;
+  return {
+    eventId: e.id, title: e.title, location: e.location, venue, campus: e.campus, startsAt: e.startsAt, endsAt: e.endsAt,
+    attendees: Math.max(rows.length, e.attendeeCount),
+    ...(r ? { reward: { itemLabel: r.itemLabel, limit: r.limit, outfitSet: r.outfitSet, given: (d.rewardPasses ?? []).filter((p) => p.eventId === e.id).length, passName: c?.passName ?? 'Coffee Pass', emoji: c?.emoji ?? '☕', ...(c ? { campaign: c.name } : {}) } } : {}),
+    characters: rows.slice(0, 12).flatMap((l) => {
+      const u = d.users.find((x) => x.id === l.userId);
+      return u ? [{ avatar: u.avatar, look: u.look }] : [];
+    }),
   };
 }

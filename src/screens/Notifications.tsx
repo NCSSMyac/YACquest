@@ -35,7 +35,7 @@ const KIND: Record<NotificationKind, { icon: string; color: string }> = {
 /** 0028: a link under these notifications. */
 const LINKS: Partial<Record<NotificationKind, { to: string; text: string }>> = {
   wrapped: { to: '/wrapped', text: 'Open my Wrapped ›' },
-  seasonal: { to: '/prize?tab=wardrobe&cat=seasonal', text: 'See the item and what it honors ›' },
+  seasonal: { to: '/prize?tab=wardrobe&cat=collection', text: 'See the item and what it honors ›' },
 };
 
 const NOTE_STEP = 20;

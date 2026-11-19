@@ -122,14 +122,14 @@
   color: #14213d;
 }
 .cp-card {
-  position: relative; width: min(100%, 440px); box-sizing: border-box; padding: 14px 14px 12px;
-  background: #fffdf6; border: var(--px) solid #0b1640; box-shadow: 0 8px 0 #0b1640;
+  position: relative; width: 100%; box-sizing: border-box; padding: 14px 14px 18px;
+  background: #fffdf6; border: var(--px) solid #0b1640; border-bottom: 0;
   display: flex; flex-direction: column; gap: 8px; text-align: center; overflow: hidden;
 }
 .cp-card::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 8px; background: var(--campus); }
 .cp-head { display: flex; align-items: center; gap: 10px; text-align: left; margin-top: 4px; }
 .cp-yak { flex: none; display: grid; place-items: center; width: 46px; height: 46px; background: var(--gold-300); border: 3px solid #0b1640; }
-.cp-brand { display: block; font-family: var(--font-pixel); font-size: 14px; letter-spacing: 0.5px; color: #0b1640; }
+.cp-brand { display: block; font-family: var(--font-pixel); font-size: 12px; letter-spacing: 0.5px; color: #0b1640; }
 .cp-org { display: block; font-size: 13px; font-weight: 800; color: #4a5672; }
 .cp-item { margin: 4px 0 0; font-family: var(--font-pixel); font-size: clamp(26px, 8.6vw, 38px); line-height: 1.1; color: #0b1640; }
 .cp-no { display: block; margin-top: 4px; font-size: 0.8em; color: var(--campus); }
@@ -180,3 +180,72 @@
   .cp-dot { animation: none; }
 }
 @media (prefers-reduced-motion: reduce) { .rr-confetti, .rr-spin-hint { display: none; } }
+
+/* ───────────── 0034: ticket-style pass, campus glow, coffee confetti, speech bubble, share + friend ───────────── */
+/* Ticket: the card and its stub are two pieces with half-circle notches cut at the perforation; the wrapper's
+   drop-shadow follows the notches. */
+.cp-ticket { width: min(100%, 440px); filter: drop-shadow(0 8px 0 #0b1640); }
+.cp-card, .cp-stub {
+  --notch: 15px;
+  -webkit-mask: radial-gradient(circle var(--notch) at 0 var(--ny), #0000 97%, #000) 0 0 / 51% 100% no-repeat,
+                radial-gradient(circle var(--notch) at 100% var(--ny), #0000 97%, #000) 100% 0 / 51% 100% no-repeat;
+          mask: radial-gradient(circle var(--notch) at 0 var(--ny), #0000 97%, #000) 0 0 / 51% 100% no-repeat,
+                radial-gradient(circle var(--notch) at 100% var(--ny), #0000 97%, #000) 100% 0 / 51% 100% no-repeat;
+}
+.cp-card { --ny: 100%; }
+.cp-stub {
+  --ny: 0%;
+  position: relative; display: flex; align-items: center; gap: 12px; padding: 14px 18px 12px; box-sizing: border-box;
+  background: #fff3c4; color: #14213d; border: var(--px) solid #0b1640; border-top: 0; text-align: left;
+}
+.cp-stub::before { /* perforation */
+  content: ''; position: absolute; left: 18px; right: 18px; top: 0; border-top: 4px dashed #0b1640; opacity: 0.55;
+}
+.cp-stub-col { display: flex; flex-direction: column; min-width: 0; }
+.cp-stub-col.grow { flex: 1; }
+.cp-stub-label { font-family: var(--font-pixel); font-size: 10px; letter-spacing: 0.5px; color: #4a5672; text-transform: uppercase; }
+.cp-stub-no { font-family: var(--font-num); font-weight: 900; font-size: 34px; line-height: 1; color: var(--campus); font-variant-numeric: tabular-nums; }
+.cp-stub-event { font-weight: 900; font-size: 14px; line-height: 1.25; overflow-wrap: anywhere; }
+.cp-stub-of { font-size: 12px; font-weight: 700; color: #4a5672; }
+.cp-barcode { flex: none; display: flex; align-items: stretch; gap: 2px; height: 34px; }
+.cp-barcode i { display: block; background: #0b1640; }
+.cp-head { position: relative; }
+.cp-brand-wrap { flex: 1; min-width: 0; }
+.cp-stamp {
+  flex: none; display: grid; place-items: center; width: 62px; height: 62px; border-radius: 50%; transform: rotate(-12deg);
+  border: 3px dashed var(--campus); color: var(--campus); background: rgba(255, 255, 255, 0.6); position: relative;
+  box-shadow: inset 0 0 0 3px #fffdf6, inset 0 0 0 5px var(--campus);
+}
+.cp-stamp-cup { font-size: 24px; line-height: 1; margin-top: 4px; }
+.cp-stamp-text { font-family: var(--font-pixel); font-size: 6.5px; letter-spacing: 0.3px; line-height: 1.1; text-align: center; margin: -2px 6px 6px; max-width: 50px; overflow: hidden; }
+.cp-wrap.used .cp-stub, .cp-wrap.expired .cp-stub { filter: grayscale(1); background: #d9d9d9; }
+.cp-friend { width: min(100%, 440px); }
+
+/* Reveal: glow in the player's campus color */
+.rr-wrap { --rr-glow: rgba(255, 217, 122, 0.55); --rr-glow-soft: rgba(255, 217, 122, 0.22); }
+.rr-wrap::after {
+  content: ''; position: fixed; inset: 0; pointer-events: none;
+  background: radial-gradient(circle at 50% 30%, var(--rr-glow-soft), transparent 46%);
+}
+.rr-inner { z-index: 1; }
+.rr-turn svg { box-shadow: 0 0 0 3px var(--gold-300), 0 0 30px 10px var(--rr-glow); }
+.rr-pedestal { box-shadow: 0 0 30px 10px var(--rr-glow-soft); }
+.rr-rays { background: repeating-conic-gradient(var(--rr-glow-soft) 0deg 10deg, transparent 10deg 30deg); }
+.rr-sprite { box-shadow: none !important; }
+.rr-sprite svg { display: block; }
+
+/* speech bubble over the spinning character */
+.rr-bubble { position: absolute; z-index: 3; top: -18px; left: 58%; width: max-content; max-width: 170px; font-size: 13px; text-align: left; }
+.rr-bubble::after { left: 18px; }
+.rr-share { width: 100%; min-height: 48px; animation: rr-rise 0.35s steps(5) both; }
+
+/* bring-a-friend card on dark screens */
+.rr-wrap .friend-moment, .cp-wrap .friend-moment { width: 100%; box-sizing: border-box; }
+.rr-wrap .friend-moment.dark { background: rgba(38, 30, 92, 0.94); }
+.cp-wrap .friend-moment.dark { background: rgba(7, 26, 58, 0.85); }
+.rr-wrap .modal-backdrop { z-index: 95; }
+.rr-wrap .modal { color: var(--text); }
+
+@media (prefers-reduced-motion: reduce) {
+  .rr-share { animation: none; }
+}

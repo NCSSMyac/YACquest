@@ -30,8 +30,13 @@ export interface User {
   referredBy?: string; // user id
   createdAt: string;
   emailOptIn: boolean;
-  /** False until the person clicks the link in their confirmation email (live backend only). */
+  /** False until the person confirms their email (0034: the app's own link; before 0034: Supabase's). */
   emailVerified?: boolean;
+  /**
+   * 0034 Quick start: when the email was confirmed. null = not yet (they can play, but can't hold a prize spot,
+   * become staff or get participant emails). undefined = server without 0034 (falls back to emailVerified).
+   */
+  emailVerifiedAt?: string | null;
   /** Equipped unlockable cosmetics (see src/lib/cosmetics.ts). */
   look?: Look;
   /**
@@ -100,6 +105,64 @@ export interface EventReward {
   outfitSet: string;
   /** Countdown message template: {venue} {limit} {item}. */
   message: string;
+  /** 0034: labels from the event's campaign (reward_campaigns, one per outfit set). Missing = Brew & Quest defaults. */
+  emoji?: string;
+  passName?: string;
+  campaignName?: string;
+}
+
+/** 0034: a reusable limited reward campaign (Admin → Events → Campaigns). One per outfit set (= one "series"). */
+export interface RewardCampaign {
+  /** slug, e.g. brew_quest_2026 */
+  id: string;
+  /** "Brew & Quest 2026" */
+  name: string;
+  /** "free coffee" / "free snack" / "free merch" (default for new events) */
+  itemLabel: string;
+  /** "Coffee Pass" / "Snack Pass" */
+  passName: string;
+  emoji: string;
+  /** OUTFIT_SETS id in src/lib/rewardEvents.ts */
+  outfitSet: string;
+  /** Default countdown message for new events: {venue} {limit} {item}. */
+  message: string;
+  updatedAt?: string;
+}
+
+/** 0034 reward_teaser(): an upcoming special series within 14 days (no venue, no secret, no counts; anon OK). */
+export interface RewardTeaser {
+  outfitSet: string;
+  /** "Brew & Quest" */
+  name: string;
+  emoji: string;
+  startsAt: string;
+  events: { campus: CampusId | 'all'; startsAt: string }[];
+}
+
+/** 0034 reward_scoreboard(): participant check-ins per campus for the live series. */
+export interface RewardScoreboard {
+  outfitSet: string;
+  name: string;
+  campaign?: string;
+  emoji: string;
+  startsAt: string;
+  endsAt: string;
+  events: number;
+  campuses: { campus: CampusId; count: number }[];
+}
+
+/** 0034 admin_event_recap(): what the Instagram recap card shows. Characters only, never names. */
+export interface EventRecap {
+  eventId: string;
+  title: string;
+  location: string;
+  venue: string;
+  campus: CampusId | 'all';
+  startsAt: string;
+  endsAt: string;
+  attendees: number;
+  reward?: { itemLabel: string; limit: number; outfitSet: string; given: number; passName: string; emoji: string; campaign?: string };
+  characters: { avatar: AvatarId; look?: Look }[];
 }
 
 /** Staff only: + the secret word the café checks and how many passes went out / were used. */
@@ -129,6 +192,10 @@ export interface CoffeePass {
   validUntil: string;
   usedAt?: string;
   usedBy?: 'self' | 'staff';
+  /** 0034: from the campaign ("Coffee Pass", ☕). Missing = Coffee Pass. */
+  outfitSet?: string;
+  passName?: string;
+  emoji?: string;
 }
 
 /** check_in()'s `reward` for a special event. `pass` ONLY for the person who just got one. */
@@ -337,9 +404,9 @@ export interface WeeklyReport {
   recipients: string[];
 }
 
-export type EmailKind = 'weekly_report' | 'prize_qualified' | 'prize_info' | 'test' | 'announcement' | 'event_reminder' | 'event_followup' | 'wrapped';
+export type EmailKind = 'weekly_report' | 'prize_qualified' | 'prize_info' | 'test' | 'announcement' | 'event_reminder' | 'event_followup' | 'wrapped' | 'verify_email';
 /** 0032: one row per recipient. 'pending' = queued; skipped_* rows were never sent (see EMAIL_STATUS_LABEL). */
-export type EmailStatus = 'pending' | 'sending' | 'sent' | 'failed' | 'bounced' | 'skipped_expired' | 'skipped_opted_out' | 'skipped_bouncing';
+export type EmailStatus = 'pending' | 'sending' | 'sent' | 'failed' | 'bounced' | 'skipped_expired' | 'skipped_opted_out' | 'skipped_bouncing' | 'skipped_unverified';
 
 export interface EmailLogRow {
   id: string;

@@ -34,13 +34,17 @@ function QuestCardModal({ onClose }: { onClose: () => void }) {
 }
 
 /** Preview of a generated story-sized PNG with Share (share sheet) and Save image. */
-export function ShareImage({ make, fileName, alt, shareTitle, onClose, className = '' }: {
+export function ShareImage({ make, fileName, alt, shareTitle, onClose, className = '', sizeLabel = 'Story-sized (1080×1920).', feed = false }: {
   make: () => Promise<Blob>;
   fileName: string;
   alt: string;
   shareTitle: string;
   onClose?: () => void;
   className?: string;
+  /** 0034: e.g. "Feed-sized (1080×1350)." for the recap card. */
+  sizeLabel?: string;
+  /** 0034: 4:5 feed preview instead of a 9:16 story. */
+  feed?: boolean;
 }) {
   const toast = useToast();
   const [img, setImg] = useState<{ url: string; blob: Blob } | null>(null);
@@ -90,11 +94,11 @@ export function ShareImage({ make, fileName, alt, shareTitle, onClose, className
 
   return (
     <div className={`stack ${className}`} style={{ alignItems: 'stretch' }}>
-      <div className="quest-card-preview">
+      <div className={`quest-card-preview${feed ? ' feed' : ''}`}>
         {img ? <img src={img.url} alt={alt} /> : err ? <ErrorText error={err} /> : <Loading lines={4} />}
       </div>
       <p className="muted share-hint" style={{ margin: 0, fontSize: 13 }}>
-        Story-sized (1080×1920). {canShareFile ? 'Share opens your phone’s share sheet (pick Instagram → Story).' : 'Save it, then add it to your Instagram story from your photos.'}
+        {sizeLabel} {canShareFile ? `Share opens your phone’s share sheet (pick Instagram → ${feed ? 'Post' : 'Story'}).` : `Save it, then add it to your Instagram ${feed ? 'feed' : 'story'} from your photos.`}
       </p>
       <div className="btn-row">
         {onClose && <button type="button" className="btn ghost" onClick={onClose}>Close</button>}

@@ -64,7 +64,7 @@ begin
 end $$;
 alter table public.email_outbox
   add constraint email_outbox_kind_check
-  check (kind in ('weekly_report', 'prize_qualified', 'prize_info', 'test', 'announcement', 'event_reminder', 'event_followup', 'wrapped'));
+  check (kind in ('weekly_report', 'prize_qualified', 'prize_info', 'test', 'announcement', 'event_reminder', 'event_followup', 'wrapped')) not valid;  -- 0034: re-run safe when newer kinds (e.g. verify_email) exist; later migrations re-add the full list
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 1. Pace tracker (staff). The projection itself happens in the app (src/lib/pace.ts).

@@ -24,6 +24,8 @@ import type { GlyphName } from '../components/PixelGlyph';
 import { limitToInclude, nextLimit } from '../lib/listing';
 import { Link } from 'react-router-dom';
 import { SURVEY_POINTS, canRate, surveyPath } from '../lib/eventSurvey';
+import { isSeasonalQuest, questOpen, questWindowEnd } from '../lib/promo';
+import { shortDate } from '../lib/seasonal';
 
 type Ev = Awaited<ReturnType<typeof api.listEvents>>[number];
 type TabId = 'events' | 'quests' | 'subs';
@@ -287,8 +289,18 @@ function Quests({ goEvents }: { goEvents: () => void }) {
   return (
     <>
       <p className="muted" style={{ margin: 0, fontSize: 14 }}>Tap a quest to see how it works and send proof.</p>
+      {/* 0034: seasonal quests (Finals Study Break) sit on top while they're open; hidden otherwise */}
+      {ACTIVITIES.filter((a) => isSeasonalQuest(a.id) && questOpen(a.id)).map((a) => {
+        const end = questWindowEnd(a.id);
+        return (
+          <Card key={a.id} glyph="scroll" title="Finals Study Break" className="finals-card" label="Finals season quest" action={<span className="chip finals-chip">📚 Finals season</span>}>
+            <p className="muted" style={{ margin: '0 0 6px', fontSize: 13 }}>Open {end ? `until ${shortDate(end)}` : 'now'} · counts toward your weekly digital quest</p>
+            <QuestRow a={a} goEvents={goEvents} onProof={() => setProof(a)} defaultOpen />
+          </Card>
+        );
+      })}
       {([1, 2, 3] as Tier[]).map((t) => {
-        const list = ACTIVITIES.filter((a) => a.tier === t);
+        const list = ACTIVITIES.filter((a) => a.tier === t && !isSeasonalQuest(a.id));
         return (
           <Card key={t} glyph={TIER_GLYPH[t]} title={TIER_TITLES[t]} label={TIER_TITLES[t]} action={<span className={`chip t${t}`}>+{TIER_POINTS[t]} each</span>}>
             {list.map((a) => (
@@ -305,7 +317,7 @@ function Quests({ goEvents }: { goEvents: () => void }) {
 /** Quests that happen on Instagram get a direct link. */
 const INSTAGRAM_QUESTS = new Set(['follow_ig', 'repost', 'story_game', 'social_tag']);
 
-function QuestRow({ a, goEvents, onProof }: { a: Activity; goEvents: () => void; onProof: () => void }) {
+function QuestRow({ a, goEvents, onProof, defaultOpen }: { a: Activity; goEvents: () => void; onProof: () => void; defaultOpen?: boolean }) {
   const { user } = useAuth();
   const toast = useToast();
   async function copy() {
@@ -320,6 +332,7 @@ function QuestRow({ a, goEvents, onProof }: { a: Activity; goEvents: () => void;
     <Accordion
       flat
       className="quest-row"
+      defaultOpen={defaultOpen}
       title={a.title}
       summary={a.limitLabel}
       // The card heading already names the tier; the chip just shows the points.

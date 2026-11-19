@@ -7,6 +7,7 @@ import { InstallButton, showInstallButton } from '../components/InstallApp';
 import { CampusFrame } from '../components/CampusFrame';
 import { PixelGlyph, type GlyphName } from '../components/PixelGlyph';
 import { StarterTips } from '../components/StarterTips';
+import { OutfitBadge, WardrobeButton } from '../components/WardrobeLink';
 import { TodayChip } from '../components/TodayEvent';
 import { TreasureMap, checkpointsCrossed } from '../components/TreasureMap';
 import { nextStopText } from '../lib/checkpoints';
@@ -25,7 +26,11 @@ import { WRAPPED } from '../config';
 import { wrappedWindow } from '../lib/wrapped';
 import { HomeRewardBanners, useSecondTick } from '../components/RewardBanner';
 import { useEventRewards } from '../lib/useEventRewards';
-import { homePass, outfitSetOfItem, passState } from '../lib/rewardEvents';
+import { homePass, outfitSetOfItem, passLabels, passState } from '../lib/rewardEvents';
+import { HomeMysteryTeaser } from '../components/promo/MysteryTeaser';
+import { CampusScoreboard } from '../components/promo/CampusScoreboard';
+import { SpeechBubble } from '../components/promo/SpeechBubble';
+import { finalsCheer, speaksOnTap, speechLine, wearsCoffee } from '../lib/promo';
 
 const WIDE_QUERY = '(min-width: 820px)';
 
@@ -53,6 +58,14 @@ export default function Home() {
   const isHero = !!useStaffRewards().data?.isHero;
   const userId = data?.user.id;
   const points = data?.points;
+  // 0034: tap your character on Home → now and then it says something
+  const [taps, setTaps] = useState(0);
+  const [bubble, setBubble] = useState<string | null>(null);
+  useEffect(() => {
+    if (!bubble) return;
+    const t = setTimeout(() => setBubble(null), 3800);
+    return () => clearTimeout(t);
+  }, [bubble]);
 
   // Celebrate treasure-map checkpoints crossed since the last time this player saw Home.
   // (Point pop-ups for approvals / adjustments come from NotificationPopups; check-ins pop on Quests.)
@@ -96,11 +109,26 @@ export default function Home() {
     ['calendar', String(d.daysLeft), d.daysLeft === 1 ? 'day left' : 'days left', null, ' in the quest'],
   ];
 
+  function tapAvatar() {
+    const n = taps + 1;
+    setTaps(n);
+    if (speaksOnTap(n)) setBubble(speechLine(wearsCoffee(d.user.look), Date.now() + n));
+  }
+  const cheer = finalsCheer();
+
   const greeting = (
     <header className="dash-hello home-greet" key="hello">
-      <span className="dash-hello-yak home-greet-avatar" aria-hidden="true">
-        <Avatar id={d.user.avatar} look={{ ...d.user.look, background: undefined }} campus={d.user.campus} size={50} hero={isHero} />
-      </span>
+      <div className="home-greet-side">
+        <span className="dash-hello-yak home-greet-avatar talk">
+          <button type="button" className="home-avatar-btn" onClick={tapAvatar} aria-label="Say hi to your character">
+            <Avatar id={d.user.avatar} look={{ ...d.user.look, background: undefined }} campus={d.user.campus} size={50} hero={isHero} title="" />
+          </button>
+          {/* Tapping the character still says hi (0034); the pencil corner opens the Wardrobe. */}
+          <OutfitBadge asLink />
+          {bubble && <SpeechBubble text={bubble} className="home-bubble" />}
+        </span>
+        <WardrobeButton />
+      </div>
       <div className="dash-hello-text">
         <div className="dash-eyebrow">
           {campusName(d.user.campus)} adventurer
@@ -108,6 +136,7 @@ export default function Home() {
         </div>
         <h1 className="dash-hello-title">{greetingFor(new Date().getHours())}, {greetingName(d.user.displayName)}!</h1>
         <p className="dash-pun"><span className="sr-only">Yak of the day: </span>🐂 {yakPunOfTheDay()}</p>
+        {cheer && <p className="dash-pun finals">{cheer}</p>}
       </div>
     </header>
   );
@@ -255,6 +284,8 @@ export default function Home() {
       <NewOutfitLine />
       <HomeRewardBanners />
       {greeting}
+      <HomeMysteryTeaser />
+      <CampusScoreboard />
       {wrappedBanner}
       {wide ? (
         <div className="dash-cols">
@@ -288,9 +319,10 @@ function CoffeePassChip() {
   }, [has]);
   if (!p) return null;
   const st = passState(p, now);
+  const { passName, emoji } = passLabels(p);
   return (
     <Link to={`/coffee-pass?event=${encodeURIComponent(p.eventId)}`} className="today-chip pass-chip">
-      <span className="today-chip-fixed"><span aria-hidden="true">☕ </span>Your Coffee Pass</span>
+      <span className="today-chip-fixed"><span aria-hidden="true">{emoji} </span>Your {passName}</span>
       <b className="today-chip-title">#{p.passNo} · {p.venue}</b>
       <span className="today-chip-cta">{st === 'used' ? 'Used ✓' : 'Show'}<span aria-hidden="true"> ▶</span></span>
     </Link>
@@ -303,7 +335,7 @@ function NewOutfitLine() {
   const set = unseen.map(outfitSetOfItem).find(Boolean);
   if (!set) return null;
   return (
-    <Link to="/prize?tab=wardrobe&cat=limited" className="today-chip outfit-chip">
+    <Link to="/prize?tab=wardrobe&cat=collection" className="today-chip outfit-chip">
       <span aria-hidden="true">🎁</span>
       <span className="outfit-chip-text">Your <b>{set.name}</b> outfit is here — try it on!</span>
       <span className="new-dot inline" aria-hidden="true">NEW</span>

@@ -158,7 +158,7 @@ describe('Brew & Quest check-ins (mock API)', () => {
     // participants never see the secret word or counts in the event list
     asUser(p1);
     const seen = (await api.listEvents('upcoming')).find((e) => e.id === a.id)!;
-    expect(seen.reward).toEqual({ itemLabel: 'free coffee', limit: 2, venue: 'Cup of Joe', outfitSet: 'latte_night_scholar', message: DEFAULT_REWARD_MESSAGE });
+    expect(seen.reward).toEqual({ itemLabel: 'free coffee', limit: 2, venue: 'Cup of Joe', outfitSet: 'latte_night_scholar', message: DEFAULT_REWARD_MESSAGE, emoji: '☕', passName: 'Coffee Pass', campaignName: 'Brew & Quest 2026' });
     expect(JSON.stringify(seen)).not.toMatch(/MOCHA|issued/);
     expect(await code(api.adminEventPasses(a.id))).toBe('forbidden');
 

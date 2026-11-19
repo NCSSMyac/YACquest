@@ -113,8 +113,14 @@ export function untilText(endsOn: string, left: number): string {
   return `Available until ${shortDate(endsOn)} · ${left} days left`;
 }
 
-/** "🌽 New limited-time background for Native American Heritage Month — see what it honors" (same text as the server notification). */
-export const seasonalNoticeTitle = (h: SeasonalHoliday) => `${h.emoji} New limited-time ${h.noun ?? 'item'} for ${h.name} — see what it honors`;
+/**
+ * "🌽 New limited-time background for Native American Heritage Month — see what it honors" /
+ * 0035: "🕎 New limited-time items for Hanukkah — see what they honor" (same text as the server notification).
+ */
+export const seasonalNoticeTitle = (h: SeasonalHoliday) => {
+  const noun = h.noun ?? 'item';
+  return `${h.emoji} New limited-time ${noun} for ${h.name} — see what ${noun.endsWith('s') ? 'they honor' : 'it honors'}`;
+};
 
 /** The window used to order the Wardrobe: the open one, else the next one, else the latest listed. */
 export function sortWindow(h: SeasonalHoliday, at: Date | number = Date.now()): [string, string] | null {
@@ -122,11 +128,16 @@ export function sortWindow(h: SeasonalHoliday, at: Date | number = Date.now()): 
   return openWindow(h, d) ?? nextWindow(h, d) ?? Object.values(h.windows).sort((a, b) => b[0].localeCompare(a[0]))[0] ?? null;
 }
 
-/** Wardrobe order: open now first, then owned, then "Returns next year"; within each, by window start, then name. */
+/**
+ * Wardrobe order: open now first, then owned, then "Returns next year"; within each, by window start, then window
+ * end (0036: most winter windows now start Dec 1 together, so the one ending soonest comes first), then name.
+ */
 export function seasonalOrder(owns: (h: SeasonalHoliday) => boolean, at: Date | number = Date.now()) {
   const rank = (st: SeasonalState) => (st.kind === 'available' ? 0 : st.kind === 'owned' ? 1 : 2);
-  return SEASONAL.map((h) => ({ h, st: holidayState(h, owns(h), at), start: sortWindow(h, at)?.[0] ?? '9999' }))
-    .sort((a, b) => rank(a.st) - rank(b.st) || a.start.localeCompare(b.start) || a.h.name.localeCompare(b.h.name));
+  return SEASONAL.map((h) => {
+    const w = sortWindow(h, at);
+    return { h, st: holidayState(h, owns(h), at), start: w?.[0] ?? '9999', end: w?.[1] ?? '9999' };
+  }).sort((a, b) => rank(a.st) - rank(b.st) || a.start.localeCompare(b.start) || a.end.localeCompare(b.end) || a.h.name.localeCompare(b.h.name));
 }
 
 /** Toast after a claim: one line per newly unlocked holiday. */
@@ -135,8 +146,89 @@ export function claimToasts(claimed: string[]): string[] {
   return SEASONAL.filter((h) => seasonalItems(h.id).some((c) => ids.has(c.id))).map(seasonalNoticeTitle);
 }
 
-/** Label for a holiday that isn't open and isn't owned: "Coming soon" when it's later this year, else "Returns next year". */
-export function returnsLabel(st: SeasonalState, at: Date | number = Date.now()): string {
+/**
+ * 0036: the toasts the app actually shows. Every winter holiday now opens Dec 1, so the first visit in December
+ * unlocks up to 7 holidays at once: more than `max` become one line ("🕎🎄🕯️ New limited-time items for 7 holidays
+ * — see what they honor"); the notifications (one per holiday) still list them all.
+ */
+export function claimToastLines(claimed: string[], max = 2): string[] {
+  const ids = new Set(claimed);
+  const hs = SEASONAL.filter((h) => seasonalItems(h.id).some((c) => ids.has(c.id)));
+  if (hs.length <= max) return hs.map(seasonalNoticeTitle);
+  return [`${hs.map((h) => h.emoji).join('')} New limited-time items for ${hs.length} holidays — see what they honor`];
+}
+
+/** Days from `from` to `to` (both 'YYYY-MM-DD'). */
+const dayDiff = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+
+/** True when one of the holiday's windows already ended earlier in `date`'s calendar year. */
+function endedThisYear(h: SeasonalHoliday, date: string): boolean {
+  const y = Number(date.slice(0, 4));
+  return [y - 1, y, y + 1].some((yr) => {
+    const w = windowFor(h, yr);
+    return !!w && w[1] < date && w[1].slice(0, 4) === date.slice(0, 4);
+  });
+}
+
+/**
+ * Label for a holiday that isn't open and isn't owned: "Coming soon" when its next window starts within 100 days,
+ * or later this calendar year when this year's window hasn't happened yet; otherwise "Returns next year"
+ * ("Returns next winter" for winter holidays). 0036: winter windows start Dec 1, so right after a winter season
+ * (e.g. Feb 2027) the next window is in the same calendar year but ~10 months away: that is not "Coming soon".
+ * Pass the holiday so the label can tell; without it, the 0035 rule (same year or ≤ 100 days) applies.
+ */
+export function returnsLabel(st: SeasonalState, at: Date | number = Date.now(), h?: SeasonalHoliday): string {
   if (st.kind !== 'returns') return '';
-  return st.next && st.next[0].slice(0, 4) === nyDate(at).slice(0, 4) ? 'Coming soon' : 'Returns next year';
+  const later = h?.season === 'winter' ? 'Returns next winter' : 'Returns next year';
+  if (!st.next) return later;
+  const today = nyDate(at);
+  if (dayDiff(today, st.next[0]) <= 100) return 'Coming soon';
+  const sameYear = st.next[0].slice(0, 4) === today.slice(0, 4);
+  return sameYear && !(h && endedThisYear(h, today)) ? 'Coming soon' : later;
+}
+
+// ───────────── 0035 winter ─────────────
+
+const ZODIAC = ['Rat', 'Ox', 'Tiger', 'Rabbit', 'Dragon', 'Snake', 'Horse', 'Goat (also called Sheep or Ram)', 'Monkey', 'Rooster', 'Dog', 'Pig'];
+
+/** Zodiac animal of the lunar year that starts in `year`: 2027 → "Goat (also called Sheep or Ram)", 2028 → "Monkey". */
+export const zodiacFor = (year: number) => ZODIAC[(((year - 2020) % 12) + 12) % 12];
+
+/**
+ * The year a holiday's open (else next, else latest) window celebrates: the year of its LAST day. 0036: the
+ * Lunar New Year window now opens Dec 1, 2026 but celebrates 2027 (Year of the Goat).
+ */
+export function holidayYear(h: SeasonalHoliday, at: Date | number = Date.now()): number {
+  const w = sortWindow(h, at);
+  return w ? Number(w[1].slice(0, 4)) : Number(nyDate(at).slice(0, 4));
+}
+
+/** About text, with data-driven extras (Lunar New Year: "2027 is the Year of the Goat (also called Sheep or Ram)."). */
+export function aboutFor(h: SeasonalHoliday, at: Date | number = Date.now()): string {
+  if (!h.zodiac) return h.about;
+  const y = holidayYear(h, at);
+  return `${h.about} ${y} is the Year of the ${zodiacFor(y)}.`;
+}
+
+/**
+ * The year on the New Year's Party Hat: the year being welcomed. During a New Year's window (0036: Dec 1 – Jan 7)
+ * it is the window's last year (2026–27 window → 2027); otherwise in December → next year, else this year.
+ */
+export function newYearHatYear(at: Date | number = Date.now()): number {
+  const d = nyDate(at);
+  const h = holidayById('new_year');
+  const w = h && openWindow(h, d);
+  if (w) return Number(w[1].slice(0, 4));
+  const y = Number(d.slice(0, 4));
+  return d.slice(5) >= '12-01' ? y + 1 : y;
+}
+
+/** "Winter 2026–27" for a winter holiday (from its open / next window), else ''. */
+export function seasonLabel(h: SeasonalHoliday, at: Date | number = Date.now()): string {
+  if (h.season !== 'winter') return '';
+  const w = sortWindow(h, at);
+  if (!w) return '';
+  const y = Number(w[0].slice(0, 4));
+  const start = Number(w[0].slice(5, 7)) >= 7 ? y : y - 1;
+  return `Winter ${start}–${String(start + 1).slice(2)}`;
 }

@@ -42,7 +42,7 @@ begin
 end $$;
 alter table public.email_outbox
   add constraint email_outbox_kind_check
-  check (kind in ('weekly_report', 'prize_qualified', 'prize_info', 'test', 'announcement', 'event_reminder'));
+  check (kind in ('weekly_report', 'prize_qualified', 'prize_info', 'test', 'announcement', 'event_reminder')) not valid;  -- 0034: re-run safe when newer kinds (e.g. verify_email) exist; later migrations re-add the full list
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 2. Quick game-win award from Who came

@@ -5,6 +5,7 @@
 import { EXTRA_PALETTE } from './art';
 import { SEASONAL_BACKGROUNDS } from './seasonalArt';
 import { LIMITED_BACKGROUNDS, LIMITED_BACKGROUND_VEC } from './limitedArt';
+import { WINTER_BACKGROUNDS, WINTER_BACKGROUND_VEC } from './winterArt';
 import type { VecArt } from './vector';
 
 export const FRAME = { x: -2, y: -4, w: 36, h: 36 } as const;
@@ -290,6 +291,8 @@ const BUILDERS: Record<string, () => Grid> = {
   // 0028 seasonal (seasonalArt.ts)
   ...SEASONAL_BACKGROUNDS,
   ...LIMITED_BACKGROUNDS,
+  // 0035 winter seasonal (vector; grids are fallbacks)
+  ...WINTER_BACKGROUNDS,
 };
 
 const cache = new Map<string, string[]>();
@@ -307,7 +310,7 @@ export function backgroundGrid(id: string): string[] | null {
 
 /** 0034: vector version of a background (drawn instead of its grid), if it has one. */
 export function backgroundVec(id: string): VecArt | undefined {
-  return (LIMITED_BACKGROUND_VEC as Record<string, VecArt>)[id];
+  return (LIMITED_BACKGROUND_VEC as Record<string, VecArt>)[id] ?? WINTER_BACKGROUND_VEC[id];
 }
 
 /** Palette overrides for the campus background. */

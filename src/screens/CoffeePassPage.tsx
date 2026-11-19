@@ -5,6 +5,8 @@
  * "Valid until 2:45 PM" (30 min after check-in), then greys out as "Pass expired". Optional "Slide to mark
  * as used" (with a plain button as the accessible alternative). Nothing for the café to do in the app.
  * Works offline right after check-in: the pass is kept in this browser session (src/lib/rewardEvents.ts).
+ * 0034: ticket style (perforated notches, a stub with the pass number, a little cup stamp), labels from the
+ * campaign ("Coffee Pass" / "Snack Pass"), and the bring-a-friend card underneath.
  */
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
@@ -13,7 +15,8 @@ import { Sprite } from '../components/Sprite';
 import { useSecondTick } from '../components/RewardBanner';
 import { Loading } from '../components/ui';
 import { useAuth } from '../lib/auth';
-import { campusColor, homePass, mergePasses, passState, rememberPass, rememberedPasses } from '../lib/rewardEvents';
+import { campusColor, homePass, mergePasses, passLabels, passState, rememberPass, rememberedPasses, rewardEventName } from '../lib/rewardEvents';
+import { BringFriendCard } from '../components/promo/BringFriend';
 import { QUEST_TZ } from '../lib/todayEvent';
 import { errorMessage } from '../lib/useAsync';
 import type { CoffeePass } from '../types';
@@ -50,7 +53,7 @@ export default function CoffeePassPage() {
       <div className="cp-wrap empty" role="main">
         {!loaded ? <Loading lines={2} /> : (
           <div className="cp-none">
-            <p>No Coffee Pass here. Passes go to the first people who check in at a Brew &amp; Quest event.</p>
+            <p>No pass here. Passes go to the first people who check in at a special reward event like Brew &amp; Quest.</p>
             <Link to="/" className="btn">Back to Home</Link>
           </div>
         )}
@@ -85,40 +88,62 @@ export function PassCard({ pass, name, now, onClose, onUsed }: { pass: CoffeePas
       setBusy(false);
     }
   }
+  const { passName, emoji } = passLabels(pass);
+  const no = String(pass.passNo).padStart(2, '0');
   return (
     <div className={`cp-wrap ${state}`} role="main" style={{ '--campus': color } as CSSProperties}>
-      <div className="cp-card" aria-labelledby="cp-title">
-        <header className="cp-head">
-          <span className="cp-yak" aria-hidden="true"><Sprite id="yak" size={40} /></span>
-          <span>
-            <b className="cp-brand">YACquest Coffee Pass</b>
-            <span className="cp-org">NCSSM Young Alumni Council</span>
+      <div className="cp-ticket">
+        <div className="cp-card" aria-labelledby="cp-title">
+          <div className="cp-head">
+            <span className="cp-yak" aria-hidden="true"><Sprite id="yak" size={40} /></span>
+            <span className="cp-brand-wrap">
+              <b className="cp-brand">YACquest {passName}</b>
+              <span className="cp-org">NCSSM Young Alumni Council</span>
+            </span>
+            <span className="cp-stamp" aria-hidden="true">
+              <span className="cp-stamp-cup">{emoji}</span>
+              <span className="cp-stamp-text">{rewardEventName(pass.eventTitle).toUpperCase()}</span>
+            </span>
+          </div>
+          <h1 id="cp-title" className="cp-item">
+            {pass.item.toUpperCase()} <span className="cp-no">#{pass.passNo} <small>of {pass.limit}</small></span>
+          </h1>
+          <p className="cp-name">{name}</p>
+          <p className="cp-venue">📍 {pass.venue === 'TBD' ? pass.eventTitle : pass.venue}</p>
+          <div className="cp-word-box">
+            <span className="cp-label">Today’s secret word</span>
+            <span className="cp-word">{state === 'valid' ? pass.secretWord ?? '—' : '••••••'}</span>
+          </div>
+          <div className="cp-live" aria-hidden={state !== 'valid' || undefined}>
+            <span className="cp-shimmer" aria-hidden="true" />
+            <span className="cp-dot" aria-hidden="true" />
+            <time className="cp-clock" dateTime={new Date(now).toISOString()} aria-label={`Live clock ${fmtClock(now)}`}>{fmtClock(now)}</time>
+          </div>
+          <p className="cp-valid">
+            {state === 'valid' ? <>Valid until <b>{fmtTime(pass.validUntil)}</b></> : state === 'used' ? <b>Used ✓ {fmtTime(pass.usedAt!)}</b> : <b>Pass expired</b>}
+          </p>
+          {state === 'valid' && <SlideToUse onDone={markUsed} busy={busy} />}
+          {state === 'valid' && (
+            <button type="button" className="btn small ghost cp-mark" onClick={markUsed} disabled={busy}>Mark as used</button>
+          )}
+          {err && <p className="cp-err" role="alert">{err}</p>}
+          <p className="cp-fine">Show this screen at the counter. The barista checks the secret word, the moving clock, and that it isn’t greyed out. One {pass.item.replace(/^free\s+/i, 'free ')} per person.</p>
+        </div>
+        <div className="cp-stub" aria-label={`Pass number ${pass.passNo} of ${pass.limit}`}>
+          <span className="cp-stub-col">
+            <span className="cp-stub-label">Pass no.</span>
+            <b className="cp-stub-no">{no}</b>
           </span>
-        </header>
-        <h1 id="cp-title" className="cp-item">
-          {pass.item.toUpperCase()} <span className="cp-no">#{pass.passNo} <small>of {pass.limit}</small></span>
-        </h1>
-        <p className="cp-name">{name}</p>
-        <p className="cp-venue">📍 {pass.venue === 'TBD' ? pass.eventTitle : pass.venue}</p>
-        <div className="cp-word-box">
-          <span className="cp-label">Today’s secret word</span>
-          <span className="cp-word">{state === 'valid' ? pass.secretWord ?? '—' : '••••••'}</span>
+          <span className="cp-stub-col grow">
+            <span className="cp-stub-event">{pass.eventTitle}</span>
+            <span className="cp-stub-of">{pass.passNo} of {pass.limit} · admit one {emoji}</span>
+          </span>
+          <span className="cp-barcode" aria-hidden="true">
+            {Array.from({ length: 14 }, (_, i) => <i key={i} style={{ width: (pass.passNo * (i + 3) + i * 7) % 3 === 0 ? 4 : 2 }} />)}
+          </span>
         </div>
-        <div className="cp-live" aria-hidden={state !== 'valid' || undefined}>
-          <span className="cp-shimmer" aria-hidden="true" />
-          <span className="cp-dot" aria-hidden="true" />
-          <time className="cp-clock" dateTime={new Date(now).toISOString()} aria-label={`Live clock ${fmtClock(now)}`}>{fmtClock(now)}</time>
-        </div>
-        <p className="cp-valid">
-          {state === 'valid' ? <>Valid until <b>{fmtTime(pass.validUntil)}</b></> : state === 'used' ? <b>Used ✓ {fmtTime(pass.usedAt!)}</b> : <b>Pass expired</b>}
-        </p>
-        {state === 'valid' && <SlideToUse onDone={markUsed} busy={busy} />}
-        {state === 'valid' && (
-          <button type="button" className="btn small ghost cp-mark" onClick={markUsed} disabled={busy}>Mark as used</button>
-        )}
-        {err && <p className="cp-err" role="alert">{err}</p>}
-        <p className="cp-fine">Show this screen at the counter. The barista checks the secret word, the moving clock, and that it isn’t greyed out. One free {pass.item.replace(/^free\s+/i, '')} per person.</p>
       </div>
+      <div className="cp-friend"><BringFriendCard tone="dark" /></div>
       <button type="button" className="btn cp-close" onClick={onClose}>Back to the app</button>
     </div>
   );

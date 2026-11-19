@@ -26,7 +26,8 @@ function vecPaths(art: VecArt, key: string, animate = true) {
           stroke={s.stroke}
           strokeWidth={s.stroke ? s.sw ?? 0.6 : undefined}
           opacity={s.op}
-          style={animate && s.twinkle !== undefined ? twinkleStyle(s.twinkle) : undefined}
+          className={animate && s.steam !== undefined ? 'vec-steam' : undefined}
+          style={animate && s.twinkle !== undefined ? twinkleStyle(s.twinkle) : animate && s.steam !== undefined ? { animationDelay: `${s.steam}s` } : undefined}
         />
       ))}
     </g>
@@ -58,7 +59,7 @@ export function Avatar({
   const layers = composeLayers(id, look);
   const label = title ?? describe(id, look) + (hero ? ', Hero of the Week' : '');
   const svg = (
-    <svg viewBox={`${FRAME.x} ${FRAME.y} ${FRAME.w} ${FRAME.h}`} width={size} height={size} className={className} shapeRendering="crispEdges" role="img" aria-label={label}>
+    <svg viewBox={`${FRAME.x} ${FRAME.y} ${FRAME.w} ${FRAME.h}`} width={size} height={size} className={className} shapeRendering="crispEdges" role={label ? 'img' : undefined} aria-label={label || undefined} aria-hidden={label ? undefined : true}>
       {layers.map((l, i) =>
         l.vec ? (
           <g key={i} transform={`translate(${l.x} ${l.y})`}>{vecPaths(l.vec, `l${i}`)}</g>

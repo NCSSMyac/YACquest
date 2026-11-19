@@ -13,7 +13,9 @@ import { qrDataUrl } from '../../lib/qr';
 import { csvDateTime, csvFilename, downloadCsv, toCsv } from '../../lib/csv';
 import { eventPhase } from '../../lib/adminDashboard';
 import { duplicateForm, editForm, toLocalInput as toLocal, type EventForm as Form, type RewardForm } from '../../lib/duplicateEvent';
-import { BREW_PRESETS, DEFAULT_REWARD_ITEM, DEFAULT_REWARD_MESSAGE, OUTFIT_SETS, applyPreset, fillMessage, genSecretWord, presetTitle, rewardInputError, type BrewPreset } from '../../lib/rewardEvents';
+import { BREW_PRESETS, DEFAULT_REWARD_ITEM, DEFAULT_REWARD_MESSAGE, OUTFIT_SETS, applyPreset, campaignLabels, fillMessage, genSecretWord, presetTitle, rewardInputError, type BrewPreset } from '../../lib/rewardEvents';
+import { CampaignEditor, CampaignsPanel, RecapCardModal, type CampaignDraft } from './Campaigns';
+import type { RewardCampaign } from '../../types';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 import { surveyUrlError } from '../../lib/validate';
 import { checkInClosesAt } from '../../lib/followups';
@@ -45,6 +47,11 @@ export default function Events() {
   const [surveyFor, setSurveyFor] = useState<AdminEvent | null>(null);
   const [dupOf, setDupOf] = useState<string | null>(null);
   const [limit, setLimit] = useState(EVENTS_STEP);
+  // 0034: reusable campaigns + recap cards
+  const camps = useAsync(() => api.listRewardCampaigns().catch(() => [] as RewardCampaign[]), [], { live: true });
+  const campaigns = camps.data ?? [];
+  const [campEdit, setCampEdit] = useState<CampaignDraft | null>(null);
+  const [recapFor, setRecapFor] = useState<YacEvent | null>(null);
   // 0029: admin_list_events returns every cycle. Show this cycle's by default; older cycles behind a toggle.
   const [showOlder, setShowOlder] = useState(false);
   const all = (list.data ?? []) as AdminEvent[];
@@ -128,6 +135,7 @@ export default function Events() {
   return (
     <div className="stack">
       <button className="btn" onClick={() => open('new')}>+ New event</button>
+      <CampaignsPanel campaigns={campaigns} onChanged={() => void camps.reload()} onEdit={setCampEdit} />
       <div className="tabs" role="tablist" aria-label="Which events">
         <button role="tab" aria-selected={tab === 'current'} onClick={() => { setTab('current'); setLimit(EVENTS_STEP); }}>Upcoming ({current.length})</button>
         <button role="tab" aria-selected={tab === 'past'} onClick={() => { setTab('past'); setLimit(EVENTS_STEP); }}>Past ({past.length})</button>
@@ -148,7 +156,7 @@ export default function Events() {
                   <strong style={{ fontSize: 17, minWidth: 0, overflowWrap: 'anywhere' }}>{e.title}</strong>
                   <span className="row" style={{ flex: 'none', gap: 6 }}>
                     {e.olderCycle && <span className="chip neutral">Older cycle</span>}
-                    {e.reward && <span className="chip bq-chip" title={`Secret word ${e.reward.secretWord ?? ''}`}>☕ {e.reward.issued ?? 0}/{e.reward.limit} passes</span>}
+                    {e.reward && <span className="chip bq-chip" title={`Secret word ${e.reward.secretWord ?? ''}`}>{campaignLabels(e.reward.outfitSet, campaigns).emoji} {e.reward.issued ?? 0}/{e.reward.limit} passes</span>}
                     <span className={`chip ${p === 'LIVE' ? 'approved' : p === 'Upcoming' ? 'pending' : 'neutral'}`}>{p}</span>
                   </span>
                 </div>
@@ -161,6 +169,12 @@ export default function Events() {
                   {e.surveyUrl && <><br />📝 Survey: <a href={e.surveyUrl} target="_blank" rel="noreferrer noopener" className="adm-survey">{e.surveyUrl.replace(/^https?:\/\//i, '')}</a></>}
                 </div>
                 {p === 'Past' && <FollowupRow e={e} onSent={() => void list.reload()} />}
+                {/* 0034: Instagram recap card (feed + story), characters only */}
+                {p === 'Past' && (
+                  <button type="button" className="btn small blue block recap-btn" onClick={() => setRecapFor(e)}>
+                    📸 Recap card<span className="sr-only"> for {e.title}</span>
+                  </button>
+                )}
                 {/* 0030: in-app survey results (shown once the event has started; hidden on servers without 0030) */}
                 {p !== 'Upcoming' && e.surveyCount !== undefined && (
                   <button type="button" className="btn small ghost block survey-btn" onClick={() => setSurveyFor(e)}>
@@ -197,6 +211,11 @@ export default function Events() {
           </Suspense>
         )}
       </Modal>
+      {recapFor && <RecapCardModal e={recapFor} onClose={() => setRecapFor(null)} />}
+      {campEdit && (
+        <CampaignEditor draft={campEdit} campaigns={campaigns} onClose={() => setCampEdit(null)}
+          onSaved={() => { setCampEdit(null); void camps.reload(); }} />
+      )}
       <Modal open={!!qrFor} onClose={() => setQrFor(null)} title="Check-in QR code">
         {qrFor && <CheckInQr e={qrFor} onClose={() => setQrFor(null)} />}
       </Modal>
@@ -239,7 +258,7 @@ export default function Events() {
               <small className="muted">Sent in the automatic “Thanks for coming” follow-up after check-in closes. Filling it out counts as the Feedback Survey quest.</small>
               {form.surveyUrl.trim() && surveyUrlError(form.surveyUrl) && <ErrorText error={surveyUrlError(form.surveyUrl)} />}
             </label>
-            <SpecialRewardSection form={form} setForm={setForm} />
+            <SpecialRewardSection form={form} setForm={setForm} campaigns={campaigns} onSaveAsCampaign={(d) => setCampEdit(d)} />
             <label className="field">
               <span>Event password</span>
               <div className="row">
@@ -282,8 +301,15 @@ function BrewPresetPicker({ onPick }: { onPick: (p: BrewPreset) => void }) {
 }
 
 /** 0033 "Special reward event" (toggle): limited free item, limit, venue, staff-only secret word, outfit, message. */
-function SpecialRewardSection({ form, setForm }: { form: Form; setForm: React.Dispatch<React.SetStateAction<Form | null>> }) {
+function SpecialRewardSection({ form, setForm, campaigns, onSaveAsCampaign }: { form: Form; setForm: React.Dispatch<React.SetStateAction<Form | null>>; campaigns: RewardCampaign[]; onSaveAsCampaign: (d: CampaignDraft) => void }) {
   const r = form.reward;
+  const labels = campaignLabels(r?.outfitSet, campaigns);
+  const current = campaigns.find((c) => c.outfitSet === r?.outfitSet);
+  // 0034: picking a campaign fills the free item, outfit and countdown message (venue/limit/secret stay)
+  const pickCampaign = (id: string) => {
+    const c = campaigns.find((x) => x.id === id);
+    if (c) setForm((f) => (f && f.reward ? { ...f, reward: { ...f.reward, itemLabel: c.itemLabel, outfitSet: c.outfitSet, message: c.message } } : f));
+  };
   const setR = <K extends keyof RewardForm>(k: K, v: RewardForm[K]) => setForm((f) => (f && f.reward ? { ...f, reward: { ...f.reward, [k]: v } } : f));
   const preview = r ? fillMessage(r.message || DEFAULT_REWARD_MESSAGE, { venue: r.venue || 'TBD', limit: Number(r.limit) || 0, itemLabel: r.itemLabel || DEFAULT_REWARD_ITEM }) : '';
   return (
@@ -299,10 +325,19 @@ function SpecialRewardSection({ form, setForm }: { form: Form; setForm: React.Di
             )
           }
         />
-        <span><b>☕ Special reward event</b> <span className="muted">· limited free item for the first N people (Brew &amp; Quest)</span></span>
+        <span><b>🎁 Special reward event</b> <span className="muted">· limited free item for the first N people (Brew &amp; Quest, or any campaign)</span></span>
       </label>
       {r && (
         <div className="stack" style={{ gap: 10 }}>
+          {campaigns.length > 0 && (
+            <label className="field">
+              <span>Campaign</span>
+              <select value={current?.id ?? ''} onChange={(e) => pickCampaign(e.target.value)}>
+                {!current && <option value="">Custom (not saved as a campaign)</option>}
+                {campaigns.map((c) => <option key={c.id} value={c.id}>{c.emoji} {c.name}</option>)}
+              </select>
+            </label>
+          )}
           <div className="grid-2">
             <label className="field"><span>Limited free item</span><input className="input" value={r.itemLabel} maxLength={40} onChange={(e) => setR('itemLabel', e.target.value)} placeholder={DEFAULT_REWARD_ITEM} /></label>
             <label className="field"><span>Limit</span><input className="input" type="number" inputMode="numeric" min={1} max={500} value={r.limit} onChange={(e) => setR('limit', e.target.value)} required /></label>
@@ -327,8 +362,14 @@ function SpecialRewardSection({ form, setForm }: { form: Form; setForm: React.Di
             <small className="muted">Preview: “{preview}”</small>
           </label>
           <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-            Everyone who checks in gets the event points + the limited outfit. The first {Number(r.limit) || 'N'} participants (staff don’t count) get a Coffee Pass, valid 30 minutes, one per person across all Brew &amp; Quest events. Participants never see how many are left.
+            Everyone who checks in gets the event points + the limited outfit. The first {Number(r.limit) || 'N'} participants (staff don’t count) get a {labels.passName}, valid 30 minutes, one per person across all {current ? current.name : 'events with this outfit'}. Participants never see how many are left.
           </p>
+          {!current && (
+            <button type="button" className="btn small ghost" style={{ alignSelf: 'flex-start' }}
+              onClick={() => onSaveAsCampaign({ name: '', itemLabel: r.itemLabel || DEFAULT_REWARD_ITEM, passName: 'Reward Pass', emoji: '🎁', outfitSet: r.outfitSet, message: r.message || DEFAULT_REWARD_MESSAGE })}>
+              💾 Save as campaign
+            </button>
+          )}
         </div>
       )}
     </fieldset>

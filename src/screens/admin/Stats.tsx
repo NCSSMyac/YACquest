@@ -87,18 +87,22 @@ export default function Stats() {
 }
 
 function Kpis({ d }: { d: AdminStats }) {
-  const tiles: [GlyphName, number, string][] = [
-    ['people', d.totals.participants, 'Participants'],
-    ['bolt', d.totals.active30, 'Active (30 days)'],
-    ['calendar', d.totals.checkins, 'Check-ins'],
-    ['coin', d.totals.points, 'Points earned'],
+  // 0034: share of participants who confirmed their email (prize spots need it). Hidden on servers without 0034.
+  const v = useAsync(() => api.adminVerificationStats().catch(() => null), []);
+  const pct = v.data && v.data.participants ? Math.round((100 * v.data.verified) / v.data.participants) : null;
+  const tiles: [GlyphName, string, string][] = [
+    ['people', d.totals.participants.toLocaleString(), 'Participants'],
+    ['bolt', d.totals.active30.toLocaleString(), 'Active (30 days)'],
+    ['calendar', d.totals.checkins.toLocaleString(), 'Check-ins'],
+    ['coin', d.totals.points.toLocaleString(), 'Points earned'],
+    ...(pct !== null ? [['mail', `${pct}%`, `Email confirmed (${v.data!.verified}/${v.data!.participants})`] as [GlyphName, string, string]] : []),
   ];
   return (
     <section className="kpi-grid stats-kpis" aria-label="This cycle at a glance">
       {tiles.map(([g, n, l]) => (
         <div key={l} className="panel kpi">
           <PixelGlyph name={g} size={22} />
-          <div className="kpi-num">{n.toLocaleString()}</div>
+          <div className="kpi-num">{n}</div>
           <div className="kpi-lbl">{l}</div>
         </div>
       ))}
