@@ -4,6 +4,7 @@
  * server is the real gatekeeper; this just gives instant, friendly messages.
  */
 import type { AnnouncementInput, ClaimContact } from '../types';
+import { unknownFillIns } from './emailFill';
 
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -38,6 +39,9 @@ export function announcementError(a: AnnouncementInput): { code: string; message
   if (!a.body.trim() || a.body.trim().length > ANNOUNCEMENT_LIMITS.bodyMax) return { code: 'body', message: 'Message: 1–1000 characters.' };
   if (a.audience === 'campus' && !a.campus) return { code: 'campus', message: 'Pick a campus.' };
   if (a.audience === 'user' && !a.userId) return { code: 'user', message: 'Pick the person to message.' };
+  // 0032: every {token} must be a fill-in (same check as email_unknown_tokens in the database)
+  const unknown = unknownFillIns(`${a.title} ${a.body}`);
+  if (unknown.length) return { code: 'fill_in', message: `Fill in or remove: ${unknown.map((u) => `{${u}}`).join(' ')}. Use Insert ▾ for fill-ins.` };
   return null;
 }
 

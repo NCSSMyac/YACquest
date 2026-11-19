@@ -36,4 +36,19 @@ export const BADGES: BadgeDef[] = [
   { id: 'hot_streak', name: 'Hot Streak', how: 'Check in at events 3 months in a row.', flavor: 'You’re on fire!' },
 ];
 
-export const badgeById = (id: string) => BADGES.find((b) => b.id === id);
+/**
+ * 0033: special / limited badges, shown in their own "Special badges" group. They are NOT part of the
+ * 16 core badges (posters, Rules and "x / 16 collected" keep counting BADGES only).
+ * The server lists Early Bird as the 17th row of badges_for() (0033_brew_and_quest.sql).
+ */
+export const SPECIAL_BADGES: BadgeDef[] = [
+  {
+    id: 'early_bird',
+    name: 'Early Bird ☕',
+    how: 'One of the first to meet us at a Brew & Quest — coffee was on us!',
+    flavor: 'One of the first to meet us at a Brew & Quest — coffee was on us!',
+  },
+];
+
+export const badgeById = (id: string) => BADGES.find((b) => b.id === id) ?? SPECIAL_BADGES.find((b) => b.id === id);
+export const isSpecialBadge = (id: string) => SPECIAL_BADGES.some((b) => b.id === id);

@@ -3,6 +3,7 @@
  * The server (cosmetics table + my_unlocks() + equip_look() in 0009_quest_extras.sql; Sparkle Aura at 300 since 0014, re-set in 0018) mirrors
  * these ids and rules and is the real gatekeeper; keep both in sync.
  * 0028: seasonal items (rule 'seasonal', windows in SEASONAL in config.ts, seasonal_windows in the database).
+ * 0033: limited-edition event items (rule 'event' = outfit set id; event_unlocks in the database).
  */
 import type { SeasonalHolidayId } from '../config';
 import type { CosmeticSlot } from '../types';
@@ -13,7 +14,9 @@ export type UnlockRule =
   | { type: 'badge'; id: string }
   | { type: 'badges'; min: number }
   /** 0028: free during the holiday's window (SEASONAL in config.ts), owned forever once claimed. */
-  | { type: 'seasonal'; id: SeasonalHolidayId };
+  | { type: 'seasonal'; id: SeasonalHolidayId }
+  /** 0033: limited-edition outfit set from a special reward event (Brew & Quest). Owned forever, never available otherwise. */
+  | { type: 'event'; id: string };
 
 export interface CosmeticDef {
   id: string;
@@ -53,6 +56,10 @@ export const COSMETICS: CosmeticDef[] = [
   { id: 'autumn_harvest', slot: 'background', name: 'Autumn Harvest', rule: { type: 'seasonal', id: 'thanksgiving' } },
   // 0031 Native American Heritage Month (November): a background, never a costume.
   { id: 'three_sisters', slot: 'background', name: 'Three Sisters Garden', rule: { type: 'seasonal', id: 'heritage_month' } },
+  // 0033 Limited edition: "Latte Night Scholar" (Brew & Quest 2026). Only by checking in at a Brew & Quest event.
+  { id: 'cozy_beanie', slot: 'hat', name: 'Cozy Knit Beanie', rule: { type: 'event', id: 'latte_night_scholar' } },
+  { id: 'latte_aplus', slot: 'accessory', name: 'A+ Latte', rule: { type: 'event', id: 'latte_night_scholar' } },
+  { id: 'moonlit_nook', slot: 'background', name: 'Moonlit Study Nook', rule: { type: 'event', id: 'latte_night_scholar' } },
 ];
 
 export const cosmeticById = (id?: string) => (id ? COSMETICS.find((c) => c.id === id) : undefined);

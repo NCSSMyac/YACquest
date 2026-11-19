@@ -19,6 +19,7 @@ import { isNewAdventurer } from '../lib/starterTips';
 import { WardrobePanel } from '../components/cosmetics/WardrobePanel';
 import { QuestCardButton } from '../components/QuestCard';
 import { takeNew } from '../components/cosmetics/seen';
+import { useEventRewards } from '../lib/useEventRewards';
 import { useStaffRewards } from '../lib/useStaffRewards';
 import { staffBadgeById, staffCosmeticById } from '../lib/staffRewards';
 
@@ -43,6 +44,7 @@ export default function Prize() {
   const unlocks = useAsync(api.myUnlocks, [], { live: true });
   // Staff only (0020): null for participants — no API call, nothing rendered.
   const staff = useStaffRewards().data;
+  const newOutfit = useEventRewards().unseen.length > 0;
 
   // One-time celebrations for badges / looks earned since this player last looked (first visit ever: none).
   const userId = user?.id;
@@ -57,7 +59,8 @@ export default function Prize() {
     if (!userId || unlockIds === undefined) return;
     // Free looks aren't news.
     // (0028: seasonal items get their own notification + toast instead.)
-    const ids = unlockIds ? unlockIds.split(',').filter((id) => !['free', 'seasonal'].includes(cosmeticById(id)?.rule.type ?? '')) : [];
+    // (0033: limited event outfits get the reveal takeover + NEW dots instead.)
+    const ids = unlockIds ? unlockIds.split(',').filter((id) => !['free', 'seasonal', 'event'].includes(cosmeticById(id)?.rule.type ?? '')) : [];
     for (const id of takeNew('looks', userId, ids))
       celebrate({ title: 'New look unlocked!', subtitle: cosmeticById(id)?.name ?? id, cosmeticId: id, size: 'big' });
   }, [userId, unlockIds, celebrate]);
@@ -86,6 +89,7 @@ export default function Prize() {
         {HUB_TABS.map((t) => (
           <button key={t.id} role="tab" id={`hub-tab-${t.id}`} aria-selected={tab === t.id} aria-controls="hub-panel" onClick={() => select(t.id)}>
             {t.label}
+            {t.id === 'wardrobe' && newOutfit && tab !== 'wardrobe' && <span className="new-dot inline">NEW<span className="sr-only"> outfit</span></span>}
           </button>
         ))}
       </div>

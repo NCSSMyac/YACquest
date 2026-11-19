@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import * as api from '../../api';
 import { CAMPUSES, campusName, type CampusId } from '../../config';
@@ -9,9 +9,11 @@ import { fmtDateTime } from '../../lib/format';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 import { ANNOUNCEMENT_LIMITS, announcementError } from '../../lib/validate';
 import type { AnnouncementAudience, AnnouncementInput, AnnouncementTemplate, YacEvent } from '../../types';
-import { BUILTIN_TEMPLATES, applyTemplate, eventDateText, placeholders, type TemplateDef, type TemplateVars } from '../../lib/announceTemplates';
+import { BUILTIN_TEMPLATES, applyTemplate, eventDateText, type TemplateDef, type TemplateVars } from '../../lib/announceTemplates';
 import { eventPhase } from '../../lib/adminDashboard';
 import { monthName } from '../../lib/format';
+import { FILL_INS, SAMPLE_PERSON, fillValues, greetingLine, renderFillIns, unknownFillIns, type FillInToken, type FillPerson } from '../../lib/emailFill';
+import { startedEventsMentioned } from '../../lib/emailStats';
 
 /** Admins send a custom message to everyone, one campus, or one person (in-app + optional email). */
 export default function Announce() {
@@ -40,7 +42,37 @@ export default function Announce() {
   );
   const sent = useAsync(() => api.listAnnouncements(15), [], { live: true });
   const [tplOpen, setTplOpen] = useState(false);
-  const left = placeholders(`${title} ${body}`);
+  // 0032: anything in {braces} that isn't a fill-in (template leftovers like {event}, typos) blocks sending
+  const left = unknownFillIns(`${title} ${body}`);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const lastField = useRef<'title' | 'body'>('body');
+  const allEvents = useAsync(() => api.adminListEvents(), []);
+  const started = useMemo(() => {
+    const list = allEvents.data ?? [];
+    const now = new Date();
+    return startedEventsMentioned(`${title} ${body}`, list, now).filter(
+      (e) => !list.some((x) => x.title.trim().toLowerCase() === e.title.trim().toLowerCase() && new Date(x.startsAt) > now),
+    );
+  }, [allEvents.data, title, body]);
+
+  /** Insert ▾: puts {token} at the cursor of the field used last (message by default). */
+  function insertToken(token: FillInToken) {
+    const isTitle = lastField.current === 'title';
+    const el = isTitle ? titleRef.current : bodyRef.current;
+    const cur = isTitle ? title : body;
+    const max = isTitle ? ANNOUNCEMENT_LIMITS.titleMax : ANNOUNCEMENT_LIMITS.bodyMax;
+    const tok = `{${token}}`;
+    const start = el?.selectionStart ?? cur.length;
+    const end = el?.selectionEnd ?? cur.length;
+    const next = (cur.slice(0, start) + tok + cur.slice(end)).slice(0, max);
+    (isTitle ? setTitle : setBody)(next);
+    requestAnimationFrame(() => {
+      el?.focus();
+      const pos = Math.min(next.length, start + tok.length);
+      el?.setSelectionRange(pos, pos);
+    });
+  }
 
   function pickTemplate(t: TemplateDef, vars: TemplateVars) {
     if ((title.trim() || body.trim()) && !window.confirm('Replace the title and message with this template?')) return;
@@ -93,18 +125,19 @@ export default function Announce() {
               Templates {tplOpen ? '▴' : '▾'}
             </button>
             <SaveTemplate title={title} body={body} />
+            <InsertMenu onPick={insertToken} />
           </div>
           {tplOpen && <TemplatePanel onPick={pickTemplate} onClose={() => setTplOpen(false)} />}
           <label className="field">
             <span>Title</span>
-            <input className="input" value={title} maxLength={ANNOUNCEMENT_LIMITS.titleMax} onChange={(e) => setTitle(e.target.value)} placeholder="Pickleball is Sunday!" required />
+            <input ref={titleRef} className="input" value={title} maxLength={ANNOUNCEMENT_LIMITS.titleMax} onFocus={() => (lastField.current = 'title')} onChange={(e) => setTitle(e.target.value)} placeholder="Pickleball is Sunday!" required />
           </label>
           <label className="field">
             <span>Message</span>
-            <textarea value={body} maxLength={ANNOUNCEMENT_LIMITS.bodyMax} onChange={(e) => setBody(e.target.value)} placeholder="Courts open at 2pm. The check-in password will be announced there." required />
+            <textarea ref={bodyRef} value={body} maxLength={ANNOUNCEMENT_LIMITS.bodyMax} onFocus={() => (lastField.current = 'body')} onChange={(e) => setBody(e.target.value)} placeholder="Hi {first_name}! Courts open at 2pm. The check-in password will be announced there." required />
             <small className="muted">{body.length}/{ANNOUNCEMENT_LIMITS.bodyMax}</small>
             {left.length > 0 && (
-              <small className="tpl-left">Still to fill in: {left.map((p) => `{${p}}`).join(' ')}</small>
+              <small className="tpl-left" role="status">Fill in or remove before sending: {left.map((p) => `{${p}}`).join(' ')} (not a fill-in)</small>
             )}
           </label>
 
@@ -170,6 +203,14 @@ export default function Announce() {
             </span>
           </label>
 
+          {started.length > 0 && (
+            <p className="fill-warn" role="status">
+              Heads up: this mentions {started.map((e) => `“${e.title}”`).join(', ')}, which already started. People may read it after the event.
+            </p>
+          )}
+
+          <FillPreview title={title} body={body} sendEmail={sendEmail} person={audience === 'user' ? person : null} events={allEvents.data ?? []} />
+
           <ErrorText error={err} />
           <button className="btn" disabled={busy}>Review and send</button>
         </form>
@@ -204,6 +245,12 @@ export default function Announce() {
             <strong>{title}</strong>
             <p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap' }}>{body}</p>
           </div>
+          {started.length > 0 && (
+            <p className="fill-warn" style={{ margin: 0 }}>
+              It mentions {started.map((e) => `“${e.title}”`).join(', ')}, which already started. Send anyway?
+            </p>
+          )}
+          {sendEmail && <p className="muted" style={{ margin: 0, fontSize: 14 }}>Each person gets their own email (“Hi {'{first_name}'},” and fill-ins filled in for them).</p>}
           <p className="muted" style={{ margin: 0 }}>Messages can’t be unsent.</p>
           <div className="btn-row">
             <button className="btn ghost" onClick={() => setConfirm(false)}>Cancel</button>
@@ -318,5 +365,94 @@ function TemplatePanel({ onPick, onClose }: { onPick: (t: TemplateDef, vars: Tem
       )}
       <button type="button" className="dash-more" onClick={onClose}>Close templates</button>
     </div>
+  );
+}
+
+/** 0032: Insert ▾ — fill-ins filled per person ({first_name}, {campus_pun}, …). */
+function InsertMenu({ onPick }: { onPick: (t: FillInToken) => void }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => { if (!wrap.current?.contains(e.target as Node)) setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+  return (
+    <div className="fill-menu" ref={wrap}>
+      {/* mousedown keeps the cursor where it was in the title / message */}
+      <button type="button" className="btn small blue" aria-expanded={open} aria-controls="fill-list" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen((v) => !v)}>
+        Insert {open ? '▴' : '▾'}
+      </button>
+      {open && (
+        <ul id="fill-list" className="fill-list" aria-label="Fill-ins">
+          {FILL_INS.map((f) => (
+            <li key={f.token}>
+              <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { onPick(f.token); setOpen(false); }}>
+                <span><code>{`{${f.token}}`}</code> {f.label}</span>
+                <small>{f.hint}</small>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+const PREVIEW_PEOPLE: (FillPerson & { key: string })[] = [
+  { key: 'duke', ...SAMPLE_PERSON },
+  { key: 'unc', displayName: 'Ben K.', campus: 'unc', points: 245, friendCode: 'YAC-M3RT' },
+  { key: 'ncsu', displayName: 'Chloe W.', campus: 'ncsu', points: 40, friendCode: 'YAC-Q8ZP' },
+];
+
+/** Live preview for one person: what their copy looks like (in the app, and the email if it's on). */
+function FillPreview({ title, body, sendEmail, person, events }: {
+  title: string;
+  body: string;
+  sendEmail: boolean;
+  person: api.AdminUserRow | null;
+  events: YacEvent[];
+}) {
+  const [who, setWho] = useState('duke');
+  const p: FillPerson = person
+    ? { displayName: person.displayName, campus: person.campus, points: person.points, friendCode: 'YAC-????' }
+    : PREVIEW_PEOPLE.find((x) => x.key === who) ?? SAMPLE_PERSON;
+  const values = fillValues(p, { events, seedKey: 'preview' });
+  const t = renderFillIns(title.trim() || 'Your title', values);
+  const b = renderFillIns(body.trim() || 'Your message…', values);
+  return (
+    <section className="stack" style={{ gap: 6 }} aria-label="Preview">
+      <div className="spread" style={{ flexWrap: 'wrap', gap: 6 }}>
+        <h3 className="dash-sub" style={{ margin: 0 }}>Preview{sendEmail ? ' (email)' : ' (in the app)'}</h3>
+        {person ? (
+          <small className="muted">as {person.displayName}</small>
+        ) : (
+          <label className="row" style={{ gap: 6, fontSize: 13 }}>
+            <span>as</span>
+            <select value={who} onChange={(e) => setWho(e.target.value)} aria-label="Preview as">
+              {PREVIEW_PEOPLE.map((x) => <option key={x.key} value={x.key}>{x.displayName} · {campusName(x.campus!)}</option>)}
+            </select>
+          </label>
+        )}
+      </div>
+      {sendEmail ? (
+        <div className="email-preview">
+          <div className="email-preview-head"><small>YACquest</small><b>{t}</b></div>
+          <div className="email-preview-body">{greetingLine(p.displayName)}{'\n\n'}{b}</div>
+          <div className="email-preview-foot">
+            You’re getting this because you have YACquest emails on. <u>Unsubscribe in one click</u> · Manage in the app (Me → Settings)
+          </div>
+        </div>
+      ) : (
+        <div className="panel flat" style={{ padding: 10 }}>
+          <strong style={{ overflowWrap: 'anywhere' }}>{t}</strong>
+          <p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{b}</p>
+        </div>
+      )}
+      <small className="muted">The {'{campus_pun}'} line rotates with each send.</small>
+    </section>
   );
 }

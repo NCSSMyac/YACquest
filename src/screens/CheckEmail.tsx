@@ -4,6 +4,7 @@ import * as api from '../api';
 import { Sprite } from '../components/Sprite';
 import { ErrorText, Panel, useToast } from '../components/ui';
 import { errorMessage } from '../lib/useAsync';
+import { YAC_SENDER_EMAIL } from '../config';
 
 const COOLDOWN_S = 60;
 
@@ -42,14 +43,13 @@ export default function CheckEmail() {
     <div className="app-shell" role="main" style={{ paddingTop: 24 }}>
       <div className="stack">
         <div className="center"><Sprite id="yak" size={72} className="bob" /></div>
+        <h1 className="sr-only">Check your inbox</h1>
         <Panel title="Check your inbox">
           <div className="stack">
             <p style={{ margin: 0 }} role="status">
               We sent a confirmation link to {state.email ? <b className="wrap-anywhere">{state.email}</b> : 'your email'}. Tap it to finish creating your account, then you can log in.
             </p>
-            <p className="muted" style={{ margin: 0 }}>
-              Can’t find it? Check your spam or promotions folder. The email comes from Supabase on behalf of YACquest.
-            </p>
+            <SpamTip />
             {!state.email && (
               <label className="field">
                 <span>Email</span>
@@ -64,6 +64,24 @@ export default function CheckEmail() {
           </div>
         </Panel>
       </div>
+    </div>
+  );
+}
+
+/** 0032: helps the first emails land in the inbox (free Gmail senders often start in Spam/Promotions). */
+export function SpamTip({ sender = YAC_SENDER_EMAIL }: { sender?: string }) {
+  return (
+    <div className="spam-tip" role="note">
+      <p style={{ margin: 0 }}>
+        <b>Can’t find it?</b> Check <b>Spam</b> or <b>Promotions</b> and tap <b>“Not spam”</b> — that helps future YACquest emails land in your inbox.
+      </p>
+      <p style={{ margin: '6px 0 0' }}>
+        {sender ? (
+          <>Add <b className="wrap-anywhere">{sender}</b> to your contacts.</>
+        ) : (
+          <>Add the YACquest sender (“YACquest · NCSSM Young Alumni”) to your contacts.</>
+        )}
+      </p>
     </div>
   );
 }

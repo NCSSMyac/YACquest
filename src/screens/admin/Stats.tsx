@@ -7,6 +7,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import * as api from '../../api';
 import { CAMPUSES, campusName, type CampusId } from '../../config';
 import { Card } from '../../components/Blocks';
+import { EmailSummaryCard } from '../../components/EmailBlocks';
 import { BadgeIcon } from '../../components/BadgeIcon';
 import { PixelGlyph, type GlyphName } from '../../components/PixelGlyph';
 import { ErrorText, Loading, useToast } from '../../components/ui';
@@ -76,6 +77,8 @@ export default function Stats() {
           <ProgressCard d={d} />
           <SourcesCard d={d} />
           <BadgesCard d={d} />
+          {/* 0032: emails sent, opened, clicked (full view: Stats → Email) */}
+          <EmailSummaryCard />
           <ExportsCard isChair={isChair} />
         </div>
       </div>

@@ -10,7 +10,7 @@ This takes about 30–45 minutes, done once. Dashboard menu names can differ sli
 ## 2. Create the database
 1. Open **SQL Editor → New query**.
 2. Paste the whole of `supabase/migrations/0001_init.sql` and click **Run**. It should finish with "Success". It is safe to run again.
-3. Then do the same for every later file in `supabase/migrations/` **in number order** (`0002_event_kinds.sql`, … through `0031_seasonal_november.sql`). Each new migration only needs to be run once, but re-running is safe.
+3. Then do the same for every later file in `supabase/migrations/` **in number order** (`0002_event_kinds.sql`, … through `0033_brew_and_quest.sql`). Each new migration only needs to be run once, but re-running is safe.
    - **Already live before 0013?** Run `0013_launch_extras.sql` once (anonymous feedback, the sign-up email checkbox, and Admin → Events → **Who came**).
    - **Already live before 0014?** Run `0014_goal_350.sql` once (prize goal 650 → 350, Halfway badge 175, Sparkle Aura at 300, "close to the prize" range 75). Deploy the new app build at the same time so the app shows the same goal.
    - **Already live before 0015?** Run `0015_yak_puns.sql` once (adds a "Yak of the week" line to the weekly committee email and admin prize alerts).
@@ -30,6 +30,8 @@ This takes about 30–45 minutes, done once. Dashboard menu names can differ sli
    - **Already live before 0028?** Run `0028_pace_wrapped_seasonal.sql` once (after 0027) and deploy the app build with it. **Nothing else to configure:** the "Your YACquest Wrapped is here!" send rides on the existing `send-emails` cron job (no Edge Function re-deploy needed). Adds the staff **Pace** tracker, **YACquest Wrapped** + the **End-of-year checklist**, and the **Seasonal wardrobe**. Until 0028 is run those show an error; everything else keeps working. Check `app_config.app_url` (default `https://ncssmyac.github.io/YACquest/`) if the site lives somewhere else: the Wrapped email links to `<app_url>#/wrapped`.
    - **Already live before 0030?** Run `0030_event_surveys.sql` once (after 0029) and deploy the app build with it. It is **additive** (new table, new activity, new functions; nothing dropped or renamed), so there's **no downtime** and nothing to configure: the survey link rides on the existing automatic follow-up. Attendees can then rate an event in the app (+5, once per event, up to 14 days after it; not part of the digital limit), staff see results under Admin → Events → **📊 Survey**, Stats gets an **Event ratings** card and the weekly email a survey line. Until 0030 is run the Rate buttons and Survey buttons simply don't appear.
    - **Already live before 0031?** Run `0031_seasonal_november.sql` once (after 0030) and deploy the app build with it. It is **additive** (a new column with a default, new rows and upserted dates, one function re-created; nothing dropped), so there's **no downtime** and nothing to configure. Diwali and Thanksgiving items become free for **all of November** (Diwali 2027 from Oct 22), and the new **Native American Heritage Month** background, **Three Sisters Garden**, is free Nov 1–30. People who open the app in November get it automatically. ⚠️ Have it reviewed by Native community members before promoting it (see Seasonal wardrobe below).
+   - **Already live before 0032?** Run `0032_email_personalization_tracking.sql` once (after 0031), then **right away redeploy `send-emails`** and **deploy the new public `email-track` function** (JWT verification OFF), and deploy the app build. It is **additive** (new tables/columns with defaults, one trigger, re-created functions; nothing dropped), so there's no downtime: until `send-emails` is redeployed, emails simply wait (the old sender finds nothing to send, so nobody gets a copy twice). Full steps: "Personalized emails, unsubscribe, tracking and bounces (0032)" below.
+   - **Already live before 0033?** Run `0033_brew_and_quest.sql` once (after 0032) and deploy the app build with it. It is **additive** (new tables `event_rewards`, `reward_passes`, `event_unlocks`, 3 new wardrobe items, re-created `check_in`, `unlocks_for`, `badges_for`; nothing dropped), so there's **no downtime** and nothing to configure. Normal events work exactly as before. Then set up the Brew & Quest events (see "Brew & Quest (0033)" below).
    - **Already live before 0029?** Run `0029_reset_keeps_events.sql` once (after 0028) and deploy the app build with it. From now on, **Reset points** (System → Danger zone) keeps upcoming and live events visible: they move to the new cycle; finished events stay with the archived one. Running 0029 **also repairs events orphaned by an earlier reset** (e.g. an event created before you reset points while testing): every event whose check-in hasn't closed yet is moved to the active cycle, so it shows up on participants' Quests tab again. Safe to run even if you already ran the one-line `update public.events set cycle_id = …` fix by hand (it just moves nothing). Admin → Events now shows this cycle's events, with an **Older cycles** toggle for the rest.
 
 ## 3. Turn on real logins
@@ -53,10 +55,10 @@ Supabase's built-in email only sends a few messages per hour and is meant for te
 2. Turn on **2-Step Verification**, then create an **App password** (Google Account → Security → App passwords).
 3. Supabase → **Authentication → Emails → SMTP Settings** → enable custom SMTP:
    - Host `smtp.gmail.com`, Port `465`, Username = the Gmail address, Password = the app password
-   - Sender name `YACquest`, sender email = the Gmail address
+   - Sender name `YACquest · NCSSM Young Alumni`, sender email = the Gmail address
 4. Gmail allows about 500 emails a day — plenty.
 
-**Email templates** (Authentication → Emails → Templates): edit "Confirm signup" and "Reset password" so they say YACquest, e.g. subject *"Confirm your YACquest account 🐂"*. Keep the `{{ .ConfirmationURL }}` link in the body.
+**Email templates** (Authentication → Emails → Templates): use the ready-made ones in `docs/email-templates/` (see "Getting out of spam" below). Subjects without emoji, e.g. *"Confirm your YACquest account"*. Keep the `{{ .ConfirmationURL }}` link in the body.
 
 ## 5. Connect the website
 1. Supabase → **Project Settings → API** (or **API Keys**): copy the **Project URL** and the **anon / publishable** key. *Never use the `service_role` / secret key in the app.*
@@ -93,7 +95,7 @@ YACquest emails the YAC team a **weekly report** (spots left, who's close to the
 |---|---|
 | `SMTP_USER` | the YAC Gmail address, e.g. `ncssm.yac.app@gmail.com` |
 | `SMTP_PASS` | the 16-letter Google **app password** (spaces are fine) |
-| `SMTP_FROM_NAME` | optional — the sender name people see (default `YACquest`) |
+| `SMTP_FROM_NAME` | optional — the sender name people see (default `YACquest · NCSSM Young Alumni`; if you set this secret before, change it to that) |
 | `SMTP_HOST` / `SMTP_PORT` | optional — only if you're not using Gmail (defaults `smtp.gmail.com` / `465`) |
 
 **d. Run it every 10 minutes.** **Integrations → Cron** → enable it if asked → **Create job**:
@@ -166,6 +168,57 @@ Participants never see any of this (not in the Wardrobe, Badges, character picke
   - **⚠️ Verify the dates every year.** Windows (America/New_York, inclusive) live in **two places**: `SEASONAL` in `src/config.ts` and the `seasonal_windows` table (seeded by 0028 for 2026 and 2027, updated by 0031). Since 0031, **Diwali, Thanksgiving and Native American Heritage Month are all November** (Nov 1–30). Diwali follows the lunar calendar (2026: Sunday, Nov 8, Lakshmi Puja, confirmed → Nov 1–30; 2027: Oct 29 → **Oct 22 – Nov 30** so it still covers the festival, verify before October 2027); Thanksgiving (4th Thursday of November) and Native American Heritage Month are Nov 1–30; Indigenous Peoples' Day is the 2nd Monday of October ± 7 days (computed; its 2026 window, Oct 5–19, had already passed at launch, so it first appears Oct 2027); Día de los Muertos is Oct 25 – Nov 9 every year. For 2028+, add rows with a new migration (`insert into seasonal_windows … on conflict (holiday, year) do update …`) and the same dates in `SEASONAL`.
   - **⚠️ Community review before each item goes live:** all seasonal descriptions and art should be reviewed by members of those communities (e.g. campus cultural organizations: Latinx/Mexican-American student groups for Día de los Muertos, South Asian / Hindu / Sikh / Jain student groups for Diwali, Native American student associations and the NC Commission of Indian Affairs for Indigenous Peoples' Day **and the Native American Heritage Month "Three Sisters Garden" background**). For the Heritage Month item, reach out before promoting it to Native student organizations at NCSSM and nearby campuses, e.g. **UNC's Carolina Indian Circle**, **NC State's Native American Student Association** and **Duke's Native American Student Alliance**, and ask them to review the About text (Native American Heritage Month, "Truthsgiving", the National Day of Mourning, the Three Sisters) and the art. Design rule for every Native-related item: plants, landscapes and objects only — **no** headdresses, feathers, war bonnets, regalia, face paint, tipis/totems as decoration, "pilgrim vs Indian" scenes or anything wearable that imitates Native dress. Edit text in `SEASONAL` (`src/config.ts`) and art in `src/components/cosmetics/seasonalArt.ts`. To pause an item, delete its window rows in `seasonal_windows` and its dates in `SEASONAL` (people who already own it keep it).
 
+### Personalized emails, unsubscribe, tracking and bounces (0032)
+Every email now goes to **one person** ("Hi Ava,"), with a one-click unsubscribe link, open/click stats and bounce checks, and a daily budget so the free Gmail never goes over its limit. Do these once, in order:
+
+1. **Run the migration.** Supabase → SQL Editor → New query → paste all of `supabase/migrations/0032_email_personalization_tracking.sql` → **Run**. (Safe to run again.)
+2. **Redeploy the sender right away.** Edge Functions → `send-emails` → **Code** → replace everything with the new `supabase/functions/send-emails/index.ts` → **Deploy**. (Until you do, emails just wait in the queue; nothing is sent twice.)
+3. **Deploy the tracking function.** Edge Functions → **Deploy a new function** → **Via Editor** → name it exactly `email-track` → paste all of `supabase/functions/email-track/index.ts` → **Deploy**. Then open `email-track` → **Details** (or Settings) → turn **OFF** "Verify JWT" / "Enforce JWT verification" → **Save**. This must be public: email apps open its links without logging in. It can only log an open/click, redirect a link the database signed, or unsubscribe the person who owns the link.
+4. **Nothing to copy for the tracking secret.** The migration created a random secret inside the database (`email_secrets`); the Edge Functions ask the database to sign and check links, so there is **no `TRACK_SECRET`** to add.
+5. **Sender name.** If you added an `SMTP_FROM_NAME` secret earlier, change it to `YACquest · NCSSM Young Alumni` (or delete it — that's the default). Also set Supabase → **Authentication → Emails → SMTP Settings → Sender name** to the same `YACquest · NCSSM Young Alumni`.
+6. **Turn on IMAP in the YAC Gmail** (for bounce checks): Gmail → ⚙️ → **See all settings** → **Forwarding and POP/IMAP** → **Enable IMAP** → **Save Changes**. It uses the same app password. If IMAP is off, sending still works and Admin → System shows "Bounce checking off". Bounce notices get the label **YACquest bounces**. (Set the secret `BOUNCE_CHECK=off` to skip it entirely.)
+7. **Paste the new login email templates** (next section).
+8. **Optional:** GitHub → Settings → Secrets and variables → Actions → **Variables** → add `VITE_YAC_SENDER_EMAIL` = the YAC Gmail address, so the "Check your inbox" screen can say "Add ncssm.yac.app@gmail.com to your contacts".
+9. **Check it:** Admin → System → **Send test email to me** → within 10 minutes it arrives; **Email sending** shows "Today: 1 / 450 sent · …" and the delivery log shows one row per person.
+
+**Daily budget.** Free @gmail.com allows about 500 recipients per rolling 24 hours, and Gmail flags fast bursts. YACquest sends at most **450 in any 24 hours**, about 20 a minute, every 10 minutes. Order: 1) prize alerts, test, weekly report · 2) event reminders · 3) follow-ups · 4) announcements · 5) Wrapped; the last 50 are reserved for 1–2. Emails that would arrive too late are skipped ("Skipped — too late (budget)"): reminders after the event started, follow-ups 3 days after the event, announcements after 3 days (or once an event they name starts), Wrapped after the year ends, the weekly report after its day. If you move to **Google Workspace** (≈2,000/day), raise it:
+```sql
+update public.app_config set email_daily_budget = 1900 where id = 1;   -- reserve: email_reserve (50); announcement expiry: email_announcement_days (3)
+```
+
+**Stats:** Admin → Stats → **Email** card → **Details** (opens are approximate: Apple Mail preloads images, some apps block them). Players → a person → **Emails** shows what they were sent; addresses that bounced twice show **Bouncing email** and stop getting email until fixed.
+
+### Brew & Quest (0033): limited reward events
+A special event type for "the first N people get a free item" promos. This year: the exam-season coffee tab at NC State, UNC and Duke.
+
+**Set up the 3 events once the times are known** (Admin → Events → **+ New event** → **☕ Brew & Quest preset**):
+1. Pick the campus: **NC State · Cup of Joe · Dec 2 (10 coffees)**, **UNC Chapel Hill · Epilogue · Dec 3 (30)** or **Duke · venue TBD · Dec 5 (6)**. The title ("Brew & Quest @ Cup of Joe"), campus, location, Tier 2 · Active (+20) and the **Special reward event** section are filled in for you, with a secret word like `MOCHA-42`.
+2. Type the **start and end times** (the date is shown in the yellow note). Duke: put the café's name in *Venue name* and *Location* once it's picked (until then participants see "Venue coming soon").
+3. Check the limit and message, then **Save**. Repeat for the other two campuses. You can change the venue, limit (never below passes already handed out) or secret word later with **Edit**.
+
+**What people get:** everyone who checks in gets the event points and the limited **Latte Night Scholar** outfit (beanie, A+ latte, moonlit study nook; never available any other way). The **first N participants** (staff never use one up) also get a **YACquest Coffee Pass**: their number (#7 of 30), the secret word, a live clock, valid **30 minutes**, plus the **Early Bird ☕** badge. One free coffee per person across all three events. Nobody is ever told how many are left.
+
+**What to tell the café** (print `cafe-cheat-sheet.pdf`): "Students show a YACquest Coffee Pass with today's secret word and a live clock; valid 30 minutes." Write the number of free coffees and the secret word on the sheet. The café does nothing in the app.
+
+**On the day:** open **🚪 Door mode** for the event. Staff see *Free coffees left: 12 / 30*, the secret word in big letters (tell the café at the start), and the pass list (#, name, time, Used / Not yet; tap to mark used or undo). **⬇ Passes CSV** reconciles the café tab afterwards. The event card in Admin → Events shows **☕ 18/30 passes**.
+
+### Getting out of spam
+Free Gmail senders often land in Spam or Promotions at first. What helps, in order:
+1. **Check Supabase Auth really uses the YAC Gmail**, not Supabase's built-in sender: Authentication → Emails → **SMTP Settings** → "Enable custom SMTP" is ON with `smtp.gmail.com`, port `465`, the Gmail address and its app password. (Supabase's default sender is rate-limited and often filtered.)
+2. **Paste the YACquest templates** from `docs/email-templates/` (Authentication → Emails → **Templates**; for each, set the Subject and paste the HTML into the message body):
+   | Template | Subject | File |
+   |---|---|---|
+   | Confirm signup | `Confirm your YACquest account` | `confirm-signup.html` |
+   | Reset password | `Reset your YACquest password` | `reset-password.html` |
+   | Magic link (only if you turn it on) | `Your YACquest login link` | `magic-link.html` |
+   | Change email address | `Confirm your new YACquest email` | `change-email.html` |
+   Plain language, no emoji in subjects, one button plus the plain link, and *"You're getting this because you signed up for YACquest, the NCSSM Young Alumni Council app."*
+3. **Same sender name everywhere:** `YACquest · NCSSM Young Alumni` (SMTP Settings sender name + `SMTP_FROM_NAME`).
+4. **Ask early users to tap "Not spam"** (and add the YAC Gmail to contacts) — the Check-your-inbox screen says this too. A few dozen "Not spam" clicks teach Gmail quickly.
+5. **Warm up gradually:** the first week, send email announcements to one campus at a time instead of everyone; keep the in-app message for the rest. The daily budget and 20-a-minute pace already avoid bursts.
+6. **Keep emails consistent:** links only to `ncssmyac.github.io` (no URL shorteners), a real text version (YACquest sends both), the footer with the unsubscribe link (YACquest adds it), and replies go to the YAC Gmail.
+7. **Long-term fix:** a custom domain (e.g. `yacquest.org`) sent through an email service (Resend, Postmark, Google Workspace…) with **SPF, DKIM and DMARC** records. That isn't possible with a free @gmail.com address; it's the step that makes school and Outlook inboxes trust you. (Tracked links point at the Supabase domain; with your own domain you could also put tracking on it.)
+
 ### Emergency: a YACquest Chair lost access
 In Supabase **SQL Editor**, run (replace the email):
 ```sql
@@ -181,5 +234,5 @@ Make sure no more than 6 people are YACquest Chairs afterwards.
 ## For developers
 - Database tests: `bash supabase/tests/run_tests.sh` (needs local Postgres 16).
 - App tests: `npm test`. Contract between DB and app: `docs/BACKEND.md`.
-- Email sender: `supabase/functions/send-emails/index.ts` (Deno; not part of the app's TypeScript build). Deploy from the CLI with `supabase functions deploy send-emails` if you prefer.
-- Future database changes go in a new numbered file in `supabase/migrations/` (next after `0031_seasonal_november.sql`, i.e. `0032_…`). Supabase grants new functions to everyone by default, so repeat the `revoke execute … from public, anon` lines for any new function.
+- Email sender: `supabase/functions/send-emails/index.ts`; tracking: `supabase/functions/email-track/index.ts` (Deno; not part of the app's TypeScript build). Both contain a copy of `supabase/functions/_shared/emailCore.ts` (pure helpers, unit tested) between "BEGIN/END emailCore" markers so each can be pasted into the dashboard as one file: after editing it run `node scripts/sync-edge-core.mjs` (a test fails if the copies drift). CLI deploy: `supabase functions deploy send-emails` and `supabase functions deploy email-track --no-verify-jwt`.
+- Future database changes go in a new numbered file in `supabase/migrations/` (next after `0033_brew_and_quest.sql`, i.e. `0034_…`). Supabase grants new functions to everyone by default, so repeat the `revoke execute … from public, anon` lines for any new function.

@@ -81,7 +81,25 @@ import type {
   EventSurveyInput,
   EventSurveyResults,
   EventSurveyStatus,
+  EmailCampaignStat,
+  EmailHistoryRow,
+  EmailQueueStatus,
+  EmailRecipientRow,
+  EmailStats,
+  EmailStatus,
+  MyEmailStatus,
+  CheckInReward,
+  CoffeePass,
+  EventPasses,
+  EventReward,
+  EventRewardInput,
+  MyEventRewards,
 } from '../types';
+import { DEFAULT_REWARD_ITEM, DEFAULT_REWARD_MESSAGE, OUTFIT_SETS, genSecretWord, passValidUntil, rewardInputError } from '../lib/rewardEvents';
+import { SPECIAL_BADGES } from '../lib/badges';
+import { BUDGET, emailPriority, planBatch, sendBeforeFor } from '../../supabase/functions/_shared/emailCore';
+import { announcementEmail, emailLayout, isParticipantEmail, renderForRecipient } from '../lib/emailRender';
+import { fillValues, renderFillIns } from '../lib/emailFill';
 import { SURVEY_LIMITS, SURVEY_POINTS, cleanSurveyText, surveyClosesAt, surveyError, surveyWindowOpen } from '../lib/eventSurvey';
 
 // ───────────────────────────── errors ─────────────────────────────
@@ -156,6 +174,22 @@ interface Db {
   eventCycles?: Record<string, string>;
   /** 0030: in-app event survey answers (the real one is event_surveys). */
   surveys?: { id: string; eventId: string; userId: string; rating: number; favorite: string; leastFavorite: string; comments: string; anonymous: boolean; createdAt: string }[];
+  /** 0032: one row per recipient (the real one is email_messages). */
+  messages?: MessageRow[];
+  /** 0032: opens / clicks / bounces / unsubscribes (the real one is email_events). */
+  emailEvents?: { messageId?: string; userId?: string; type: 'open' | 'click' | 'bounce' | 'unsubscribe' | 'complaint'; url?: string; createdAt: string }[];
+  /** 0032: user id → unsubscribe token (the real one is email_unsub_tokens). */
+  unsubTokens?: Record<string, string>;
+  /** 0032: user id → when their address started bouncing (profiles.email_bounced / email_bounced_at). */
+  emailBounced?: Record<string, string>;
+  /** 0032: last sender run (the real one is email_runs). */
+  emailRunAt?: string;
+  /** 0033: event id → special reward (the real one is event_rewards). */
+  eventRewards?: Record<string, EventReward & { secretWord: string }>;
+  /** 0033: reward passes (the real one is reward_passes). `series` = outfit set. */
+  rewardPasses?: { eventId: string; userId: string; series: string; passNo: number; createdAt: string; usedAt?: string; usedBy?: 'self' | 'staff' }[];
+  /** 0033: owned event outfit items (the real one is event_unlocks). */
+  eventUnlocks?: { userId: string; itemId: string; eventId: string; at: string; seenAt?: string }[];
   seq: number;
 }
 
@@ -170,11 +204,32 @@ interface OutboxRow extends EmailLogRow {
   dedupeKey: string;
 }
 
+/** 0032: one email to one person (email_messages). Status 'pending' = queued. */
+interface MessageRow {
+  id: string;
+  outboxId?: string;
+  kind: string;
+  campaignId: string;
+  campaignLabel: string;
+  userId?: string;
+  email: string;
+  subject: string;
+  text: string;
+  html: string;
+  priority: number;
+  sendBefore?: string | null;
+  status: EmailStatus;
+  attempts: number;
+  sentAt?: string;
+  error?: string;
+  createdAt: string;
+}
+
 const DB_KEY = 'yacquest-db-v1';
 /** app_config.app_url (0028): links in emails. */
 const APP_URL = 'https://ncssmyac.github.io/YACquest/';
 const SESSION_KEY = 'yacquest-session';
-const DB_VERSION = 13;
+const DB_VERSION = 15;
 
 let db: Db | null = null;
 
@@ -514,6 +569,8 @@ export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Pr
       myRsvp: d.rsvps.some((r) => r.eventId === e.id && r.userId === user.id),
       // 0030: did I already answer this event's in-app survey?
       surveyDone: (d.surveys ?? []).some((s) => s.eventId === e.id && s.userId === user.id),
+      // 0033 (event_rewards_public): never the secret word or pass counts here
+      ...(d.eventRewards?.[e.id] ? { reward: publicReward(d.eventRewards[e.id]) } : {}),
     }));
 }
 
@@ -566,7 +623,7 @@ function checkInActivity(e: YacEvent, user: User): Activity {
   return activityById(kindInfo(e.kind).activityId)!;
 }
 
-export async function checkIn(eventId: string, password: string): Promise<{ points: number; activity: Activity }> {
+export async function checkIn(eventId: string, password: string): Promise<{ points: number; activity: Activity; reward?: CheckInReward }> {
   await delay();
   const d = load();
   const user = me();
@@ -596,8 +653,150 @@ export async function checkIn(eventId: string, password: string): Promise<{ poin
       notify(user.id, 'points_adjusted', `+${TIER_POINTS[1]} for joining with a friend code`, 'Welcome bonus for coming to your first YAC event!');
     }
   }
+  // 0033 (grant_event_reward): outfit for everyone, a pass for the first N participants
+  const reward = grantEventReward(e, user, now());
   save();
-  return { points, activity };
+  return reward ? { points, activity, reward } : { points, activity };
+}
+
+// ───────────────────────────── 0033: Brew & Quest (limited reward events) ─────────────────────────────
+
+const publicReward = (r: EventRewardInput) => ({ itemLabel: r.itemLabel, limit: r.limit, venue: r.venue, outfitSet: r.outfitSet, message: r.message });
+const outfitItems = (set: string) => COSMETICS.filter((c) => c.rule.type === 'event' && c.rule.id === set).map((c) => c.id);
+
+function checkRewardInput(eventId: string, r: EventRewardInput) {
+  const err = rewardInputError({ ...r, secretWord: r.secretWord ?? '' });
+  if (err) fail(/Limit/.test(err) ? 'limit' : /Secret/.test(err) ? 'secretWord' : /message/i.test(err) ? 'message' : 'reward', err);
+  if (!outfitItems(r.outfitSet || OUTFIT_SETS[0].id).length) fail('outfitSet', 'Pick a reward outfit set.');
+  const issued = (load().rewardPasses ?? []).filter((p) => p.eventId === eventId).length;
+  if (r.limit < issued) fail('limit', `${issued} passes were already handed out, so the limit can’t go below ${issued}.`);
+}
+
+/** SERVER RULE (set_event_reward): trims, upper-cases the secret word, fills defaults; logged. */
+function setEventReward(e: YacEvent, r: EventRewardInput, admin: User) {
+  const d = load();
+  d.eventRewards ??= {};
+  d.eventRewards[e.id] = {
+    itemLabel: r.itemLabel.trim() || DEFAULT_REWARD_ITEM,
+    limit: r.limit,
+    venue: r.venue.trim() || 'TBD',
+    secretWord: (r.secretWord ?? '').trim().toUpperCase() || genSecretWord(),
+    outfitSet: r.outfitSet || OUTFIT_SETS[0].id,
+    message: r.message.trim() || DEFAULT_REWARD_MESSAGE,
+  };
+  logAction('event_reward_set', undefined, { title: e.title, limit: r.limit, venue: d.eventRewards[e.id].venue, item: d.eventRewards[e.id].itemLabel }, admin);
+}
+
+function passJson(p: NonNullable<Db['rewardPasses']>[number], withSecret: boolean): CoffeePass {
+  const d = load();
+  const e = d.events.find((x) => x.id === p.eventId);
+  const r = d.eventRewards?.[p.eventId];
+  return {
+    eventId: p.eventId, eventTitle: e?.title ?? 'Brew & Quest', campus: e?.campus ?? 'all', passNo: p.passNo, limit: r?.limit ?? 0, venue: r?.venue ?? 'TBD',
+    item: r?.itemLabel ?? DEFAULT_REWARD_ITEM, checkedInAt: p.createdAt, validUntil: passValidUntil(p.createdAt),
+    ...(p.usedAt ? { usedAt: p.usedAt, usedBy: p.usedBy } : {}),
+    ...(withSecret && r ? { secretWord: r.secretWord } : {}),
+  };
+}
+
+/** SERVER RULE (grant_event_reward, 0033). The real one runs under a row lock per event. */
+function grantEventReward(e: YacEvent, user: User, at: string): CheckInReward | undefined {
+  const d = load();
+  const r = d.eventRewards?.[e.id];
+  if (!r) return undefined;
+  const items = outfitItems(r.outfitSet);
+  d.eventUnlocks ??= [];
+  for (const itemId of items) if (!d.eventUnlocks.some((x) => x.userId === user.id && x.itemId === itemId)) d.eventUnlocks.push({ userId: user.id, itemId, eventId: e.id, at });
+  const out: CheckInReward = { outfitSet: r.outfitSet, items };
+  d.rewardPasses ??= [];
+  if (user.role === 'participant' && !d.rewardPasses.some((p) => p.series === r.outfitSet && p.userId === user.id)) {
+    const n = d.rewardPasses.filter((p) => p.eventId === e.id).length;
+    if (n < r.limit) {
+      const p = { eventId: e.id, userId: user.id, series: r.outfitSet, passNo: n + 1, createdAt: at };
+      d.rewardPasses.push(p);
+      out.badge = 'early_bird';
+      out.pass = passJson(p, true);
+    }
+  }
+  return out;
+}
+
+/** SERVER RULE (my_event_rewards): unseen outfit items + my passes (secret word only while valid + unused). */
+export async function myEventRewards(): Promise<MyEventRewards> {
+  await delay(60);
+  const user = me();
+  const d = load();
+  const t = Date.now();
+  return {
+    unseen: (d.eventUnlocks ?? []).filter((x) => x.userId === user.id && !x.seenAt).map((x) => x.itemId),
+    passes: (d.rewardPasses ?? [])
+      .filter((p) => p.userId === user.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((p) => passJson(p, !p.usedAt && t < new Date(passValidUntil(p.createdAt)).getTime())),
+  };
+}
+
+export async function markEventUnlocksSeen(): Promise<number> {
+  await delay(40);
+  const user = me();
+  let n = 0;
+  for (const x of load().eventUnlocks ?? []) if (x.userId === user.id && !x.seenAt) {
+    x.seenAt = now();
+    n++;
+  }
+  if (n) save();
+  return n;
+}
+
+/** SERVER RULE (mark_my_pass_used): my own pass, while valid. Marking twice is harmless. */
+export async function markPassUsed(eventId: string): Promise<{ usedAt: string; usedBy: 'self' | 'staff' }> {
+  await delay(80);
+  const user = me();
+  const p = (load().rewardPasses ?? []).find((x) => x.eventId === eventId && x.userId === user.id);
+  if (!p) return fail('not_found', 'You don’t have a pass for this event.');
+  if (!p.usedAt) {
+    if (Date.now() > new Date(passValidUntil(p.createdAt)).getTime()) fail('expired', 'This pass has expired.');
+    p.usedAt = now();
+    p.usedBy = 'self';
+    save();
+  }
+  return { usedAt: p.usedAt!, usedBy: p.usedBy! };
+}
+
+/** SERVER RULE (admin_event_passes): staff only. */
+export async function adminEventPasses(eventId: string): Promise<EventPasses> {
+  await delay(80);
+  requireRole('admin', 'chair');
+  const d = load();
+  const r = d.eventRewards?.[eventId];
+  if (!r) return fail('not_found', 'This event has no special reward.');
+  const ps = (d.rewardPasses ?? []).filter((p) => p.eventId === eventId).sort((a, b) => a.passNo - b.passNo);
+  return {
+    eventId, limit: r.limit, issued: ps.length, used: ps.filter((p) => p.usedAt).length, itemLabel: r.itemLabel, venue: r.venue, secretWord: r.secretWord, outfitSet: r.outfitSet,
+    passes: ps.map((p) => {
+      const u = d.users.find((x) => x.id === p.userId);
+      return { passNo: p.passNo, userId: p.userId, displayName: u?.displayName ?? 'Unknown', handle: u?.handle ?? '', campus: u?.campus ?? 'duke', createdAt: p.createdAt, validUntil: passValidUntil(p.createdAt), ...(p.usedAt ? { usedAt: p.usedAt, usedBy: p.usedBy } : {}) };
+    }),
+  };
+}
+
+/** SERVER RULE (admin_mark_pass_used): staff mark a pass used, or undo a mistaken tap. Logged. */
+export async function adminMarkPassUsed(eventId: string, userId: string, used = true): Promise<void> {
+  await delay(80);
+  const admin = requireRole('admin', 'chair');
+  const d = load();
+  const p = (d.rewardPasses ?? []).find((x) => x.eventId === eventId && x.userId === userId);
+  if (!p) return fail('not_found', 'That pass wasn’t found.');
+  if (used) {
+    p.usedAt ??= now();
+    p.usedBy ??= 'staff';
+  } else {
+    delete p.usedAt;
+    delete p.usedBy;
+  }
+  const u = d.users.find((x) => x.id === userId);
+  logAction(used ? 'reward_pass_used' : 'reward_pass_unused', u ? { displayName: u.displayName } : undefined, { title: d.events.find((x) => x.id === eventId)?.title, passNo: p.passNo }, admin);
+  save();
 }
 
 /** Explains why a user can't submit an activity right now, or null if they can. */
@@ -872,7 +1071,11 @@ export async function adminListEvents(): Promise<(YacEvent & AdminEventRsvpCount
       // 0030 (admin_event_survey_counts): in-app survey answers + average for the "📊 Survey (N)" button.
       const sv = (d.surveys ?? []).filter((s) => s.eventId === e.id);
       const avg = sv.length ? Math.round((sv.reduce((n, s) => n + s.rating, 0) / sv.length) * 10) / 10 : undefined;
-      return { ...e, ...rsvpCounts(e.id), ...(f ? { followup: f } : {}), ...(inActiveCycle(d, e.id) ? {} : { olderCycle: true }), surveyCount: sv.length, ...(avg != null ? { surveyAverage: avg } : {}) };
+      // 0033 (admin_event_rewards): + secret word and pass counts for staff
+      const rw = d.eventRewards?.[e.id];
+      const ps = (d.rewardPasses ?? []).filter((p) => p.eventId === e.id);
+      return { ...e, ...rsvpCounts(e.id), ...(f ? { followup: f } : {}), ...(inActiveCycle(d, e.id) ? {} : { olderCycle: true }), surveyCount: sv.length, ...(avg != null ? { surveyAverage: avg } : {}),
+        ...(rw ? { reward: { ...publicReward(rw), secretWord: rw.secretWord, issued: ps.length, used: ps.filter((p) => p.usedAt).length } } : {}) };
     });
 }
 
@@ -912,11 +1115,15 @@ export async function createEvent(input: EventInput): Promise<YacEvent> {
   await delay();
   const admin = requireRole('admin', 'chair');
   validateEvent(admin, input);
-  const e: YacEvent = { ...normalizeEvent(input), title: input.title.trim(), password: input.password.trim(), id: nextId('evt'), attendeeCount: 0, activityId: kindInfo(input.kind).activityId, surveyUrl: cleanSurveyUrl(input.surveyUrl) };
+  const { reward: _reward, ...base } = normalizeEvent(input);
+  void _reward;
+  const e: YacEvent = { ...base, title: input.title.trim(), password: input.password.trim(), id: nextId('evt'), attendeeCount: 0, activityId: kindInfo(input.kind).activityId, surveyUrl: cleanSurveyUrl(input.surveyUrl) };
   if (!e.surveyUrl) delete e.surveyUrl;
+  if (input.reward) checkRewardInput(e.id, input.reward);
   load().events.push(e);
   load().eventCreators[e.id] = admin.id;
   logAction('event_created', undefined, { title: e.title, kind: e.kind, campus: e.campus }, admin);
+  if (input.reward) setEventReward(e, input.reward, admin);
   save();
   return e;
 }
@@ -927,8 +1134,19 @@ export async function updateEvent(id: string, input: EventInput): Promise<YacEve
   const e = load().events.find((x) => x.id === id);
   if (!e || !canManage(admin)) return fail('forbidden', 'Not found.');
   validateEvent(admin, input);
-  Object.assign(e, normalizeEvent(input), { title: input.title.trim(), password: input.password.trim(), activityId: kindInfo(input.kind).activityId, surveyUrl: cleanSurveyUrl(input.surveyUrl) });
+  if (input.reward) checkRewardInput(e.id, input.reward);
+  else if ((load().rewardPasses ?? []).some((p) => p.eventId === id) && input.reward === null)
+    fail('has_passes', 'Passes were already handed out for this event, so the special reward can’t be removed.');
+  const { reward: _reward, ...base } = normalizeEvent(input);
+  void _reward;
+  Object.assign(e, base, { title: input.title.trim(), password: input.password.trim(), activityId: kindInfo(input.kind).activityId, surveyUrl: cleanSurveyUrl(input.surveyUrl) });
   if (!e.surveyUrl) delete e.surveyUrl;
+  // 0033 (set_event_reward): undefined = leave as is, null = remove, object = set
+  if (input.reward) setEventReward(e, input.reward, admin);
+  else if (input.reward === null && load().eventRewards?.[id]) {
+    delete load().eventRewards![id];
+    logAction('event_reward_removed', undefined, { title: e.title }, admin);
+  }
   logAction('event_updated', undefined, { title: e.title, kind: e.kind, campus: e.campus }, admin);
   save();
   return e;
@@ -1061,6 +1279,16 @@ function rng(seedNum: number) {
     s = (s * 1664525 + 1013904223) >>> 0;
     return s / 2 ** 32;
   };
+}
+
+/** Fisher–Yates with a seeded rng (demo data). */
+function shuffleSeeded<T>(arr: readonly T[], r: () => number): T[] {
+  const out = arr.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(r() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
 }
 
 function makeFriendCode(rand: () => number = Math.random) {
@@ -1368,7 +1596,113 @@ export function seed(): Db {
       d.ledger.push({ id: nextId('led'), userId: u.id, amount: SURVEY_POINTS, source: 'survey', activityId: 'event_survey', refId: kickoff.id, reason: `Event feedback survey: ${kickoff.title}`, createdAt: at });
     });
   }
+  // 0032 demo email history (own rng so the rest of the seed stays stable): a few past sends with
+  // approximate opens/clicks, a couple of bounces and unsubscribes, some "too late (budget)" skips, and
+  // one player whose address bounces (Players → "Bouncing email").
+  {
+    const er = rng(3232);
+    const hex = () => Array.from({ length: 32 }, () => '0123456789abcdef'[Math.floor(er() * 16)]).join('');
+    d.unsubTokens = Object.fromEntries(d.users.map((u) => [u.id, hex()]));
+    d.messages = [];
+    d.emailEvents = [];
+    const msgs = d.messages;
+    const evs = d.emailEvents;
+    const app = APP_URL;
+    const parts = d.users.filter((u) => u.role === 'participant');
+    const staffUsers = d.users.filter((u) => u.role !== 'participant');
+    const trivia = d.events.find((e) => e.title === 'Trivia Night') ?? kickoff;
+    const send = (
+      campaignId: string, label: string, kind: EmailKind, at: number, people: User[],
+      o: { subject: string; open: number; click: number; bounce?: number; unsub?: number; expired?: number; urls: string[] },
+    ) => {
+      people.forEach((u, i) => {
+        const id = nextId('msg');
+        const expired = i >= people.length - (o.expired ?? 0);
+        const bounced = !expired && er() < (o.bounce ?? 0);
+        const sentAt = at + i * 3_000;
+        msgs.push({
+          id, kind, campaignId, campaignLabel: label, userId: u.id, email: u.email.toLowerCase(), subject: o.subject, text: '', html: '',
+          priority: emailPriority(kind), sendBefore: null, status: expired ? 'skipped_expired' : bounced ? 'bounced' : 'sent', attempts: expired ? 0 : 1,
+          sentAt: expired ? undefined : new Date(sentAt).toISOString(), createdAt: new Date(at).toISOString(),
+          error: expired ? 'Too late to send (daily email budget was used up).' : bounced ? '550 5.1.1 The email account that you tried to reach does not exist.' : undefined,
+        });
+        if (expired) return;
+        if (bounced) {
+          evs.push({ messageId: id, userId: u.id, type: 'bounce', createdAt: new Date(sentAt + 20 * 60_000).toISOString() });
+          return;
+        }
+        if (er() < o.open) {
+          const openAt = sentAt + er() * 1.5 * D;
+          evs.push({ messageId: id, userId: u.id, type: 'open', createdAt: new Date(openAt).toISOString() });
+          if (er() < o.click / o.open) evs.push({ messageId: id, userId: u.id, type: 'click', url: o.urls[Math.floor(er() * o.urls.length)], createdAt: new Date(openAt + 60_000).toISOString() });
+        }
+        if (er() < (o.unsub ?? 0) && /^alum2/.test(u.handle)) {
+          evs.push({ messageId: id, userId: u.id, type: 'unsubscribe', createdAt: new Date(sentAt + 3 * H).toISOString() });
+          u.emailOptIn = false;
+        }
+      });
+    };
+    const ann = (title: string, body: string, audience: 'all' | 'campus', campus: CampusId | undefined, at: number, recipientCount: number, emailCount: number) => {
+      const id = nextId('ann');
+      d.announcements.push({ id, title, body, audience, campus, sendEmail: true, recipientCount, emailCount, senderName: 'Iesha L.', createdAt: new Date(at).toISOString() });
+      return id;
+    };
+    const kick = new Date(kickoff.startsAt).getTime();
+    const a1At = kick - 3 * D;
+    const optedIn = parts.filter((u) => u.emailOptIn);
+    const a1 = ann('Kickoff Mixer is this Saturday!', 'Hi {first_name}! Kickoff Mixer is Saturday at Duke Gardens. Come say hi, check in at the door and grab your first points. {campus_pun}', 'all', undefined, a1At, d.users.length, optedIn.length);
+    send(`announcement:${a1}`, 'Kickoff Mixer is this Saturday!', 'announcement', a1At, optedIn, { subject: 'YACquest: Kickoff Mixer is this Saturday!', open: 0.52, click: 0.17, bounce: 0.006, unsub: 0.03, urls: [app, `${app}#/earn`] });
+    const rsvpd = shuffleSeeded(parts.filter((u) => u.emailOptIn && u.campus === 'duke'), er).slice(0, 24);
+    send(`event_reminder:${kickoff.id}`, `Reminder · ${kickoff.title}`, 'event_reminder', kick - H, rsvpd, { subject: `Reminder: ${kickoff.title} starts soon`, open: 0.7, click: 0.08, urls: [app] });
+    const came = rsvpd.slice(0, 18);
+    send(`event_followup:${kickoff.id}`, `Follow-up · ${kickoff.title}`, 'event_followup', new Date(kickoff.endsAt).getTime() + 2 * H, came, { subject: `Thanks for coming to ${kickoff.title}!`, open: 0.6, click: 0.33, urls: [`${app}#/survey/${kickoff.id}`] });
+    const unc = parts.filter((u) => u.campus === 'unc' && u.emailOptIn);
+    const a2At = Date.now() - 4 * D;
+    const a2 = ann('Trivia Night recap + photos', 'Thanks for a great {campus} Trivia Night! Photos are up — upload yours in Earn for bonus points. You are {points_to_goal} points from the prize.', 'campus', 'unc', a2At, unc.length, unc.length);
+    send(`announcement:${a2}`, 'Trivia Night recap + photos', 'announcement', a2At, unc, { subject: 'YACquest: Trivia Night recap + photos', open: 0.47, click: 0.12, bounce: 0.01, unsub: 0.02, expired: 9, urls: [`${app}#/earn`, app] });
+    send(`event_reminder:${trivia.id}`, `Reminder · ${trivia.title}`, 'event_reminder', new Date(trivia.startsAt).getTime() - H, shuffleSeeded(unc, er).slice(0, 30), { subject: `Reminder: ${trivia.title} starts soon`, open: 0.66, click: 0.06, urls: [app] });
+    const wk = Date.now() - 2 * D;
+    send(`weekly_report:${new Date(wk).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })}`, 'Weekly report', 'weekly_report', wk, staffUsers, { subject: 'YACquest weekly report', open: 0, click: 0, urls: [] });
+    // one player whose mailbox bounces: two hard bounces → emails paused
+    const bouncer = parts.find((u) => u.handle === 'alum150');
+    if (bouncer) {
+      for (const m of msgs.filter((x) => x.userId === bouncer.id).slice(0, 2)) {
+        m.status = 'bounced';
+        m.error = '550 5.1.1 The email account that you tried to reach does not exist.';
+        evs.push({ messageId: m.id, userId: bouncer.id, type: 'bounce', createdAt: m.sentAt ?? m.createdAt });
+      }
+      d.emailBounced = { [bouncer.id]: iso(-3 * D) };
+    }
+    d.emailRunAt = iso(-4 * 60_000);
+  }
   d.actions.sort((a, b) => a.createdAt.localeCompare(b.createdAt)).forEach((a, i) => (a.id = i + 1));
+  // 0033 Brew & Quest demo (own rng so the rest of the seed stays stable): a live special event on the demo
+  // player's campus (6 of 10 coffee passes already handed out to Duke regulars) and the NC State one tomorrow.
+  {
+    const br = rng(3333);
+    const live = { id: nextId('evt'), title: 'Brew & Quest @ The Study Café', campus: 'duke' as const, crossCampus: false, kind: 'active' as const, location: 'The Study Café', startsAt: iso(-20 * 60_000), endsAt: iso(100 * 60_000), password: 'BREW', activityId: 'home_event', attendeeCount: 0, checkInGraceMinutes: 30 };
+    const soon = { id: nextId('evt'), title: 'Brew & Quest @ Cup of Joe', campus: 'ncsu' as const, crossCampus: false, kind: 'active' as const, location: 'Cup of Joe', startsAt: iso(D + 3 * H + 12 * 60_000), endsAt: iso(D + 5 * H + 12 * 60_000), password: 'JOE', activityId: 'home_event', attendeeCount: 0, checkInGraceMinutes: 30 };
+    d.events.push(live, soon);
+    d.eventRewards = {
+      [live.id]: { itemLabel: 'free coffee', limit: 10, venue: 'The Study Café', secretWord: 'MOCHA-42', outfitSet: 'latte_night_scholar', message: 'First quest: meet us at {venue}! The first {limit} people to meet us get {item} on us ☕' },
+      [soon.id]: { itemLabel: 'free coffee', limit: 10, venue: 'Cup of Joe', secretWord: 'LATTE-17', outfitSet: 'latte_night_scholar', message: 'First quest: meet us at {venue}! The first {limit} people to meet us get {item} on us ☕' },
+    };
+    d.rewardPasses = [];
+    d.eventUnlocks = [];
+    const regs = d.users.filter((u) => u.role === 'participant' && u.campus === 'duke' && u !== demo && d.ledger.some((l) => l.userId === u.id && l.source === 'seed' && l.amount >= 25));
+    for (let i = 0; i < 7 && regs.length; i++) {
+      const u = regs.splice(Math.floor(br() * regs.length), 1)[0];
+      const row = d.ledger.find((l) => l.userId === u.id && l.source === 'seed' && l.amount >= 25)!;
+      row.amount -= TIER_POINTS[2]; // moved, so totals and the leaderboard don't change
+      const at = iso(-18 * 60_000 + i * 2 * 60_000);
+      d.ledger.push({ id: nextId('led'), userId: u.id, amount: TIER_POINTS[2], source: 'checkin', activityId: 'home_event', refId: live.id, reason: `Checked in: ${live.title}`, createdAt: at });
+      live.attendeeCount++;
+      for (const itemId of ['cozy_beanie', 'latte_aplus', 'moonlit_nook']) d.eventUnlocks.push({ userId: u.id, itemId, eventId: live.id, at, seenAt: at });
+      if (i < 6) d.rewardPasses.push({ eventId: live.id, userId: u.id, series: 'latte_night_scholar', passNo: i + 1, createdAt: at, ...(i < 3 ? { usedAt: iso(-10 * 60_000 + i * 60_000), usedBy: (i === 1 ? 'staff' : 'self') as 'self' | 'staff' } : {}) });
+      if (i === 0) u.look = { hat: 'cozy_beanie', accessory: 'latte_aplus', background: 'moonlit_nook' };
+    }
+    d.eventCreators[live.id] = d.users[0].id;
+  }
   return d;
 }
 
@@ -1380,7 +1714,7 @@ const PHOTO_IMG = (sky: string, grass: string, variant: number) =>
   );
 
 // Expose for tests
-export const __test = { surveyRowsFor, queueEventReminders, queueEventFollowups, queueWrappedNotifications, claimSeasonalFor, wrappedFor, load, pointsOf, rankedParticipants, setSession, addLedger, deliverOutbox, badgesFor, unlocksFor, shoutoutSync, staffStats, staffUnlocksFor, legendaryFor, streakFor };
+export const __test = { grantEventReward, expandOutbox, campaignFor, unsubTokenFor, surveyRowsFor, queueEventReminders, queueEventFollowups, queueWrappedNotifications, claimSeasonalFor, wrappedFor, load, pointsOf, rankedParticipants, setSession, addLedger, deliverOutbox, badgesFor, unlocksFor, shoutoutSync, staffStats, staffUnlocksFor, legendaryFor, streakFor };
 
 // ───────────────────────────── team (chairs only) ─────────────────────────────
 
@@ -1512,36 +1846,144 @@ function reportRecipients(): string[] {
 function enqueueEmail(kind: EmailKind, to: string[], subject: string, text: string, html: string, dedupeKey: string): boolean {
   const d = load();
   if (!to.length || d.outbox.some((r) => r.dedupeKey === dedupeKey)) return false;
-  d.outbox.push({ id: nextId('eml'), kind, toEmails: to, subject, text, html, dedupeKey, status: 'pending', attempts: 0, createdAt: now() });
+  const row: OutboxRow = { id: nextId('eml'), kind, toEmails: to, subject, text, html, dedupeKey, status: 'pending', attempts: 0, createdAt: now() };
+  d.outbox.push(row);
+  expandOutbox(row);
   scheduleDelivery();
   return true;
 }
 
-/** Demo stand-in for SMTP: addresses at *.invalid bounce, so the Retry button can be tried. */
-const bounces = (r: OutboxRow) => r.toEmails.some((e) => /\.invalid$/i.test(e));
+/** SERVER RULE (0032 email_campaign): which send this belongs to, its label, and when it expires. */
+function campaignFor(kind: string, dedupeKey: string, subject: string, createdAt: string): { id: string; label: string; sendBefore: string | null } {
+  const d = load();
+  const ref = dedupeKey.split(':')[1] ?? '';
+  if (kind === 'announcement') {
+    const a = d.announcements.find((x) => x.id === ref);
+    const mentioned = a
+      ? d.events.filter((e) => e.title.trim().length >= 4 && new Date(e.startsAt) > new Date(createdAt) && `${a.title} ${a.body}`.toLowerCase().includes(e.title.trim().toLowerCase()))
+          .map((e) => new Date(e.startsAt).toISOString()).sort()[0]
+      : undefined;
+    return { id: `announcement:${ref}`, label: a?.title ?? subject, sendBefore: sendBeforeFor(kind, { createdAt, mentionedEventStartsAt: mentioned }) };
+  }
+  if (kind === 'event_reminder' || kind === 'event_followup') {
+    const e = d.events.find((x) => x.id === ref);
+    return {
+      id: `${kind}:${ref}`,
+      label: `${kind === 'event_reminder' ? 'Reminder' : 'Follow-up'} · ${e?.title ?? 'event'}`,
+      sendBefore: sendBeforeFor(kind, { createdAt, eventStartsAt: e ? new Date(e.startsAt).toISOString() : undefined, eventEndsAt: e ? new Date(e.endsAt).toISOString() : undefined }),
+    };
+  }
+  if (kind === 'wrapped') return { id: `wrapped:${ref}`, label: `Wrapped · ${ref}`, sendBefore: sendBeforeFor(kind, { createdAt, cycleEndsAt: new Date(CYCLE.end).toISOString() }) };
+  if (kind === 'weekly_report') {
+    const day = new Date(createdAt).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    return { id: `weekly_report:${day}`, label: `Weekly report · ${new Date(createdAt).toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric' })}`, sendBefore: sendBeforeFor(kind, { createdAt }) };
+  }
+  if (kind === 'prize_qualified' || kind === 'prize_info') return { id: `prize:${ref}`, label: subject, sendBefore: null };
+  if (kind === 'test') return { id: 'test', label: 'Test emails', sendBefore: null };
+  return { id: `${kind}:${dedupeKey}`, label: subject, sendBefore: null };
+}
 
+/** 0032: the person's random unsubscribe token (never their id). */
+function unsubTokenFor(userId: string): string {
+  const d = load();
+  d.unsubTokens ??= {};
+  if (!d.unsubTokens[userId]) d.unsubTokens[userId] = Array.from({ length: 32 }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('');
+  return d.unsubTokens[userId];
+}
+
+/** SERVER RULE (0032 email_expand_outbox): one personalized message per address. */
+function expandOutbox(o: OutboxRow) {
+  const d = load();
+  d.messages ??= [];
+  const camp = campaignFor(o.kind, o.dedupeKey, o.subject, o.createdAt);
+  const participant = isParticipantEmail(o.kind);
+  for (const email of [...new Set(o.toEmails.map((e) => e.trim().toLowerCase()).filter(Boolean))]) {
+    const u = d.users.find((x) => x.email.toLowerCase() === email);
+    const r = renderForRecipient(
+      { kind: o.kind, subject: o.subject, text: o.text, html: o.html, campaignId: camp.id },
+      u ? { displayName: u.displayName, campus: u.campus, points: pointsOf(u.id), friendCode: u.friendCode } : null,
+      { unsubToken: u && participant ? unsubTokenFor(u.id) : null, events: d.events, now: new Date(o.createdAt), goal: PRIZE.goal },
+    );
+    const status: EmailStatus = u && participant && !u.emailOptIn ? 'skipped_opted_out' : u && d.emailBounced?.[u.id] ? 'skipped_bouncing' : 'pending';
+    d.messages.push({
+      id: nextId('msg'), outboxId: o.id, kind: o.kind, campaignId: camp.id, campaignLabel: camp.label, userId: u?.id, email,
+      subject: r.subject, text: r.text, html: r.html, priority: emailPriority(o.kind), sendBefore: camp.sendBefore,
+      status, attempts: 0, createdAt: o.createdAt,
+      error: status === 'skipped_opted_out' ? 'Email updates are off for this person.' : status === 'skipped_bouncing' ? 'Paused: emails to this address bounce.' : undefined,
+    });
+  }
+  rollupOutbox(o.id);
+}
+
+/** Outbox row → sent/failed once none of its messages can still go out. */
+function rollupOutbox(outboxId: string | undefined) {
+  const d = load();
+  const o = d.outbox.find((x) => x.id === outboxId);
+  const ms = (d.messages ?? []).filter((m) => m.outboxId === outboxId);
+  if (!o || !ms.length) return;
+  o.attempts = Math.max(0, ...ms.map((m) => m.attempts));
+  if (ms.some((m) => m.status === 'pending' || m.status === 'sending' || (m.status === 'failed' && m.attempts < 5))) {
+    o.status = ms.some((m) => m.status === 'sending') ? 'sending' : ms.some((m) => m.status === 'failed') ? 'failed' : 'pending';
+    o.lastError = ms.find((m) => m.status === 'failed')?.error;
+    return;
+  }
+  const sent = ms.some((m) => m.status === 'sent' || m.status === 'bounced');
+  o.status = sent ? 'sent' : 'failed';
+  o.sentAt = sent ? o.sentAt ?? now() : o.sentAt;
+  o.lastError = sent ? undefined : ms.find((m) => m.error)?.error ?? 'Nothing was sent.';
+}
+
+/** Demo stand-in for SMTP: addresses at *.invalid are rejected, so the Retry button can be tried. */
+const rejects = (m: MessageRow) => /\.invalid$/i.test(m.email);
+
+/** SERVER RULE (0032 claim_email_messages): expiry, opt-out, rolling 24 h budget + reserve, priority order. */
 function startSending() {
-  for (const r of load().outbox)
-    if (r.status === 'pending') {
-      r.status = 'sending';
-      r.attempts++;
-    }
+  const d = load();
+  const t = Date.now();
+  const touched = new Set<string | undefined>();
+  const open = (d.messages ?? []).filter((m) => m.status === 'pending' || (m.status === 'failed' && m.attempts < 5));
+  const plan = planBatch(
+    open.map((m) => ({ id: m.id, priority: m.priority, createdAt: m.createdAt, sendBefore: m.sendBefore })),
+    {
+      now: new Date(t),
+      sentLast24h: (d.messages ?? []).filter((m) => (m.status === 'sent' || m.status === 'bounced') && m.sentAt && t - new Date(m.sentAt).getTime() < 86_400_000).length,
+      budget: BUDGET.daily,
+      reserve: BUDGET.reserve,
+      limit: 500,
+    },
+  );
+  for (const m of open) {
+    const u = m.userId ? d.users.find((x) => x.id === m.userId) : undefined;
+    if (plan.expired.includes(m.id)) Object.assign(m, { status: 'skipped_expired', error: 'Too late to send (daily email budget was used up).', text: '', html: '' });
+    else if (u && (d.emailBounced?.[u.id] || (isParticipantEmail(m.kind) && !u.emailOptIn)))
+      Object.assign(m, { status: d.emailBounced?.[u.id] ? 'skipped_bouncing' : 'skipped_opted_out', error: d.emailBounced?.[u.id] ? 'Paused: emails to this address bounce.' : 'Email updates are off for this person.', text: '', html: '' });
+    else if (plan.send.includes(m.id)) {
+      m.status = 'sending';
+      m.attempts++;
+    } else continue;
+    touched.add(m.outboxId);
+  }
+  touched.forEach(rollupOutbox);
 }
 function finishSending() {
-  for (const r of load().outbox)
-    if (r.status === 'sending') {
-      if (bounces(r)) {
-        r.status = 'failed';
-        r.lastError = '550 5.1.1 Recipient address rejected (demo)';
-      } else {
-        r.status = 'sent';
-        r.sentAt = now();
-        r.lastError = undefined;
-      }
+  const d = load();
+  const touched = new Set<string | undefined>();
+  for (const m of d.messages ?? [])
+    if (m.status === 'sending') {
+      if (rejects(m)) Object.assign(m, { status: 'failed', error: '550 5.1.1 Recipient address rejected (demo)' });
+      else Object.assign(m, { status: 'sent', sentAt: now(), error: undefined, text: '', html: '' });
+      touched.add(m.outboxId);
     }
+  touched.forEach(rollupOutbox);
+  d.emailRunAt = now();
 }
 /** Sends everything pending right away (tests use this instead of waiting for the timer). */
 function deliverOutbox() {
+  // a timer queued earlier must not pick up rows the caller retries afterwards
+  if (deliveryTimer) {
+    clearTimeout(deliveryTimer);
+    deliveryTimer = null;
+  }
   startSending();
   finishSending();
   save();
@@ -1605,8 +2047,9 @@ function yakLineHtml() {
   return `<p style="margin:12px 0 0;color:#5b6475;font-size:13px;font-style:italic">${esc(yakLineText())}</p>`;
 }
 
+/** 0032: the same layout as public.email_layout (greeting / sign-off / footer markers filled per recipient). */
 function emailHtml(title: string, body: string) {
-  return `<!doctype html><html><body style="margin:0;background:#e9f0fb;font-family:Arial,Helvetica,sans-serif;color:#14213d"><div style="max-width:600px;margin:0 auto;background:#fffdf6;border:4px solid #0b2a5b"><div style="background:#0b2a5b;color:#ffd97a;padding:14px 18px;font-size:20px;font-weight:bold">${esc(title)}</div><div style="padding:16px 18px;font-size:15px;line-height:1.5">${body}</div><div style="padding:10px 18px;font-size:12px;color:#4a5672;border-top:2px solid #f2b33d">Sent by YACquest. Change who gets this in Admin → System.</div></div></body></html>`;
+  return emailLayout(title, body);
 }
 
 /** Current day-of-week (0=Sun), hour, and ISO week key in America/New_York. */
@@ -1808,23 +2251,208 @@ export async function emailLog(limit = 50): Promise<EmailLogRow[]> {
   await delay();
   requireRole('chair');
   maybeEnqueueWeekly(); // stands in for the 10-minute cron in the demo
-  return load()
-    .outbox.slice()
+  // 0032: one row per recipient
+  return (load().messages ?? [])
+    .slice()
     .reverse()
     .slice(0, limit)
-    .map(({ text: _t, html: _h, dedupeKey: _k, ...row }) => ({ ...row, toEmails: [...row.toEmails] }));
+    .map((m) => ({ id: m.id, kind: m.kind, toEmails: [m.email], subject: m.subject, status: m.status, attempts: m.attempts, lastError: m.error, createdAt: m.createdAt, sentAt: m.sentAt }));
 }
 
 export async function retryEmail(id: string): Promise<void> {
   await delay();
   requireRole('chair');
-  const r = load().outbox.find((x) => x.id === id);
-  if (!r) return fail('not_found', 'Email not found.');
-  r.status = 'pending';
-  r.attempts = 0;
-  r.lastError = undefined;
+  const d = load();
+  const m = (d.messages ?? []).find((x) => x.id === id);
+  if (m) {
+    if (m.status !== 'failed') fail('not_failed', 'Only failed emails can be retried.');
+    Object.assign(m, { status: 'pending', attempts: 0, error: undefined });
+    rollupOutbox(m.outboxId);
+  } else {
+    const r = d.outbox.find((x) => x.id === id);
+    if (!r) return fail('not_found', 'Email not found.');
+    r.status = 'pending';
+    r.attempts = 0;
+    r.lastError = undefined;
+  }
   scheduleDelivery();
   save();
+}
+
+// ───────────────────────────── 0032: email stats, tracking, unsubscribe, bounces ─────────────────────────────
+
+function emailEventsOf(messageId: string, type: 'open' | 'click' | 'bounce' | 'unsubscribe') {
+  return (load().emailEvents ?? []).filter((e) => e.messageId === messageId && e.type === type);
+}
+const isWaiting = (m: MessageRow) => m.status === 'pending' || m.status === 'sending' || (m.status === 'failed' && m.attempts < 5);
+
+/** SERVER RULE (email_stats, 0032): staff only; opens are unique per email and approximate. */
+export async function emailStats(days = 30): Promise<EmailStats> {
+  await delay();
+  requireRole('admin', 'chair');
+  const d = load();
+  const t = Date.now();
+  const n = Math.max(1, Math.min(365, Math.round(days)));
+  const since = t - n * 86_400_000;
+  const all = d.messages ?? [];
+  const inWin = all.filter((m) => {
+    const at = new Date(m.sentAt ?? m.createdAt).getTime();
+    return at >= since && at <= t;
+  });
+  const sentish = (m: MessageRow) => m.status === 'sent' || m.status === 'bounced';
+  const opened = (m: MessageRow) => m.status === 'sent' && emailEventsOf(m.id, 'open').length > 0;
+  const clicked = (m: MessageRow) => m.status === 'sent' && emailEventsOf(m.id, 'click').length > 0;
+  const sent = inWin.filter(sentish).length;
+  const delivered = inWin.filter((m) => m.status === 'sent').length;
+  const nOpened = inWin.filter(opened).length;
+  const nClicked = inWin.filter(clicked).length;
+  const unsubs = new Set((d.emailEvents ?? []).filter((e) => e.type === 'unsubscribe' && new Date(e.createdAt).getTime() >= since).map((e) => e.userId ?? e.createdAt));
+  const nyDay = (iso: string | number) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const daily = Array.from({ length: n }, (_, i) => nyDay(t - (n - 1 - i) * 86_400_000)).map((day) => {
+    const ms = all.filter((m) => m.sentAt && nyDay(m.sentAt) === day);
+    return { day, sent: ms.filter(sentish).length, opened: ms.filter(opened).length, clicked: ms.filter(clicked).length };
+  });
+  const byCampaign = new Map<string, MessageRow[]>();
+  for (const m of all.filter((x) => new Date(x.createdAt).getTime() >= since)) byCampaign.set(m.campaignId, [...(byCampaign.get(m.campaignId) ?? []), m]);
+  const campaigns: EmailCampaignStat[] = [...byCampaign.entries()].map(([id, ms]) => ({
+    id,
+    label: ms[0].campaignLabel,
+    kind: ms[0].kind,
+    firstAt: ms.map((m) => m.createdAt).sort()[0],
+    recipients: ms.length,
+    sent: ms.filter(sentish).length,
+    opened: ms.filter(opened).length,
+    clicked: ms.filter(clicked).length,
+    bounced: ms.filter((m) => m.status === 'bounced').length,
+    unsubscribed: ms.filter((m) => emailEventsOf(m.id, 'unsubscribe').length > 0).length,
+    skipped: ms.filter((m) => m.status.startsWith('skipped')).length,
+    waiting: ms.filter(isWaiting).length,
+    failed: ms.filter((m) => m.status === 'failed' && m.attempts >= 5).length,
+  })).sort((a, b) => b.firstAt.localeCompare(a.firstAt)).slice(0, 100);
+  return {
+    days: n,
+    totals: {
+      sent, delivered, opened: nOpened, clicked: nClicked,
+      openRate: delivered ? Math.round((100 * nOpened) / delivered) : 0,
+      ctr: delivered ? Math.round((100 * nClicked) / delivered) : 0,
+      bounced: inWin.filter((m) => m.status === 'bounced').length,
+      unsubscribed: unsubs.size,
+      skipped: inWin.filter((m) => m.status.startsWith('skipped')).length,
+      expired: inWin.filter((m) => m.status === 'skipped_expired').length,
+      failed: inWin.filter((m) => m.status === 'failed' && m.attempts >= 5).length,
+    },
+    daily,
+    campaigns,
+  };
+}
+
+/** SERVER RULE (email_campaign_recipients, 0032): staff only. */
+export async function emailCampaignRecipients(campaignId: string): Promise<EmailRecipientRow[]> {
+  await delay();
+  requireRole('admin', 'chair');
+  const d = load();
+  return (d.messages ?? [])
+    .filter((m) => m.campaignId === campaignId)
+    .map((m) => {
+      const u = m.userId ? d.users.find((x) => x.id === m.userId) : undefined;
+      const opens = emailEventsOf(m.id, 'open');
+      return {
+        messageId: m.id, userId: m.userId, name: u?.displayName ?? '', campus: u?.campus, email: m.email, status: m.status,
+        sentAt: m.sentAt, opened: opens.length > 0, openedAt: opens.map((e) => e.createdAt).sort()[0],
+        clickedUrls: [...new Set(emailEventsOf(m.id, 'click').map((e) => e.url ?? ''))].filter(Boolean),
+        bounced: m.status === 'bounced', unsubscribed: emailEventsOf(m.id, 'unsubscribe').length > 0, error: m.error,
+      };
+    })
+    .sort((a, b) => (a.name || a.email).toLowerCase().localeCompare((b.name || b.email).toLowerCase()));
+}
+
+/** SERVER RULE (email_history_for, 0032): staff only, newest first, 50. */
+export async function emailHistoryFor(userId: string): Promise<EmailHistoryRow[]> {
+  await delay();
+  requireRole('admin', 'chair');
+  return (load().messages ?? [])
+    .filter((m) => m.userId === userId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, 50)
+    .map((m) => ({
+      id: m.id, kind: m.kind, label: m.campaignLabel, subject: m.subject, status: m.status, createdAt: m.createdAt, sentAt: m.sentAt,
+      opened: emailEventsOf(m.id, 'open').length > 0, clicked: emailEventsOf(m.id, 'click').length > 0, error: m.error,
+    }));
+}
+
+/** SERVER RULE (email_queue_status, 0032): staff only. The demo "sender" runs whenever something is queued. */
+export async function emailQueueStatus(): Promise<EmailQueueStatus> {
+  await delay(60);
+  requireRole('admin', 'chair');
+  const d = load();
+  const t = Date.now();
+  const ms = d.messages ?? [];
+  const last = d.emailRunAt;
+  return {
+    budget: BUDGET.daily,
+    reserve: BUDGET.reserve,
+    sent24h: ms.filter((m) => (m.status === 'sent' || m.status === 'bounced') && m.sentAt && t - new Date(m.sentAt).getTime() < 86_400_000).length,
+    waiting: ms.filter(isWaiting).length,
+    waitingHigh: ms.filter((m) => m.priority <= 2 && isWaiting(m)).length,
+    skippedToday: ms.filter((m) => m.status === 'skipped_expired' && t - new Date(m.createdAt).getTime() < 86_400_000).length,
+    lastRunAt: last,
+    nextRunAt: last ? new Date(new Date(last).getTime() + 10 * 60_000).toISOString() : undefined,
+    bounceCheck: last ? 'ok' : 'never',
+    lastBounceCheckAt: last,
+  };
+}
+
+/** Players → "Bouncing email" chip (staff). */
+export async function emailBouncingUsers(): Promise<string[]> {
+  await delay(60);
+  requireRole('admin', 'chair');
+  return Object.keys(load().emailBounced ?? {});
+}
+
+export async function adminClearEmailBounce(userId: string): Promise<void> {
+  await delay();
+  const admin = requireRole('admin', 'chair');
+  const d = load();
+  const u = d.users.find((x) => x.id === userId);
+  if (!u) return fail('not_found', 'Player not found.');
+  if (d.emailBounced) delete d.emailBounced[userId];
+  logAction('email_bounce_cleared', u, {}, admin);
+  save();
+}
+
+/** Me: "Emails to you are bouncing" banner. */
+export async function myEmailStatus(): Promise<MyEmailStatus | null> {
+  await delay(40);
+  const u = me();
+  const at = load().emailBounced?.[u.id];
+  return { optIn: u.emailOptIn, bounced: !!at, bouncedAt: at };
+}
+
+export async function clearMyEmailBounce(): Promise<void> {
+  await delay();
+  const u = me();
+  const d = load();
+  if (d.emailBounced) delete d.emailBounced[u.id];
+  save();
+}
+
+/** SERVER RULE (unsubscribe_by_token, 0032): no login; only ever turns that person's emails off. */
+export async function unsubscribeByToken(token: string): Promise<{ alreadyOff: boolean }> {
+  await delay();
+  const d = load();
+  const bad = () => fail('invalid_token', 'This unsubscribe link isn’t valid. You can turn emails off in YACquest under Me → Settings.');
+  if (!/^[0-9a-f]{32}$/.test(token ?? '')) return bad();
+  const userId = Object.entries(d.unsubTokens ?? {}).find(([, t]) => t === token)?.[0];
+  const u = userId ? d.users.find((x) => x.id === userId) : undefined;
+  if (!u) return bad();
+  const was = u.emailOptIn;
+  u.emailOptIn = false;
+  if (was) {
+    const last = (d.messages ?? []).filter((m) => m.userId === u.id && m.sentAt).sort((a, b) => (b.sentAt ?? '').localeCompare(a.sentAt ?? ''))[0];
+    (d.emailEvents ??= []).push({ messageId: last?.id, userId: u.id, type: 'unsubscribe', createdAt: now() });
+  }
+  save();
+  return { alreadyOff: !was };
 }
 
 export async function adminActionLog(opts: { before?: number; limit?: number } = {}): Promise<AdminAction[]> {
@@ -1856,23 +2484,29 @@ export async function sendAnnouncement(input: AnnouncementInput): Promise<{ reci
   if (!targets.length) fail(input.audience === 'user' ? 'user' : 'audience', input.audience === 'user' ? 'Pick the person to message.' : 'Nobody matches that audience yet.');
   const title = input.title.trim();
   const body = input.body.trim();
-  for (const u of targets) notify(u.id, 'announcement', title, body);
-  let emailed = 0;
   const id = nextId('ann');
-  if (input.sendEmail) {
-    const emails = [...new Set(targets.filter((u) => u.emailOptIn || input.audience === 'user').map((u) => u.email.toLowerCase()))];
-    emailed = emails.length;
-    for (let i = 0; i * 90 < emails.length; i++)
-      enqueueEmail('announcement', emails.slice(i * 90, (i + 1) * 90), `📣 YACquest: ${title}`, body, emailHtml(title, `<p>${esc(body)}</p>`), `announcement:${id}:${i}`);
+  // 0032: fill-ins are filled per person in the app too
+  for (const u of targets) {
+    const v = fillValues({ displayName: u.displayName, campus: u.campus, points: pointsOf(u.id), friendCode: u.friendCode }, { events: d.events, seedKey: `announcement:${id}` });
+    notify(u.id, 'announcement', renderFillIns(title, v), renderFillIns(body, v));
   }
+  let emailed = 0;
   const target = input.audience === 'user' ? targets[0] : undefined;
   d.announcementSenders[id] = admin.id;
   d.announcements.unshift({
     id, title, body, audience: input.audience,
     campus: input.audience === 'campus' ? input.campus : undefined,
     targetName: target?.displayName, sendEmail: input.sendEmail,
-    recipientCount: targets.length, emailCount: emailed, senderName: admin.displayName, createdAt: now(),
+    recipientCount: targets.length, emailCount: 0, senderName: admin.displayName, createdAt: now(),
   });
+  if (input.sendEmail) {
+    // 0032: only people with emails on (direct messages too); one outbox row, one email per person
+    const emails = [...new Set(targets.filter((u) => u.emailOptIn).map((u) => u.email.toLowerCase()))];
+    emailed = emails.length;
+    const m = announcementEmail(title, body, admin.displayName);
+    enqueueEmail('announcement', emails, m.subject, m.text, m.html, `announcement:${id}`);
+    d.announcements[0].emailCount = emailed;
+  }
   logAction('announcement_sent', target, { title, audience: input.audience, campus: input.campus ?? null, recipients: targets.length, emailed }, admin);
   save();
   return { recipients: targets.length, emailed };
@@ -1982,6 +2616,12 @@ export async function deleteMyAccount(confirmUsername: string): Promise<void> {
   for (const c of d.claims) if (c.userId === uid) Object.assign(c, { userId: '', displayName: 'Deleted account', contact: undefined, reference: undefined });
   for (const r of d.outbox) r.toEmails = r.toEmails.filter((e) => e.toLowerCase() !== email);
   d.outbox = d.outbox.filter((r) => r.toEmails.length > 0);
+  // 0032: their per-recipient copies leave the log; prize alerts about them go entirely
+  d.messages = (d.messages ?? []).filter((m) => !m.outboxId || d.outbox.some((o) => o.id === m.outboxId));
+  for (const m of d.messages)
+    if (m.userId === uid || m.email === email) Object.assign(m, { userId: undefined, email: 'deleted-account', subject: '(deleted account)', text: '', html: '' });
+  if (d.unsubTokens) delete d.unsubTokens[uid];
+  if (d.emailBounced) delete d.emailBounced[uid];
   for (const a of d.actions) {
     if (a.targetName === user.displayName) {
       a.targetName = 'Deleted account';
@@ -2142,12 +2782,14 @@ function badgesFor(userId: string): BadgeProgress[] {
 
 function unlocksFor(userId: string): string[] {
   const badges = badgesFor(userId);
-  const earned = new Set(badges.filter((b) => b.earned).map((b) => b.id));
+  const earned = new Set([...badges, ...specialBadgesFor(userId)].filter((b) => b.earned).map((b) => b.id));
   const points = pointsOf(userId);
   // 0028: seasonal items once claimed (owned forever)
   const owned = new Set((load().seasonalUnlocks ?? []).filter((x) => x.userId === userId).map((x) => x.itemId));
+  // 0033: event outfit items (owned forever)
+  const fromEvents = new Set((load().eventUnlocks ?? []).filter((x) => x.userId === userId).map((x) => x.itemId));
   const ok = (r: UnlockRule, id: string) =>
-    r.type === 'free' || (r.type === 'points' && points >= r.min) || (r.type === 'badge' && earned.has(r.id)) || (r.type === 'badges' && earned.size >= r.min) || (r.type === 'seasonal' && owned.has(id));
+    r.type === 'free' || (r.type === 'points' && points >= r.min) || (r.type === 'badge' && earned.has(r.id)) || (r.type === 'badges' && earned.size >= r.min) || (r.type === 'seasonal' && owned.has(id)) || (r.type === 'event' && fromEvents.has(id));
   return COSMETICS.filter((c) => ok(c.rule, c.id)).map((c) => c.id);
 }
 
@@ -2234,7 +2876,14 @@ export async function myRecap(): Promise<QuestRecap> {
 
 export async function myBadges(): Promise<BadgeProgress[]> {
   await delay(100);
-  return badgesFor(me().id);
+  const id = me().id;
+  return [...badgesFor(id), ...specialBadgesFor(id)];
+}
+
+/** 0033: special badges (badges_for's 17th row): Early Bird = holds any reward pass. */
+function specialBadgesFor(userId: string): BadgeProgress[] {
+  const has = (load().rewardPasses ?? []).some((p) => p.userId === userId);
+  return SPECIAL_BADGES.map((b) => ({ id: b.id, earned: has, progress: has ? 1 : 0, goal: 1 }));
 }
 
 export async function myUnlocks(): Promise<string[]> {
@@ -2550,7 +3199,7 @@ function queueEventReminders(nowMs: number = Date.now()): number {
       if (u.emailOptIn) {
         const subject = `Reminder: ${e.title} starts at ${time}`;
         const text = `${e.title} starts at ${time}.\nWhere: ${e.location}\n\nCheck in at the event to earn ${pts} points.\n\nYou get this because you RSVP'd in YACquest and have email updates on.`;
-        const html = `<p style="font-size:16px;margin:0 0 8px"><b>${esc(e.title)}</b> starts at <b>${esc(time)}</b>.</p><p style="margin:0 0 8px">📍 ${esc(e.location)}</p><p style="margin:0 0 12px">Check in at the event to earn <b>${pts} points</b>.</p><p style="font-size:12px;color:#4a5672;margin:0">You get this because you RSVP’d in YACquest and have email updates on.</p>`;
+        const html = emailHtml(`Reminder: ${e.title}`, `<p style="font-size:16px;margin:0 0 8px"><b>${esc(e.title)}</b> starts at <b>${esc(time)}</b>.</p><p style="margin:0 0 8px">📍 ${esc(e.location)}</p><p style="margin:0 0 12px">Check in at the event to earn <b>${pts} points</b>.</p><p style="font-size:12px;color:#4a5672;margin:0">You get this because you RSVP’d in YACquest and have email updates on.</p>`);
         enqueueEmail('event_reminder', [u.email], subject, text, html, `reminder:${key}`);
       }
       n++;

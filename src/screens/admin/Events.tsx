@@ -12,7 +12,8 @@ import { checkInUrl } from '../../lib/pendingCheckin';
 import { qrDataUrl } from '../../lib/qr';
 import { csvDateTime, csvFilename, downloadCsv, toCsv } from '../../lib/csv';
 import { eventPhase } from '../../lib/adminDashboard';
-import { duplicateForm, editForm, toLocalInput as toLocal, type EventForm as Form } from '../../lib/duplicateEvent';
+import { duplicateForm, editForm, toLocalInput as toLocal, type EventForm as Form, type RewardForm } from '../../lib/duplicateEvent';
+import { BREW_PRESETS, DEFAULT_REWARD_ITEM, DEFAULT_REWARD_MESSAGE, OUTFIT_SETS, applyPreset, fillMessage, genSecretWord, presetTitle, rewardInputError, type BrewPreset } from '../../lib/rewardEvents';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 import { surveyUrlError } from '../../lib/validate';
 import { checkInClosesAt } from '../../lib/followups';
@@ -66,7 +67,7 @@ export default function Events() {
       const s = new Date(Date.now() + 86400000);
       s.setHours(18, 0, 0, 0);
       const en = new Date(s.getTime() + 2 * 3600000);
-      setForm({ title: '', campus: user?.campus ?? 'duke', kind: 'active', location: '', start: toLocal(s.toISOString()), end: toLocal(en.toISOString()), grace: 60, password: genPassword(), surveyUrl: '' });
+      setForm({ title: '', campus: user?.campus ?? 'duke', kind: 'active', location: '', start: toLocal(s.toISOString()), end: toLocal(en.toISOString()), grace: 60, password: genPassword(), surveyUrl: '', reward: null });
     } else {
       setForm(editForm(e));
     }
@@ -80,12 +81,23 @@ export default function Events() {
       setErr(surveyErr);
       return;
     }
+    // 0033: special reward section
+    const rw = form.reward;
+    const rewardErr = rw ? rewardInputError({ ...rw, limit: Number(rw.limit) }) : null;
+    if (rewardErr) {
+      setErr(rewardErr);
+      return;
+    }
     setBusy(true);
     setErr(null);
     const input: api.EventInput = {
       title: form.title, campus: form.campus, crossCampus: form.campus === 'all', kind: form.kind, location: form.location,
       startsAt: new Date(form.start).toISOString(), endsAt: new Date(form.end).toISOString(), checkInGraceMinutes: form.grace, password: form.password,
       surveyUrl: form.surveyUrl.trim() || undefined,
+      // 0033: object = special reward event; null = switched off on an event that had one; undefined = leave as is
+      reward: rw
+        ? { itemLabel: rw.itemLabel.trim() || DEFAULT_REWARD_ITEM, limit: Number(rw.limit), venue: rw.venue.trim() || 'TBD', secretWord: rw.secretWord.trim(), outfitSet: rw.outfitSet, message: rw.message.trim() || DEFAULT_REWARD_MESSAGE }
+        : editing !== 'new' && editing.reward ? null : undefined,
     };
     try {
       if (editing === 'new') await api.createEvent(input);
@@ -136,6 +148,7 @@ export default function Events() {
                   <strong style={{ fontSize: 17, minWidth: 0, overflowWrap: 'anywhere' }}>{e.title}</strong>
                   <span className="row" style={{ flex: 'none', gap: 6 }}>
                     {e.olderCycle && <span className="chip neutral">Older cycle</span>}
+                    {e.reward && <span className="chip bq-chip" title={`Secret word ${e.reward.secretWord ?? ''}`}>☕ {e.reward.issued ?? 0}/{e.reward.limit} passes</span>}
                     <span className={`chip ${p === 'LIVE' ? 'approved' : p === 'Upcoming' ? 'pending' : 'neutral'}`}>{p}</span>
                   </span>
                 </div>
@@ -194,6 +207,7 @@ export default function Events() {
             {dupOf && editing === 'new' && (
               <p className="muted" style={{ margin: 0 }}>Copied from “{dupOf}”, one week later with a new password. Check the details, then Save.</p>
             )}
+            {editing === 'new' && !dupOf && <BrewPresetPicker onPick={(p) => setForm((f) => (f ? applyPreset(f, p) : f))} />}
             <label className="field"><span>Title</span><input className="input" value={form.title} onChange={(e) => set('title', e.target.value)} required /></label>
             <label className="field">
               <span>Tier (sets the points)</span>
@@ -225,6 +239,7 @@ export default function Events() {
               <small className="muted">Sent in the automatic “Thanks for coming” follow-up after check-in closes. Filling it out counts as the Feedback Survey quest.</small>
               {form.surveyUrl.trim() && surveyUrlError(form.surveyUrl) && <ErrorText error={surveyUrlError(form.surveyUrl)} />}
             </label>
+            <SpecialRewardSection form={form} setForm={setForm} />
             <label className="field">
               <span>Event password</span>
               <div className="row">
@@ -241,6 +256,82 @@ export default function Events() {
         )}
       </Modal>
     </div>
+  );
+}
+
+function BrewPresetPicker({ onPick }: { onPick: (p: BrewPreset) => void }) {
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState<BrewPreset | null>(null);
+  return (
+    <div className="bq-preset">
+      <button type="button" className="btn small bq-preset-btn" aria-expanded={open} onClick={() => setOpen((o) => !o)}>☕ Brew &amp; Quest preset</button>
+      {open && (
+        <div className="bq-preset-list" role="group" aria-label="Brew & Quest presets">
+          {BREW_PRESETS.map((p) => (
+            <button key={p.id} type="button" className="btn small ghost" onClick={() => { onPick(p); setPicked(p); setOpen(false); }}>{p.label} · {p.limit} coffees</button>
+          ))}
+        </div>
+      )}
+      {picked && (
+        <p className="bq-preset-note" role="status">
+          Filled in {presetTitle(picked)} for <b>{new Date(`${picked.date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</b>. Add the start and end times below{picked.venue === 'TBD' ? ', and the café once it’s picked' : ''}.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** 0033 "Special reward event" (toggle): limited free item, limit, venue, staff-only secret word, outfit, message. */
+function SpecialRewardSection({ form, setForm }: { form: Form; setForm: React.Dispatch<React.SetStateAction<Form | null>> }) {
+  const r = form.reward;
+  const setR = <K extends keyof RewardForm>(k: K, v: RewardForm[K]) => setForm((f) => (f && f.reward ? { ...f, reward: { ...f.reward, [k]: v } } : f));
+  const preview = r ? fillMessage(r.message || DEFAULT_REWARD_MESSAGE, { venue: r.venue || 'TBD', limit: Number(r.limit) || 0, itemLabel: r.itemLabel || DEFAULT_REWARD_ITEM }) : '';
+  return (
+    <fieldset className={`bq-section${r ? ' on' : ''}`}>
+      <legend className="sr-only">Special reward event</legend>
+      <label className="check bq-toggle">
+        <input
+          type="checkbox"
+          checked={!!r}
+          onChange={(x) =>
+            setForm((f) =>
+              f ? { ...f, kind: x.target.checked && !f.reward ? 'active' : f.kind, reward: x.target.checked ? { itemLabel: DEFAULT_REWARD_ITEM, limit: '30', venue: f.location, secretWord: genSecretWord(), outfitSet: OUTFIT_SETS[0].id, message: DEFAULT_REWARD_MESSAGE } : null } : f,
+            )
+          }
+        />
+        <span><b>☕ Special reward event</b> <span className="muted">· limited free item for the first N people (Brew &amp; Quest)</span></span>
+      </label>
+      {r && (
+        <div className="stack" style={{ gap: 10 }}>
+          <div className="grid-2">
+            <label className="field"><span>Limited free item</span><input className="input" value={r.itemLabel} maxLength={40} onChange={(e) => setR('itemLabel', e.target.value)} placeholder={DEFAULT_REWARD_ITEM} /></label>
+            <label className="field"><span>Limit</span><input className="input" type="number" inputMode="numeric" min={1} max={500} value={r.limit} onChange={(e) => setR('limit', e.target.value)} required /></label>
+          </div>
+          <label className="field"><span>Venue name</span><input className="input" value={r.venue} maxLength={80} onChange={(e) => setR('venue', e.target.value)} placeholder="e.g. Cup of Joe (or TBD)" /></label>
+          <label className="field">
+            <span>Secret word <small className="muted" style={{ fontFamily: 'var(--font-body)', letterSpacing: 0, fontSize: 12 }}>· staff only, tell the café</small></span>
+            <div className="row">
+              <input className="input bq-secret" value={r.secretWord} maxLength={30} onChange={(e) => setR('secretWord', e.target.value.toUpperCase())} placeholder="Blank = make one for me" />
+              <button type="button" className="btn small blue" onClick={() => setR('secretWord', genSecretWord())}>Regenerate</button>
+            </div>
+          </label>
+          <label className="field">
+            <span>Reward outfit set</span>
+            <select value={r.outfitSet} onChange={(e) => setR('outfitSet', e.target.value)}>
+              {OUTFIT_SETS.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.items.length} pieces)</option>)}
+            </select>
+          </label>
+          <label className="field">
+            <span>Countdown message <small className="muted" style={{ fontFamily: 'var(--font-body)', letterSpacing: 0, fontSize: 12 }}>· {'{venue} {limit} {item}'}</small></span>
+            <textarea className="input" rows={3} maxLength={300} value={r.message} onChange={(e) => setR('message', e.target.value)} />
+            <small className="muted">Preview: “{preview}”</small>
+          </label>
+          <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+            Everyone who checks in gets the event points + the limited outfit. The first {Number(r.limit) || 'N'} participants (staff don’t count) get a Coffee Pass, valid 30 minutes, one per person across all Brew &amp; Quest events. Participants never see how many are left.
+          </p>
+        </div>
+      )}
+    </fieldset>
   );
 }
 

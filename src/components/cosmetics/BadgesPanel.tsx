@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BADGES, badgeById } from '../../lib/badges';
+import { BADGES, badgeById, isSpecialBadge } from '../../lib/badges';
 import { staffBadgeById } from '../../lib/staffRewards';
 import type { BadgeProgress } from '../../types';
 import { BadgeIcon } from '../BadgeIcon';
@@ -14,7 +14,10 @@ export function BadgesPanel({ badges, error, staffBadges }: { badges: BadgeProgr
   const [open, setOpen] = useState<BadgeProgress | null>(null);
   if (!badges) return error ? <ErrorText error={error} /> : <Loading lines={3} />;
   if (!badges.length) return <Empty>No badges yet. Check back soon!</Empty>;
-  const count = badges.filter((b) => b.earned).length;
+  // 0033: special / limited badges (Early Bird ☕) live in their own group and don't count toward the 16.
+  const special = badges.filter((b) => isSpecialBadge(b.id));
+  const core = badges.filter((b) => !isSpecialBadge(b.id));
+  const count = core.filter((b) => b.earned).length;
   const def = open ? defOf(open.id) : undefined;
 
   return (
@@ -29,7 +32,15 @@ export function BadgesPanel({ badges, error, staffBadges }: { badges: BadgeProgr
         </div>
       </Panel>
 
-      <BadgeGrid badges={badges} onOpen={setOpen} />
+      <BadgeGrid badges={core} onOpen={setOpen} />
+
+      {special.length > 0 && (
+        <>
+          <h2 className="pixel" style={{ margin: '8px 0 0', fontSize: 18 }}>✨ Special badges</h2>
+          <p className="muted" style={{ margin: 0, fontSize: 14 }}>Limited badges from special events. Extra, on top of the {BADGES.length} quest badges.</p>
+          <BadgeGrid badges={special} onOpen={setOpen} />
+        </>
+      )}
 
       {staffBadges && staffBadges.length > 0 && (
         <>

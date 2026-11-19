@@ -8,6 +8,7 @@ import { Accordion } from '../../components/Blocks';
 import { canUndo, undoneIds, UNDO_PREFIX } from '../../lib/adminTools';
 import type { LedgerEntry } from '../../types';
 import { errorMessage, useAsync } from '../../lib/useAsync';
+import { EMAIL_KIND_LABEL, EMAIL_STATUS_CHIP, EMAIL_STATUS_LABEL } from '../../lib/emailStats';
 
 const gameWin = activityById('game_win')!;
 const PLAYERS_STEP = 20;
@@ -23,6 +24,9 @@ export default function Players() {
   const [limit, setLimit] = useState(PLAYERS_STEP);
   useEffect(() => setLimit(PLAYERS_STEP), [query]);
   const list = useAsync(() => api.searchUsers(query, limit), [query, limit], { live: true });
+  // 0032: people whose email address bounces (emails to them are paused)
+  const bouncing = useAsync(() => api.emailBouncingUsers().catch(() => [] as string[]), [], { live: true });
+  const bounceSet = new Set(bouncing.data ?? []);
   // Fewer rows than asked means we've reached the end (or the server's cap).
   const canMore = !!list.data && list.data.length >= limit;
 
@@ -41,7 +45,7 @@ export default function Players() {
           {list.data.map((u) => (
             <li key={u.id} style={{ padding: '2px 0' }}>
               <button type="button" className="row-btn" onClick={() => setSel(u)}>
-                <span><strong>{u.displayName}</strong> <span className="muted">@{u.handle} · {campusName(u.campus)}</span></span>
+                <span><strong>{u.displayName}</strong> <span className="muted">@{u.handle} · {campusName(u.campus)}</span>{bounceSet.has(u.id) && <> <span className="chip rejected">Bouncing email</span></>}</span>
                 <strong>{u.points} pts</strong>
               </button>
             </li>
@@ -54,12 +58,12 @@ export default function Players() {
           <span>{list.loading ? 'Loading…' : `Show ${PLAYERS_STEP} more players`}</span>
         </button>
       )}
-      {sel && <PlayerModal key={sel.id} user={list.data?.find((u) => u.id === sel.id) ?? sel} onClose={() => setSel(null)} />}
+      {sel && <PlayerModal key={sel.id} user={list.data?.find((u) => u.id === sel.id) ?? sel} bouncing={bounceSet.has(sel.id)} onBounceCleared={() => void bouncing.reload()} onClose={() => setSel(null)} />}
     </div>
   );
 }
 
-function PlayerModal({ user, onClose }: { user: api.AdminUserRow; onClose: () => void }) {
+function PlayerModal({ user, onClose, bouncing = false, onBounceCleared }: { user: api.AdminUserRow; onClose: () => void; bouncing?: boolean; onBounceCleared?: () => void }) {
   const toast = useToast();
   const ledger = useAsync(() => api.userLedger(user.id), [user.id], { live: true });
   const [activityId, setActivityId] = useState(gameWin.id);
@@ -127,6 +131,8 @@ function PlayerModal({ user, onClose }: { user: api.AdminUserRow; onClose: () =>
         </button>
 
         <StaffNotes userId={user.id} name={user.displayName} />
+
+        <EmailHistory user={user} bouncing={bouncing} onBounceCleared={onBounceCleared} />
 
         <Accordion flat title="Points history" glyph="scroll" summary="Manual changes can be undone once" right={ledger.data ? <span className="chip neutral">{ledger.data.length}</span> : undefined} defaultOpen>
           {ledger.loading && !ledger.data ? <Loading /> : !ledger.data?.length ? <Empty>No entries yet.</Empty> : <History ledger={ledger.data} name={user.displayName} />}
@@ -300,5 +306,49 @@ function History({ ledger, name }: { ledger: LedgerEntry[]; name: string }) {
         );
       })}
     </ul>
+  );
+}
+
+/** 0032: every email this person was sent (newest first): status, opened, clicked; clear a bouncing address. */
+function EmailHistory({ user, bouncing, onBounceCleared }: { user: api.AdminUserRow; bouncing: boolean; onBounceCleared?: () => void }) {
+  const toast = useToast();
+  const h = useAsync(() => api.emailHistoryFor(user.id), [user.id]);
+  const [busy, setBusy] = useState(false);
+  async function clear() {
+    setBusy(true);
+    try {
+      await api.adminClearEmailBounce(user.id);
+      toast('Emails to this person will be tried again.', 'success');
+      onBounceCleared?.();
+    } catch (e) {
+      toast(errorMessage(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Accordion flat title="Emails" glyph="mail" summary={bouncing ? 'Bouncing email: emails are paused' : 'What we emailed them, opened, clicked'}
+      right={bouncing ? <span className="chip rejected">Bouncing email</span> : h.data ? <span className="chip neutral">{h.data.length}</span> : undefined}>
+      {bouncing && (
+        <div className="stack" style={{ gap: 6, marginBottom: 10 }}>
+          <p style={{ margin: 0, fontSize: 14 }}>Emails to <b className="wrap-anywhere">{user.email}</b> bounced twice, so YACquest stopped emailing them. They see a banner in Me asking them to fix it.</p>
+          <button type="button" className="btn small" disabled={busy} onClick={() => void clear()}>{busy ? '…' : 'Address fixed: try again'}</button>
+        </div>
+      )}
+      {h.loading && !h.data ? <Loading /> : h.error ? <ErrorText error={h.error} /> : !h.data?.length ? <Empty>No emails yet.</Empty> : (
+        <ul className="em-rcpts">
+          {h.data.map((m) => (
+            <li key={m.id}>
+              <div className="em-r-top">
+                <b>{m.label || m.subject}</b>
+                <span className={`chip ${EMAIL_STATUS_CHIP[m.status] ?? 'neutral'}`}>{EMAIL_STATUS_LABEL[m.status] ?? m.status}</span>
+              </div>
+              <small>{EMAIL_KIND_LABEL[m.kind] ?? m.kind} · {fmtDateTime(m.sentAt ?? m.createdAt)}{m.opened ? ' · opened' : ''}{m.clicked ? ' · clicked' : ''}</small>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="muted" style={{ margin: '6px 0 0', fontSize: 12 }}>Opens are approximate (Apple Mail preloads images; some apps block them).</p>
+    </Accordion>
   );
 }

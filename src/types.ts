@@ -80,6 +80,95 @@ export interface YacEvent {
   attendeeCount: number;
   /** 0026: optional feedback survey link (http/https), sent in the automatic follow-up. Staff views only. */
   surveyUrl?: string;
+  /**
+   * 0033: a special "limited reward" event (Brew & Quest). Participants get the public part only;
+   * staff views (adminListEvents) also carry `secretWord`, `issued` and `used`.
+   */
+  reward?: EventReward & Partial<Pick<EventRewardAdmin, 'secretWord' | 'issued' | 'used'>>;
+}
+
+// ───────────── 0033 Brew & Quest: limited reward events ─────────────
+
+/** What everyone may see about a special reward event. Never the secret word, never how many passes are left. */
+export interface EventReward {
+  /** e.g. "free coffee" */
+  itemLabel: string;
+  /** How many free items (first N participants to check in). */
+  limit: number;
+  venue: string;
+  /** Reward outfit set id (src/lib/rewardEvents.ts OUTFIT_SETS), e.g. 'latte_night_scholar'. */
+  outfitSet: string;
+  /** Countdown message template: {venue} {limit} {item}. */
+  message: string;
+}
+
+/** Staff only: + the secret word the café checks and how many passes went out / were used. */
+export interface EventRewardAdmin extends EventReward {
+  secretWord: string;
+  issued: number;
+  used: number;
+}
+
+/** Admin → Events form → "Special reward event". Blank secret word = the server makes one. */
+export type EventRewardInput = EventReward & { secretWord?: string };
+
+/** A YACquest Coffee Pass (only ever sent to the person who holds it). */
+export interface CoffeePass {
+  eventId: string;
+  eventTitle: string;
+  campus: CampusId | 'all';
+  /** 1..limit, in check-in order */
+  passNo: number;
+  limit: number;
+  venue: string;
+  item: string;
+  /** Only while the pass is valid and unused. */
+  secretWord?: string;
+  checkedInAt: string;
+  /** checkedInAt + 30 minutes */
+  validUntil: string;
+  usedAt?: string;
+  usedBy?: 'self' | 'staff';
+}
+
+/** check_in()'s `reward` for a special event. `pass` ONLY for the person who just got one. */
+export interface CheckInReward {
+  outfitSet: string;
+  /** Cosmetic ids unlocked (kept forever). */
+  items: string[];
+  badge?: 'early_bird';
+  pass?: CoffeePass;
+}
+
+/** my_event_rewards(): new outfit items not yet seen in the Wardrobe + my passes (newest first). */
+export interface MyEventRewards {
+  unseen: string[];
+  passes: CoffeePass[];
+}
+
+/** Door mode pass list row (staff). */
+export interface EventPassRow {
+  passNo: number;
+  userId: string;
+  displayName: string;
+  handle: string;
+  campus: CampusId;
+  createdAt: string;
+  validUntil: string;
+  usedAt?: string;
+  usedBy?: 'self' | 'staff';
+}
+
+export interface EventPasses {
+  eventId: string;
+  limit: number;
+  issued: number;
+  used: number;
+  itemLabel: string;
+  venue: string;
+  secretWord: string;
+  outfitSet: string;
+  passes: EventPassRow[];
 }
 
 export type SubmissionStatus = 'pending' | 'approved' | 'rejected';
@@ -247,7 +336,8 @@ export interface WeeklyReport {
 }
 
 export type EmailKind = 'weekly_report' | 'prize_qualified' | 'prize_info' | 'test' | 'announcement' | 'event_reminder' | 'event_followup' | 'wrapped';
-export type EmailStatus = 'pending' | 'sending' | 'sent' | 'failed';
+/** 0032: one row per recipient. 'pending' = queued; skipped_* rows were never sent (see EMAIL_STATUS_LABEL). */
+export type EmailStatus = 'pending' | 'sending' | 'sent' | 'failed' | 'bounced' | 'skipped_expired' | 'skipped_opted_out' | 'skipped_bouncing';
 
 export interface EmailLogRow {
   id: string;
@@ -768,4 +858,97 @@ export interface EventSurveyResults {
   /** Answers per star, [1★, 2★, 3★, 4★, 5★]. */
   distribution: number[];
   rows: EventSurveyRow[];
+}
+
+
+// ───────────────────────────── 0032: email stats, tracking, unsubscribe ─────────────────────────────
+
+/** Totals for the last N days. Opens are approximate (Apple Mail preloads images; some apps block them). */
+export interface EmailTotals {
+  sent: number;
+  delivered: number;
+  opened: number;
+  clicked: number;
+  openRate: number;
+  ctr: number;
+  bounced: number;
+  unsubscribed: number;
+  skipped: number;
+  expired: number;
+  failed: number;
+}
+
+/** One announcement or automatic email (a reminder for one event, the weekly report of one day, …). */
+export interface EmailCampaignStat {
+  id: string;
+  label: string;
+  kind: EmailKind | string;
+  firstAt: string;
+  recipients: number;
+  sent: number;
+  opened: number;
+  clicked: number;
+  bounced: number;
+  unsubscribed: number;
+  skipped: number;
+  waiting: number;
+  failed: number;
+}
+
+export interface EmailStats {
+  days: number;
+  totals: EmailTotals;
+  daily: { day: string; sent: number; opened: number; clicked: number }[];
+  campaigns: EmailCampaignStat[];
+}
+
+export interface EmailRecipientRow {
+  messageId: string;
+  userId?: string;
+  name: string;
+  campus?: CampusId;
+  email: string;
+  status: EmailStatus | 'queued';
+  sentAt?: string;
+  opened: boolean;
+  openedAt?: string;
+  clickedUrls: string[];
+  bounced: boolean;
+  unsubscribed: boolean;
+  error?: string;
+}
+
+export interface EmailHistoryRow {
+  id: string;
+  kind: EmailKind | string;
+  label: string;
+  subject: string;
+  status: EmailStatus | 'queued';
+  createdAt: string;
+  sentAt?: string;
+  opened: boolean;
+  clicked: boolean;
+  error?: string;
+}
+
+/** Admin → System: "Today: 132 / 450 sent · 40 waiting · next batch in ~6 min". */
+export interface EmailQueueStatus {
+  budget: number;
+  reserve: number;
+  sent24h: number;
+  waiting: number;
+  waitingHigh: number;
+  skippedToday: number;
+  lastRunAt?: string;
+  nextRunAt?: string;
+  /** 'ok' = Gmail bounce notices were read on the last run; 'error'/'off'/'skipped'/'never' = bounce checking off. */
+  bounceCheck: 'ok' | 'off' | 'error' | 'skipped' | 'never';
+  bounceError?: string;
+  lastBounceCheckAt?: string;
+}
+
+export interface MyEmailStatus {
+  optIn: boolean;
+  bounced: boolean;
+  bouncedAt?: string;
 }

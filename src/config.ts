@@ -94,6 +94,12 @@ export const PRIZE_POLL_MS = 15_000;
 
 /** YAC contacts shown in the Rules and anywhere participants need help. */
 export const CONTACT_EMAILS = ['iesha.landis.yac@ncssm.edu', 'jacob.rodriguez.yac@ncssm.edu'] as const;
+/**
+ * 0032: the YAC Gmail that sends YACquest emails (shown on "Check your inbox" so people can add it to
+ * their contacts). Set the build variable VITE_YAC_SENDER_EMAIL (GitHub → Settings → Secrets and
+ * variables → Actions → Variables); empty = a generic hint.
+ */
+export const YAC_SENDER_EMAIL: string = String(import.meta.env.VITE_YAC_SENDER_EMAIL ?? '').trim();
 export const INSTAGRAM_HANDLE = '@ncssmyoungalumni';
 export const INSTAGRAM_URL = 'https://www.instagram.com/ncssmyoungalumni/';
 

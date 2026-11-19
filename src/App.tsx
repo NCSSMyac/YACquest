@@ -41,11 +41,16 @@ import Council from './screens/admin/Council';
 
 // 0025: lazy-loaded so the charts and the full-screen door view stay out of the main bundle.
 const Stats = lazy(() => import('./screens/admin/Stats'));
+// 0032: Admin → Stats → Email (staff) and the public one-click unsubscribe page
+const EmailStats = lazy(() => import('./screens/admin/EmailStats'));
+const Unsubscribe = lazy(() => import('./screens/Unsubscribe'));
 const DoorMode = lazy(() => import('./screens/admin/DoorMode'));
 // 0028: YACquest Wrapped (full-screen story + share image) stays out of the main bundle too.
 const Wrapped = lazy(() => import('./screens/Wrapped'));
 // 0030: in-app event survey (opened from a past event card, the follow-up notification or its email).
 const Survey = lazy(() => import('./screens/Survey'));
+// 0033: the YACquest Coffee Pass (Brew & Quest pass holders only) is a full-screen page, lazy-loaded.
+const CoffeePassPage = lazy(() => import('./screens/CoffeePassPage'));
 const lazyPage = (el: JSX.Element) => <Suspense fallback={<Loading lines={3} />}>{el}</Suspense>;
 
 function RequireAuth() {
@@ -155,6 +160,7 @@ export default function App() {
             {/* 0027: public privacy summary + the page shown after deleting an account. */}
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/goodbye" element={<Goodbye />} />
+            <Route path="/unsubscribe" element={<Suspense fallback={<div className="app-shell"><Loading /></div>}><Unsubscribe /></Suspense>} />
             {/* Event QR codes open this; it handles logged-in and logged-out visitors itself. */}
             <Route path="/checkin" element={<CheckInLink />} />
             <Route element={<RequireAuth />}>
@@ -162,6 +168,7 @@ export default function App() {
               <Route path="/reset-password" element={<ResetPassword />} />
               {/* 0028: YACquest Wrapped is a full-screen story (no app header / tab bar). */}
               <Route path="/wrapped" element={<Suspense fallback={<div className="app-shell"><Loading /></div>}><Wrapped /></Suspense>} />
+              <Route path="/coffee-pass" element={<Suspense fallback={<div className="app-shell"><Loading /></div>}><CoffeePassPage /></Suspense>} />
               {/* 0025: Event-day Door mode is full screen (no app header / tab bar). Staff only. */}
               <Route element={<RequireStaff />}>
                 <Route path="/admin/door/:eventId" element={<Suspense fallback={<div className="app-shell"><Loading /></div>}><DoorMode /></Suspense>} />
@@ -185,6 +192,7 @@ export default function App() {
                     <Route path="players" element={<Players />} />
                     <Route path="events" element={<Events />} />
                     <Route path="stats" element={lazyPage(<Stats />)} />
+                    <Route path="stats/email" element={lazyPage(<EmailStats />)} />
                     <Route element={<RequireStaff chairOnly />}>
                       <Route path="prizes" element={<Prizes />} />
                       <Route path="system" element={<System />} />

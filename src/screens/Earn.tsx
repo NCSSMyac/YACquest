@@ -16,7 +16,9 @@ import { RsvpRow } from '../components/Rsvp';
 import { CheckInConfirm, type CheckInPass } from '../components/CheckInConfirm';
 import { StarterTips } from '../components/StarterTips';
 import { isNewAdventurer } from '../lib/starterTips';
-import type { Activity } from '../types';
+import type { Activity, CheckInReward } from '../types';
+import { RewardCheckIn } from '../components/reward/RewardCheckIn';
+import { RewardBanner, useSecondTick } from '../components/RewardBanner';
 import { Accordion, Card, ShowMore } from '../components/Blocks';
 import type { GlyphName } from '../components/PixelGlyph';
 import { limitToInclude, nextLimit } from '../lib/listing';
@@ -79,6 +81,8 @@ function Events({ focusId }: { focusId?: string }) {
   const [limit, setLimit] = useState(EVENTS_STEP);
   const shownLimit = Math.max(limit, limitToInclude(focusIndex, EVENTS_STEP));
   const [pass, setPass] = useState<CheckInPass | null>(null);
+  // 0033: special reward events get the reveal takeover instead of the CHECKED IN pass.
+  const [special, setSpecial] = useState<{ reward: CheckInReward; points: number; title: string } | null>(null);
   const { user } = useAuth();
   const scrolled = useRef(false);
   const hasData = !!up.data;
@@ -103,14 +107,16 @@ function Events({ focusId }: { focusId?: string }) {
       <ErrorText error={up.error} />
       {up.data && up.data.length === 0 && <Empty>No upcoming events yet. Check back soon, adventurer!</Empty>}
       {up.data?.slice(0, shownLimit).map((e) => (
-        <EventCard key={e.id} e={e} now={now} focused={e.id === focusId} onDone={(pts) => {
+        <EventCard key={e.id} e={e} now={now} focused={e.id === focusId} onDone={(pts, reward) => {
           // Full-screen confirmation (with coins) instead of the small pop.
-          setPass({ eventTitle: e.title, points: pts, checkedInAt: new Date() });
+          if (reward) setSpecial({ reward, points: pts, title: e.title });
+          else setPass({ eventTitle: e.title, points: pts, checkedInAt: new Date() });
           if (user) noteCelebratedPoints(user.id, pts);
         }} />
       ))}
       {up.data && <ShowMore shown={Math.min(shownLimit, up.data.length)} total={up.data.length} step={EVENTS_STEP} noun={['event', 'events']} onMore={() => setLimit(nextLimit(shownLimit, EVENTS_STEP, up.data?.length ?? 0))} />}
       {pass && <CheckInConfirm pass={pass} onDone={() => setPass(null)} />}
+      {special && <RewardCheckIn reward={special.reward} points={special.points} eventTitle={special.title} onClose={() => setSpecial(null)} />}
       <button className="btn ghost small" aria-expanded={showPast} onClick={() => setShowPast((s) => !s)}>
         {showPast ? '▼' : '▶'} Past events{past.data ? ` (${past.data.length})` : ''}
       </button>
@@ -154,7 +160,7 @@ function Events({ focusId }: { focusId?: string }) {
   );
 }
 
-function EventCard({ e, now, focused, onDone }: { e: Ev; now: number; focused?: boolean; onDone: (pts: number) => void }) {
+function EventCard({ e, now, focused, onDone }: { e: Ev; now: number; focused?: boolean; onDone: (pts: number, reward?: CheckInReward) => void }) {
   const [pw, setPw] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -171,7 +177,7 @@ function EventCard({ e, now, focused, onDone }: { e: Ev; now: number; focused?: 
     try {
       const r = await api.checkIn(e.id, pw.trim());
       setPw('');
-      onDone(r.points);
+      onDone(r.points, r.reward);
     } catch (x) {
       setErr(errorMessage(x));
     } finally {
@@ -192,6 +198,8 @@ function EventCard({ e, now, focused, onDone }: { e: Ev; now: number; focused?: 
           <span className="chip neutral">{e.campus === 'all' ? 'All campuses' : campusName(e.campus)}</span>
         </div>
         <div className="ev-meta"><span>🕒 {fmtDateTime(e.startsAt)}</span><span>📍 {e.location}</span></div>
+        {/* 0033: Brew & Quest countdown on the event's own card (never how many passes are left) */}
+        {e.reward && !e.checkedIn && <EventRewardLine e={e as Ev & { reward: NonNullable<Ev['reward']> }} />}
         {/* 0022: RSVP until the event starts; Add to calendar sits on the same line. */}
         {!e.checkedIn && now < start ? (
           <RsvpRow e={e} calendar={<AddToCalendar e={e} />} />
@@ -218,6 +226,12 @@ function EventCard({ e, now, focused, onDone }: { e: Ev; now: number; focused?: 
     </Panel>
     </div>
   );
+}
+
+/** 0033: the live countdown line inside a special event's card (ticks every second while visible). */
+function EventRewardLine({ e }: { e: Ev & { reward: NonNullable<Ev['reward']> } }) {
+  const now = useSecondTick();
+  return <RewardBanner e={e} now={now} compact />;
 }
 
 /** "📅 Add to calendar" with a tiny menu: Google Calendar link or an .ics download. Never includes the password. */

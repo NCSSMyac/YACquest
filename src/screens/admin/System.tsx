@@ -10,6 +10,8 @@ import { DAY_NAMES, hourLabel, isEmail } from '../../lib/validate';
 import type { EmailLogRow, ReportSettings } from '../../types';
 import { useHashScroll } from '../../lib/useHashScroll';
 import { EndOfYearCard } from './EndOfYear';
+import { EmailQueueCard } from '../../components/EmailBlocks';
+import { EMAIL_KIND_LABEL, EMAIL_STATUS_CHIP, EMAIL_STATUS_LABEL } from '../../lib/emailStats';
 
 export default function System() {
   const toast = useToast();
@@ -60,6 +62,8 @@ export default function System() {
     <div className="stack">
       {/* 0028: end-of-year checklist (+ Preview Wrapped) is always here for YACquest Chairs */}
       <EndOfYearCard isChair />
+      {/* 0032: today's budget, queue and bounce checking */}
+      <EmailQueueCard id="email" />
       <WeeklyEmail />
       <EmailLog />
 
@@ -284,16 +288,9 @@ function WeeklyEmail() {
 
 // ───────────────────────────── delivery log ─────────────────────────────
 
-const KIND_LABEL: Record<string, string> = {
-  weekly_report: 'Weekly report',
-  prize_qualified: 'Prize: new winner',
-  prize_info: 'Prize: winner info',
-  test: 'Test',
-  announcement: 'Announcement',
-  event_reminder: 'Event reminder',
-};
-
-const STATUS_CHIP: Record<EmailLogRow['status'], string> = { sent: 'approved', failed: 'rejected', pending: 'pending', sending: 't2' };
+// 0032: one row per recipient; labels shared with Stats → Email
+const KIND_LABEL = EMAIL_KIND_LABEL;
+const STATUS_CHIP: Record<EmailLogRow['status'], string> = EMAIL_STATUS_CHIP;
 
 function EmailLog() {
   const toast = useToast();
@@ -321,7 +318,7 @@ function EmailLog() {
         <span />
         <button className="btn small ghost" onClick={() => void log.reload()}>Refresh</button>
       </div>
-      <p className="muted" style={{ marginTop: 0, fontSize: 14 }}>Emails go out within about 10 minutes. Failed ones are retried automatically up to 5 times.</p>
+      <p className="muted" style={{ marginTop: 0, fontSize: 14 }}>One row per person. Emails go out within about 10 minutes (about 20 a minute). Failed ones are retried automatically up to 5 times. “Skipped — too late (budget)” means the daily Gmail budget ran out before it could go out on time.</p>
       {log.loading && !log.data ? <Loading /> : log.error ? <ErrorText error={log.error} /> : !log.data?.length ? <Empty>No emails yet. Try “Send test email to me”.</Empty> : (
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
@@ -343,7 +340,7 @@ function EmailLog() {
                     {r.lastError && <span className="field-error" style={{ display: 'block', fontSize: 13 }}>{r.lastError}</span>}
                   </td>
                   <td style={td}>
-                    <span className={`chip ${STATUS_CHIP[r.status] ?? 'neutral'}`}>{r.status}</span>
+                    <span className={`chip ${STATUS_CHIP[r.status] ?? 'neutral'}`}>{EMAIL_STATUS_LABEL[r.status] ?? r.status}</span>
                     <span className="muted" style={{ display: 'block', fontSize: 12, marginTop: 4 }}>
                       {r.attempts} {r.attempts === 1 ? 'try' : 'tries'}
                       {r.sentAt && <> · {timeAgo(r.sentAt)}</>}

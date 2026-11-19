@@ -10,6 +10,8 @@ import { STAFF_COSMETICS, staffRequirementText } from '../../lib/staffRewards';
 import type { CosmeticSlot, Look, StaffRewards } from '../../types';
 import { Avatar, CosmeticIcon } from '../Avatar';
 import { ErrorText, Loading, Modal, Panel, useToast } from '../ui';
+import { OUTFIT_SETS, type OutfitSet } from '../../lib/rewardEvents';
+import { useEventRewards } from '../../lib/useEventRewards';
 
 const SECTIONS: { slot: CosmeticSlot; title: string }[] = [
   { slot: 'hat', title: 'Hats' },
@@ -29,14 +31,18 @@ export function requirementText(rule: UnlockRule): string {
       return `Collect ${rule.min} badges`;
     case 'seasonal':
       return 'Limited time';
+    case 'event':
+      return 'Brew & Quest only';
   }
 }
 
-type Cat = CosmeticSlot | 'seasonal' | 'council' | 'hero';
-const CAT_IDS: Cat[] = ['hat', 'accessory', 'background', 'seasonal', 'council', 'hero'];
+type Cat = CosmeticSlot | 'limited' | 'seasonal' | 'council' | 'hero';
+const CAT_IDS: Cat[] = ['hat', 'accessory', 'background', 'limited', 'seasonal', 'council', 'hero'];
 /** Deep link: /prize?tab=wardrobe&cat=seasonal */
 export const isWardrobeCat = (v: string | null): v is Cat => !!v && (CAT_IDS as string[]).includes(v);
-const REGULAR = COSMETICS.filter((c) => c.rule.type !== 'seasonal');
+// 0033: limited-edition event outfits have their own "⭐ Limited" tab.
+const REGULAR = COSMETICS.filter((c) => c.rule.type !== 'seasonal' && c.rule.type !== 'event');
+const LIMITED = COSMETICS.filter((c) => c.rule.type === 'event');
 
 const sameLook = (a?: Look, b?: Look) => (a?.hat ?? '') === (b?.hat ?? '') && (a?.accessory ?? '') === (b?.accessory ?? '') && (a?.background ?? '') === (b?.background ?? '');
 
@@ -47,7 +53,16 @@ export function WardrobePanel({ unlocks, error, staff, initialCat }: { unlocks: 
   const [draft, setDraft] = useState<Look>(user?.look ?? {});
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [cat, setCat] = useState<Cat>(isWardrobeCat(initialCat ?? null) ? (initialCat as Cat) : 'hat');
+  // 0033: NEW limited items → open on the Limited tab; remember which were new for the NEW tags, then mark them seen.
+  const rewards = useEventRewards();
+  const fresh = useRef<Set<string> | null>(null);
+  if (fresh.current === null && rewards.unseen.length) fresh.current = new Set(rewards.unseen);
+  const [cat, setCat] = useState<Cat>(isWardrobeCat(initialCat ?? null) ? (initialCat as Cat) : rewards.unseen.length ? 'limited' : 'hat');
+  const markSeen = rewards.markSeen;
+  const hasUnseen = rewards.unseen.length > 0;
+  useEffect(() => {
+    if (hasUnseen) markSeen();
+  }, [hasUnseen, markSeen]);
   const [about, setAbout] = useState<SeasonalHoliday | null>(null);
   const saved = user?.look;
   // 0028: opening the Wardrobe claims any seasonal item whose window is open today (the list reloads itself).
@@ -93,6 +108,8 @@ export function WardrobePanel({ unlocks, error, staff, initialCat }: { unlocks: 
       const items = REGULAR.filter((c) => c.slot === sec.slot);
       return { id: sec.slot as Cat, label: sec.title, got: items.filter((c) => have.has(c.id)).length, total: items.length };
     }),
+    // 0033: limited-edition event outfits (never return)
+    { id: 'limited' as Cat, label: '⭐ Limited', got: LIMITED.filter((c) => have.has(c.id)).length, total: LIMITED.length },
     // 0028: limited-time items (shown even when none are owned, as "Returns next year")
     { id: 'seasonal' as Cat, label: '🎉 Seasonal', got: seasonalItems().filter((c) => have.has(c.id)).length, total: seasonalItems().length },
     ...(staff
@@ -152,6 +169,14 @@ export function WardrobePanel({ unlocks, error, staff, initialCat }: { unlocks: 
             </div>
           </Panel>
         )}
+        {current === 'limited' && (
+          <div className="stack">
+            {OUTFIT_SETS.map((set) => (
+              <LimitedSet key={set.id} set={set} have={have} draft={draft} campus={user.campus} fresh={fresh.current} onToggle={toggle}
+                onWearAll={() => setDraft((d) => ({ ...d, ...Object.fromEntries(LIMITED.filter((c) => set.items.includes(c.id) && have.has(c.id)).map((c) => [c.slot, c.id])) }))} />
+            ))}
+          </div>
+        )}
         {current === 'seasonal' && <SeasonalSection have={have} draft={draft} campus={user.campus} onToggle={toggle} onAbout={setAbout} />}
         {staff && current === 'council' && (
           <StaffSection
@@ -179,6 +204,47 @@ export function WardrobePanel({ unlocks, error, staff, initialCat }: { unlocks: 
       </div>
       {about && <AboutModal holiday={about} have={have} campus={user.campus} onClose={() => setAbout(null)} />}
     </div>
+  );
+}
+
+// ───────────── 0033 Limited edition (Brew & Quest) ─────────────
+
+function LimitedSet({ set, have, draft, campus, fresh, onToggle, onWearAll }: {
+  set: OutfitSet;
+  have: Set<string>;
+  draft: Look;
+  campus: Parameters<typeof CosmeticIcon>[0]['campus'];
+  fresh: Set<string> | null;
+  onToggle: (c: Pick<CosmeticDef, 'id' | 'slot'>) => void;
+  onWearAll: () => void;
+}) {
+  const items = LIMITED.filter((c) => set.items.includes(c.id));
+  const owned = items.filter((c) => have.has(c.id)).length;
+  return (
+    <Panel className="limited-set">
+      <span className="limited-ribbon">LIMITED EDITION · {set.edition}</span>
+      <div className="limited-head">
+        <h2 className="limited-title">{set.name}</h2>
+        <span className="chip limited-chip">★ Limited</span>
+      </div>
+      <div role="radiogroup" aria-label={set.name} className="tile-grid">
+        {items.map((c) => {
+          const locked = !have.has(c.id);
+          return (
+            <Tile key={c.id} selected={draft[c.slot] === c.id} locked={locked} onClick={() => onToggle(c)} label={c.name} hint={locked ? 'Brew & Quest only' : undefined}>
+              <span style={{ position: 'relative', display: 'inline-block', lineHeight: 0 }}>
+                <CosmeticIcon id={c.id} size={44} campus={campus} locked={locked} />
+                {locked && <LockGlyph />}
+                {!locked && fresh?.has(c.id) && <span className="new-dot tile" aria-hidden="true">NEW</span>}
+              </span>
+            </Tile>
+          );
+        })}
+      </div>
+      {owned > 1 && <button type="button" className="btn small blue limited-wear" onClick={onWearAll}>Try on the full set</button>}
+      <p className="limited-about"><b>About:</b> {set.about}</p>
+      <p className="muted limited-fine">{owned ? 'Yours to keep forever.' : 'Only from checking in at a Brew & Quest event. Not available any other way.'}</p>
+    </Panel>
   );
 }
 

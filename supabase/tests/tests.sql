@@ -1008,11 +1008,19 @@ do $$ begin
 end $$;
 
 -- =============================================================================
--- 18. 0004 — SENDING: claim_email_batch / mark_email_result / retry_email
+-- 18. 0004 + 0032 — SENDING: per-recipient messages, claim_email_messages / mark_email_message / retry_email
+--     (0032 replaced the BCC batch claim; claim_email_batch now only serves outbox rows without messages)
 -- =============================================================================
 :as_super
 do $$ begin
-  perform set_config('t.pending', (select count(*) from email_outbox where status = 'pending')::text, false);
+  perform set_config('t.pending', (select count(*) from email_messages where status = 'queued')::text, false);
+  perform t.ok(current_setting('t.pending')::int >= 3, '0032: queued emails are split into per-recipient messages');
+  perform t.ok(not exists (select 1 from email_outbox o where not exists (select 1 from email_messages m where m.outbox_id = o.id)),
+               '0032: every outbox row has its per-recipient messages');
+  perform t.ok((select bool_and(m.email = any (o.to_emails) or m.email = 'deleted-account')
+                  from email_messages m join email_outbox o on o.id = m.outbox_id)
+               and (select count(*) from email_messages) = (select count(*) from email_outbox o, lateral (select distinct lower(trim(x)) from unnest(o.to_emails) x) d),
+               '0032: one message per address, one address per message');
 end $$;
 :as_service
 do $$
@@ -1021,45 +1029,50 @@ declare
   v_fail uuid;
   v_ok uuid;
 begin
-  select array_agg(id) into ids from claim_email_batch(2);
+  perform t.eq((select count(*) from claim_email_batch(50)), 0::bigint, '0032: legacy claim_email_batch returns nothing (an old BCC sender can''t double-send)');
+  select array_agg(id) into ids from claim_email_messages(2);
   perform t.eq(cardinality(ids), 2, 'claim: respects p_limit');
-  select array_agg(id) into ids from claim_email_batch(500);
-  perform t.eq(cardinality(ids), current_setting('t.pending')::int - 2, 'claim: picks the rest of the pending rows');
-  perform t.eq((select count(*) from claim_email_batch()), 0::bigint, 'claim: sending rows are not picked again');
+  select array_agg(id) into ids from claim_email_messages(50);
+  perform t.eq(cardinality(ids), least(50, current_setting('t.pending')::int - 2), 'claim: picks the next pending messages');
+  while (select count(*) from email_messages where status = 'queued') > 0 loop
+    perform claim_email_messages(50);
+  end loop;
+  perform t.eq((select count(*) from claim_email_messages()), 0::bigint, 'claim: sending rows are not picked again');
   v_ok := ids[1]; v_fail := ids[2];
   perform set_config('t.fail', v_fail::text, false);
   perform set_config('t.ok', v_ok::text, false);
-  perform mark_email_result(v_ok, true, null);
-  perform mark_email_result(v_fail, false, repeat('x', 600));
-  perform t.throws(format('select mark_email_result(%L, true, null)', gen_random_uuid()), 'not_found', 'mark_email_result unknown id');
+  perform mark_email_message(v_ok, true, null);
+  perform mark_email_message(v_fail, false, repeat('x', 600));
+  perform t.throws(format('select mark_email_message(%L, true, null)', gen_random_uuid()), 'not_found', 'mark_email_message unknown id');
 end $$;
 :as_super
 do $$ begin
-  perform t.ok((select status = 'sent' and sent_at is not null and last_error is null and attempts = 1 from email_outbox where id = current_setting('t.ok')::uuid), 'mark ok → sent');
-  perform t.ok((select status = 'failed' and length(last_error) = 500 and attempts = 1 from email_outbox where id = current_setting('t.fail')::uuid), 'mark failed → failed, error truncated to 500');
-  perform t.eq((select count(*) from email_outbox where status = 'sending'), current_setting('t.pending')::bigint - 2, 'others still sending');
+  perform t.ok((select status = 'sent' and sent_at is not null and error is null and attempts = 1 and body_html = '' and body_text = ''
+                  from email_messages where id = current_setting('t.ok')::uuid), 'mark ok → sent (bodies not kept after sending)');
+  perform t.ok((select status = 'failed' and length(error) = 500 and attempts = 1 from email_messages where id = current_setting('t.fail')::uuid), 'mark failed → failed, error truncated to 500');
+  perform t.eq((select count(*) from email_messages where status = 'sending'), current_setting('t.pending')::bigint - 2, 'others still sending');
 end $$;
 :as_service
 do $$
 declare ids uuid[]; i int;
 begin
-  select array_agg(id) into ids from claim_email_batch(50);
+  select array_agg(id) into ids from claim_email_messages(50);
   perform t.eq(ids, array[current_setting('t.fail')::uuid], 'claim: failed row is retried');
-  perform t.eq((select attempts from email_outbox where id = ids[1]), 2, 'claim: attempts + 1');
+  perform t.eq((select attempts from email_messages where id = ids[1]), 2, 'claim: attempts + 1');
   for i in 1..3 loop
-    perform mark_email_result(ids[1], false, 'SMTP down');
-    perform claim_email_batch(50);
+    perform mark_email_message(ids[1], false, 'SMTP down');
+    perform claim_email_messages(50);
   end loop;
-  perform t.eq((select attempts from email_outbox where id = ids[1]), 5, 'claim: attempt 5');
-  perform mark_email_result(ids[1], false, 'SMTP down');
-  perform t.eq((select count(*) from claim_email_batch(50)), 0::bigint, 'claim: gives up after 5 attempts');
+  perform t.eq((select attempts from email_messages where id = ids[1]), 5, 'claim: attempt 5');
+  perform mark_email_message(ids[1], false, 'SMTP down');
+  perform t.eq((select count(*) from claim_email_messages(50)), 0::bigint, 'claim: gives up after 5 attempts');
 end $$;
 :as_super
-update email_outbox set claimed_at = now() - interval '20 minutes'
- where id = (select id from email_outbox where status = 'sending' order by created_at limit 1);
+update email_messages set claimed_at = now() - interval '20 minutes'
+ where id = (select id from email_messages where status = 'sending' order by created_at, id limit 1);
 :as_service
 do $$ begin
-  perform t.eq((select count(*) from claim_email_batch(50)), 1::bigint, 'claim: rows stuck in sending > 15 min are picked again');
+  perform t.eq((select count(*) from claim_email_messages(50)), 1::bigint, 'claim: rows stuck in sending > 15 min are picked again');
 end $$;
 :as_chair1
 do $$
@@ -1070,17 +1083,18 @@ begin
                   join (select created_at, row_number() over () rn from email_log(1000)) b on b.rn = a.rn + 1), 'email_log newest first');
   perform t.eq((select count(*) from email_log(3)), 3::bigint, 'email_log limit');
   select * into l from email_log(1000) where id = current_setting('t.fail')::uuid;
-  perform t.ok(l.status = 'failed' and l.attempts = 5 and l.last_error = 'SMTP down' and l.kind is not null and l.to_emails is not null, 'email_log fields');
+  perform t.ok(l.status = 'failed' and l.attempts = 5 and l.last_error = 'SMTP down' and l.kind is not null and cardinality(l.to_emails) = 1, 'email_log fields (one address per row)');
   perform retry_email(current_setting('t.fail')::uuid);
   perform t.throws(format('select retry_email(%L)', gen_random_uuid()), 'not_found', 'retry_email unknown id');
+  perform t.throws(format('select retry_email(%L)', current_setting('t.ok')), 'not_failed', '0032: only failed emails can be retried');
 end $$;
 :as_super
 do $$ begin
-  perform t.ok((select status = 'pending' and attempts = 0 from email_outbox where id = current_setting('t.fail')::uuid), 'retry_email → pending, attempts 0');
+  perform t.ok((select status = 'queued' and attempts = 0 from email_messages where id = current_setting('t.fail')::uuid), 'retry_email → queued, attempts 0');
 end $$;
 :as_service
 do $$ begin
-  perform t.ok(exists (select 1 from claim_email_batch(50) where id = current_setting('t.fail')::uuid), 'claim: retried row is picked up again');
+  perform t.ok(exists (select 1 from claim_email_messages(50) where id = current_setting('t.fail')::uuid), 'claim: retried row is picked up again');
 end $$;
 
 -- =============================================================================
@@ -1153,7 +1167,7 @@ begin
 end $$;
 :as_super
 do $$ begin
-  perform t.ok(exists (select 1 from email_outbox where kind = 'announcement' and subject = '📣 YACquest: Admin news'), 'admin email to everyone queued');
+  perform t.ok(exists (select 1 from email_outbox where kind = 'announcement' and subject = 'YACquest: Admin news'), 'admin email to everyone queued (0032: no emoji in the subject)');
 end $$;
 rollback;
 :as_alice
@@ -1172,12 +1186,14 @@ begin
   perform t.eq((r->>'emailed')::bigint, opted_in, 'chair: email only to opted-in confirmed people');
   perform t.ok(not (select bool_or('erin@example.edu' = any (to_emails)) from email_outbox where kind = 'announcement'), 'opted-out erin not emailed');
   r := send_announcement('Just for you', 'Your prize is ready', 'user', null, t.u('erin'), true);
-  perform t.eq((r->>'emailed')::int, 1, 'direct message emails the person even if opted out');
+  perform t.eq((r->>'emailed')::int, 0, '0032: a direct message respects “email me announcements” too (in-app only)');
 end $$;
 :as_super
 do $$ begin
-  perform t.ok((select bool_and(cardinality(to_emails) <= 90) from email_outbox where kind = 'announcement'), 'announcement emails batched ≤ 90');
-  perform t.ok(exists (select 1 from email_outbox where kind = 'announcement' and subject = '📣 YACquest: Big news' and body_html like '%New prize alert!%'), 'announcement email content');
+  perform t.eq((select count(*) from email_outbox where kind = 'announcement' and subject = 'YACquest: Big news'), 1::bigint, '0032: one outbox row per announcement');
+  perform t.eq((select count(*) from email_messages m join email_outbox o on o.id = m.outbox_id where o.subject = 'YACquest: Big news'),
+               (select cardinality(to_emails)::bigint from email_outbox where subject = 'YACquest: Big news'), '0032: … split into one email per person (no BCC)');
+  perform t.ok(exists (select 1 from email_outbox where kind = 'announcement' and subject = 'YACquest: Big news' and body_html like '%New prize alert!%'), 'announcement email content');
 end $$;
 
 
@@ -1253,7 +1269,7 @@ values ((select id from cycles where not is_active order by starts_at limit 1), 
 do $$ begin
   perform t.denied('select * from my_badges()', 'anon cannot call my_badges');
   perform t.denied('select monthly_shoutout()', 'anon cannot call monthly_shoutout');
-  perform t.eq((select count(*) from cosmetics), 25::bigint, 'anon can read the cosmetics catalogue (17 + 7 seasonal from 0028 + Three Sisters Garden from 0031)');
+  perform t.eq((select count(*) from cosmetics), 28::bigint, 'anon can read the cosmetics catalogue (17 + 7 seasonal from 0028 + Three Sisters Garden from 0031 + 3 Latte Night Scholar from 0033)');
 end $$;
 :as_gina
 do $$
@@ -1261,7 +1277,7 @@ declare ids text[];
 begin
   select array_agg(id order by ord) into ids from (select id, row_number() over () ord from my_badges()) x;
   perform t.eq(ids, array['first_checkin','regular','veteran','explorer','big_moment','seasons','digital','shutterbug',
-                          'recruiter','giver','champion','voice','halfway','legend','monthly_star','hot_streak'], 'my_badges: 16 badges in badges.ts order (0022: + hot_streak)');
+                          'recruiter','giver','champion','voice','halfway','legend','monthly_star','hot_streak','early_bird'], 'my_badges: 16 core badges in badges.ts order (0022: + hot_streak) + 0033 special Early Bird last');
   perform t.ok((select bool_and(not earned and progress = 0) from my_badges()), 'my_badges: fresh player has nothing (old-cycle check-in ignored)');
   perform t.eq((select goal from my_badges() where id = 'legend'), 650, 'legend goal = prize_goal');
   perform t.eq((select goal from my_badges() where id = 'halfway'), 325, 'halfway goal = half of prize_goal 650 (325)');
@@ -1496,7 +1512,7 @@ begin
   perform t.eq(sh->>'userId', t.u('alice')::text, 'monthly: empty last month → current month (older months ignored)');
   perform t.ok((select earned and progress = 1 from badges_for(t.u('carol')) where id = 'monthly_star'), 'monthly_star: won a finished month (two months ago)');
   perform t.ok((select not earned and progress = 0 from badges_for(t.u('alice')) where id = 'monthly_star'), 'monthly_star: current-month leader has not earned it');
-  perform t.eq((select count(*) from badges_for(t.u('carol'))), 16::bigint, '16 badges (0022)');
+  perform t.eq((select count(*) from badges_for(t.u('carol')) where id <> 'early_bird'), 16::bigint, '16 core badges (0022; 0033 adds the special Early Bird row)');
 
   -- Last month: carol and erin tie on 40 positive points; carol reached 40 first (8h vs 10h).
   perform t.give('carol', 25, t.at(-1, 3));
@@ -1879,10 +1895,11 @@ do $$ begin
   perform t.eq((select column_default from information_schema.columns
                  where table_schema = 'public' and table_name = 'app_config' and column_name = 'max_chairs'), '6', '0017: max_chairs default 6');
   perform t.ok(exists (select 1 from email_outbox where kind = 'announcement'), '0017: announcement emails exist to check');
-  perform t.ok(not exists (select 1 from email_outbox where kind = 'announcement'
-                            and (body_text not like '%turn off “Email me announcements from YAC” in the app under Me → Settings.'
-                                 or body_html not like '%turn off “Email me announcements from YAC” in the app under Me → Settings.%')),
-               '0017: announcement emails name the “Email me announcements from YAC” setting');
+  -- 0032 replaced the 0017 footer: every participant email now ends with the unsubscribe footer (added per recipient).
+  perform t.ok(not exists (select 1 from email_messages where kind = 'announcement' and status = 'queued'
+                            and (body_text not like '%You''re getting this because you have YACquest emails on.%Manage in the app: Me → Settings%'
+                                 or body_html not like '%You''re getting this because you have YACquest emails on.%Unsubscribe in one click</a> · Manage in the app (Me → Settings)%')),
+               '0032: announcement emails end with “you have YACquest emails on” + unsubscribe + Me → Settings');
   perform t.ok(not exists (select 1 from email_outbox where kind = 'announcement' and body_text like '%Change email updates%'),
                '0017: old “Change email updates” footer is gone');
 end $$;
@@ -2341,7 +2358,7 @@ begin
   perform t.ok((r->>'rankOverall')::int = (d->>'rankOverall')::int and (r->>'rankCampus')::int = (d->>'rankCampus')::int, '0022: recap ranks match the dashboard');
   perform t.ok((r->>'participants')::int = (d->>'participants')::int and (r->>'campusParticipants')::int between 1 and (r->>'participants')::int - 1, '0022: recap participant counts');
   perform t.ok(not ((r)::jsonb ? 'councilBadges'), '0022: participant recap has no staff info');
-  perform t.ok((r->>'eventsAttended')::int = 1 and (r->>'badgeTotal')::int = 16 and (r->>'badgesEarned')::int = (select count(*) from my_badges() where earned), '0022: recap events + badges');
+  perform t.ok((r->>'eventsAttended')::int = 1 and (r->>'badgeTotal')::int = 17 and (r->>'badgesEarned')::int = (select count(*) from my_badges() where earned), '0022: recap events + badges (0033: 16 core + Early Bird row; the app shows x / 16)');
   perform t.ok(r->>'cycleName' = 'RSVP test cycle' and (r->>'monthWins')::int >= 0, '0022: recap cycle + month wins');
   perform t.eq((select count(*) from pg_proc where proname = 'my_recap' and pronamespace = 'public'::regnamespace and pronargs = 0), 1::bigint, '0022: my_recap takes no user argument');
   perform t.eq((select count(*) from pg_proc where proname = 'my_recap' and pronamespace = 'public'::regnamespace), 1::bigint, '0022: no other my_recap overload (can''t read someone else''s)');
@@ -3798,6 +3815,517 @@ do $$ begin
                        and body_html like '%href="https://ncssmyac.github.io/YACquest/#/survey/00000000-0000-0000-0000-0000000030e3"%'
                   from email_outbox where kind = 'event_followup' and dedupe_key = 'followup:00000000-0000-0000-0000-0000000030e3:' || t.u('alice')),
                '0030 follow-up: email links <app_url>#/survey/<id> (text + button) and the external survey');
+end $$;
+rollback;
+
+-- =============================================================================
+-- 0032. PERSONALIZED ONE-PER-PERSON EMAILS, UNSUBSCRIBE, TRACKING, BOUNCES, SAFE SENDING
+--       (fixed dates where it matters; everything rolled back afterwards)
+-- =============================================================================
+begin;
+:as_super
+update email_messages set status = 'sent', sent_at = now() - interval '3 days', claimed_at = null where status in ('queued', 'sending', 'failed');
+update app_config set email_daily_budget = 450, email_reserve = 50, email_announcement_days = 3;
+update profiles set email_opt_in = true, email_bounced = false, display_name = 'Ali&<b>' where id = t.u('alice');
+update profiles set email_opt_in = true, email_bounced = false where id in (t.u('carol'), t.u('dave'), t.u('frank'), t.u('ref2'), t.u('ref3'));
+update profiles set email_opt_in = false where id = t.u('erin');
+insert into events (id, cycle_id, title, campus, kind, location, starts_at, ends_at, activity_id) values
+  ('00000000-0000-0000-0000-0000000032e1', active_cycle_id(), 'Pickleball Social', 'all', 'active', 'Courts', '2035-01-04 18:00-05', '2035-01-04 20:00-05', 'home_event'),
+  ('00000000-0000-0000-0000-0000000032e2', active_cycle_id(), 'Trivia Night', 'duke', 'active', 'Pub', now() + interval '1 day', now() + interval '1 day 2 hours', 'home_event'),
+  ('00000000-0000-0000-0000-0000000032e3', active_cycle_id(), 'Old Thing', 'duke', 'active', 'Quad', '2030-02-01 18:00-05', '2030-02-01 20:00-05', 'home_event');
+
+-- ---- fill-ins, first name, campus pun (same values as src/__tests__/emailPersonalization.test.ts) ----
+do $$ declare v jsonb; begin
+  perform t.eq(email_first_name('  Alice   A. '), 'Alice', '0032 fill: first name = first word of the display name');
+  perform t.eq(email_first_name('   '), null::text, '0032 fill: no name → null (greeting falls back to "Hi there,")');
+  perform t.ok(cardinality(campus_puns('duke')) = 4 and cardinality(campus_puns('unc')) = 4 and cardinality(campus_puns('ncsu')) = 4, '0032 pun: 4 lines per campus');
+  perform t.eq(email_seed('abc'), 294, '0032 pun: seed = sum of character codes');
+  perform t.eq(campus_pun('unc', email_seed('abc')), 'Carolina blue skies ahead 💙', '0032 pun: deterministic per send (same as campusPun(''unc'', ''abc'') in TS)');
+  perform t.eq(campus_pun('duke', 0), 'Bet they don''t teach you that at Duke 😈', '0032 pun: seed 0 → first Duke line');
+  perform t.eq(campus_pun('ncsu', 5), 'Howl about joining us?', '0032 pun: seed 5 → second NC State line');
+  perform t.eq(campus_pun('mars', 1), 'See you at the next YAC event!', '0032 pun: unknown campus → neutral line');
+  perform t.eq(email_next_stop(0, 350), 'Trailhead (50 pts)', '0032 next stop: Trailhead');
+  perform t.eq(email_next_stop(120, 350), 'Halfway (175 pts)', '0032 next stop: Halfway at 175');
+  perform t.eq(email_next_stop(250, 350), 'the treasure (350 pts)', '0032 next stop: Summit passed → the treasure');
+  perform t.eq(email_next_stop(400, 350), 'the treasure (you made it!)', '0032 next stop: past the goal');
+  v := email_fill_values(t.u('alice'), 'announcement:x', '2035-01-01 12:00-05');
+  perform t.eq(v->>'first_name', 'Ali&<b>', '0032 fill: first_name');
+  perform t.eq(v->>'campus', 'Duke', '0032 fill: campus label');
+  perform t.eq(v->>'next_event', 'Pickleball Social (Thu, Jan 4)', '0032 fill: next event title + date (New York)');
+  perform t.eq((v->>'points_to_goal')::int, greatest(0, (select prize_goal from app_config) - (select points from profiles where id = t.u('alice'))), '0032 fill: points to the prize goal');
+  perform t.eq(v->>'friend_code', (select friend_code from profiles where id = t.u('alice')), '0032 fill: friend code');
+  perform t.eq(email_fill_values(t.u('alice'), 'x', '2040-01-01')->>'next_event', 'the next YAC event', '0032 fill: no upcoming event → generic');
+  perform t.eq(email_fill('Hi {first_name}! {nope} {campus}', v, true), 'Hi Ali&amp;&lt;b&gt;! {nope} Duke', '0032 fill: HTML values escaped, unknown tokens left as typed');
+  perform t.eq(email_fill('Hi {first_name}!', v, false), 'Hi Ali&<b>!', '0032 fill: plain text not escaped');
+  perform t.eq(email_unknown_tokens('{first_name} {event} {frist_name} {event} {points}'), array['event', 'frist_name'], '0032: unknown tokens detected (typos + template leftovers)');
+  perform t.eq(email_unknown_tokens('No tokens {} { x } here'), '{}'::text[], '0032: braces without a token are fine');
+end $$;
+
+-- ---- announcement with fill-ins → one personalized email per person ----
+:as_chair1
+do $$ declare r json; begin
+  perform t.throws($q$select send_announcement('Hello {event}', 'Hi {first_name}', 'all', null, null, true)$q$, 'fill_in', '0032: unknown fill-in refused by the server');
+  r := send_announcement('Points check, {first_name}',
+         'You have {points} points, {points_to_goal} to go. Next stop: {next_stop}. {campus_pun} See you at Trivia Night! RSVP: https://example.com/rsvp?x=1&y=2.',
+         'user', null, t.u('alice'), true);
+  perform set_config('t.ann', r->>'id', false);
+  perform t.eq((r->>'emailed')::int, 1, '0032: direct message emailed (alice has emails on)');
+end $$;
+:as_super
+do $$
+declare
+  m  email_messages;
+  v  jsonb := email_fill_values(t.u('alice'), 'announcement:' || current_setting('t.ann'));
+  n  notifications;
+begin
+  select * into n from notifications where user_id = t.u('alice') and kind = 'announcement' and title like 'Points check%';
+  perform t.eq(n.title, 'Points check, Ali&<b>', '0032 in-app: title filled per person');
+  perform t.ok(n.body like 'You have ' || (v->>'points') || ' points, ' || (v->>'points_to_goal') || ' to go.%' and position('{' in n.body) = 0, '0032 in-app: body filled per person');
+  select * into m from email_messages where campaign_id = 'announcement:' || current_setting('t.ann');
+  perform t.ok(m.email = 'alice@example.edu' and m.user_id = t.u('alice') and m.priority = 4 and m.status = 'queued', '0032: one message, to alice only, priority 4');
+  perform t.eq(m.subject, 'YACquest: Points check, Ali&<b>', '0032: subject filled, no emoji');
+  perform t.ok(m.body_text like E'Hi Ali&<b>,\n\nYou have %', '0032: text opens with "Hi {first_name},"');
+  perform t.ok(m.body_html like '%<p style="margin:0 0 12px;font-size:16px;">Hi Ali&amp;&lt;b&gt;,</p>%' and position('Ali&<b>' in m.body_html) = 0, '0032: HTML greeting escaped; the raw name never reaches the HTML');
+  perform t.ok(position('{' in m.body_text) = 0 and m.body_html !~ '\{[a-z_]+\}', '0032: no fill-in tokens left');
+  perform t.ok(m.body_text like '%' || campus_pun('duke', email_seed('announcement:' || current_setting('t.ann'))) || '%', '0032: {campus_pun} → this send''s Duke line');
+  perform t.ok(m.body_html like '%href="https://ncssmyac.github.io/YACquest/#/unsubscribe?t=' || (select token from email_unsub_tokens where user_id = t.u('alice')) || '" style="color:#0b2a5b;">Unsubscribe in one click</a> · Manage in the app (Me → Settings)<br>YACquest · NCSSM Young Alumni Council%',
+               '0032: footer with the person''s one-click unsubscribe link + Me → Settings + identity line');
+  perform t.ok(m.body_text like E'%\nUnsubscribe in one click: https://ncssmyac.github.io/YACquest/#/unsubscribe?t=%', '0032: text footer has the unsubscribe link');
+  perform t.ok((select token ~ '^[0-9a-f]{32}$' and token <> replace(t.u('alice')::text, '-', '') from email_unsub_tokens where user_id = t.u('alice')), '0032: token is random hex, not the user id');
+  perform t.ok(position(t.u('alice')::text in m.body_html) = 0, '0032: the user id is never in the email');
+  perform t.ok(m.body_html like '%<a href="https://example.com/rsvp?x=1&amp;y=2" style="color:#0b2a5b;">https://example.com/rsvp?x=1&amp;y=2</a>.%', '0032: links in the message become real links (trailing period left out)');
+  perform t.ok(m.body_html like '%>Open YACquest</a>%', '0032: announcement has an Open YACquest button');
+  perform t.eq(m.send_before, (select starts_at from events where id = '00000000-0000-0000-0000-0000000032e2'), '0032 expiry: mentions an event starting sooner than 3 days → expires when it starts');
+  perform t.eq((select count(*) from email_outbox where dedupe_key = 'announcement:' || current_setting('t.ann')), 1::bigint, '0032: dedupe key kept (announcement:<id>)');
+end $$;
+
+-- ---- other kinds: expiry, footers, opt-out at queue time, sign-off pun ----
+do $$ declare m email_messages; begin
+  perform enqueue_email('event_reminder', array['Erin@Example.edu', 'carol@example.edu'], 'Reminder: Trivia Night starts at 7:00 PM', 'Trivia Night starts soon.' || chr(10) || chr(10) || 'You get this because you RSVP''d in YACquest and have email updates on (turn them off in Me).',
+                        email_layout('Reminder: Trivia Night', '<p>Trivia Night starts soon.</p><p style="font-size:12px;color:#4a5672;margin:0">You get this because you RSVP’d in YACquest and have email updates on (turn them off in Me).</p>'),
+                        'reminder:00000000-0000-0000-0000-0000000032e2:t32');
+  perform t.eq((select status from email_messages where email = 'erin@example.edu' and campaign_id = 'event_reminder:00000000-0000-0000-0000-0000000032e2'), 'skipped_opted_out', '0032: opted-out person gets no reminder email (in-app only)');
+  select * into m from email_messages where email = 'carol@example.edu' and campaign_id = 'event_reminder:00000000-0000-0000-0000-0000000032e2';
+  perform t.ok(m.status = 'queued' and m.priority = 2 and m.campaign_label = 'Reminder · Trivia Night', '0032: reminder queued, priority 2, labelled');
+  perform t.eq(m.send_before, (select starts_at from events where id = '00000000-0000-0000-0000-0000000032e2'), '0032 expiry: reminder must go before the event starts');
+  perform t.ok(m.body_text like 'Hi ' || email_first_name((select display_name from profiles where id = t.u('carol'))) || ',%' and m.body_text not like '%You get this because%' and m.body_html not like '%You get this because%', '0032: reminder greets by name; the old footer is replaced');
+  perform t.ok(m.subject ~ '^[ -~]+$', '0032: no emoji in the reminder subject');
+
+  perform enqueue_email('event_followup', array['carol@example.edu'], 'Thanks for coming to Old Thing!', 'Thanks!',
+                        email_layout('Thanks for coming to Old Thing!', '<p>Thanks!</p>'), 'followup:00000000-0000-0000-0000-0000000032e3:' || t.u('carol'));
+  select * into m from email_messages where campaign_id = 'event_followup:00000000-0000-0000-0000-0000000032e3';
+  perform t.eq(m.send_before, '2030-02-04 20:00-05'::timestamptz, '0032 expiry: follow-up = event end + 3 days');
+  perform t.ok(m.body_html like '%<p style="margin:14px 0 0;color:#4a5672;font-style:italic;">'
+               || html_escape(campus_pun('duke', email_seed('event_followup:00000000-0000-0000-0000-0000000032e3'))) || '</p>%', '0032: thank-you signs off with a campus pun');
+
+  perform enqueue_email('weekly_report', array['staff1@example.edu', 'board@example.edu'], 'YACquest weekly report', 'Report', email_layout('Weekly', '<p>r</p>'), 'weekly:t32');
+  select * into m from email_messages where campaign_id like 'weekly_report:%' and email = 'board@example.edu' and status = 'queued';
+  perform t.eq(m.send_before, (date_trunc('day', now() at time zone 'America/New_York') + interval '1 day') at time zone 'America/New_York', '0032 expiry: weekly report = end of that day (New York)');
+  perform t.ok(m.priority = 1 and m.user_id is null and m.body_html like '%Manage these in Admin → System.%' and m.body_html not like '%Unsubscribe%' and m.body_text like '%Manage these in Admin → System.%' and m.body_text not like 'Hi %',
+               '0032: staff email: per recipient, no greeting, "Manage these in Admin → System", no unsubscribe');
+  perform t.eq((select count(*) from email_messages where campaign_id = m.campaign_id and status = 'queued'), 2::bigint, '0032: staff email split per recipient too');
+  perform enqueue_email('prize_qualified', array['staff1@example.edu'], 'won', 'w', 'w', 'prize_qualified:00000000-0000-0000-0000-0000000032c1');
+  perform t.ok((select send_before is null and priority = 1 and campaign_id = 'prize:00000000-0000-0000-0000-0000000032c1' from email_messages where campaign_id like 'prize:%32c1'), '0032 expiry: prize alerts never expire');
+  perform enqueue_email('wrapped', array['alice@example.edu'], 'Your YACquest Wrapped is here! 🎁', 'w', email_layout('Wrapped', '<p>w</p>'), 'wrapped:' || active_cycle_id() || ':' || t.u('alice'));
+  perform t.eq((select send_before from email_messages where kind = 'wrapped' and email = 'alice@example.edu'),
+               (select case when ends_at > now() then ends_at else now() + interval '3 days' end from cycles where id = active_cycle_id()), '0032 expiry: Wrapped = cycle end');
+end $$;
+
+-- ---- priority + budget reserve ----
+update app_config set email_daily_budget = 60, email_reserve = 50;
+update email_messages set sent_at = now() - interval '3 days' where sent_at > now() - interval '1 day';
+insert into email_messages (kind, campaign_id, email, status, sent_at)
+select 'test', 'test', 'filler' || i || '@example.edu', 'sent', now() - interval '1 hour' from generate_series(1, 5) i;
+update email_messages set status = 'sent', sent_at = now() - interval '3 days' where kind in ('weekly_report', 'prize_qualified', 'event_followup') and status = 'queued';
+select enqueue_email('test', array['staff1@example.edu'], 'YACquest test email', 't', 'h', 'test:t32') \g /dev/null
+select enqueue_email('announcement', array['dave@example.edu', 'frank@example.edu', 'ref2@example.edu'], 'YACquest: Bulk', 'b', email_layout('Bulk', '<p>b</p>'),
+                     'announcement:00000000-0000-0000-0000-0000000032a0') \g /dev/null
+:as_service
+do $$ declare ids uuid[]; pr int[]; begin
+  -- queued now: test (1) · carol reminder (2) · alice announcement (4) · 3 bulk announcements (4) · alice Wrapped (5)
+  select array_agg(id order by priority, id), array_agg(priority order by priority, id) into ids, pr from claim_email_messages(50);
+  -- left = 60 − 5 sent = 55; priority 1–2 take 2; low may use 55 − 50 reserve − 2 = 3
+  perform t.eq(cardinality(ids), 5, '0032 budget: 2 urgent + 3 low (the rest waits above the reserve)');
+  perform t.eq(pr[1:2], array[1, 2], '0032 priority: test/staff first, then the reminder');
+  perform t.ok(pr[3] = 4 and pr[4] = 4 and pr[5] = 4, '0032 priority: announcements before Wrapped');
+  perform t.eq((select count(*) from email_messages where kind = 'wrapped' and status = 'queued'), 1::bigint, '0032 priority: Wrapped (5) waits');
+  perform t.eq((select count(*) from claim_email_messages(50)), 0::bigint, '0032 budget: low priority waits when only the reserve is left');
+end $$;
+:as_super
+select enqueue_email('event_reminder', array['dave@example.edu'], 'Reminder: Trivia Night', 'r', email_layout('R', '<p>r</p>'), 'reminder:00000000-0000-0000-0000-0000000032e2:dave') \g /dev/null
+:as_service
+do $$ begin
+  perform t.eq((select count(*) from claim_email_messages(50) where priority = 2), 1::bigint, '0032 budget: a reminder still goes out from the reserve');
+end $$;
+
+-- ---- expiry at claim time: never sent late ----
+:as_super
+select enqueue_email('event_reminder', array['frank@example.edu'], 'Reminder: Trivia Night', 'r', email_layout('R', '<p>r</p>'), 'reminder:00000000-0000-0000-0000-0000000032e2:frank') \g /dev/null
+update app_config set email_daily_budget = 450;
+:as_service
+do $$ declare v_start timestamptz := (select starts_at from events where id = '00000000-0000-0000-0000-0000000032e2'); begin
+  perform t.eq((select count(*) from claim_email_messages(50, v_start + interval '1 minute') where email = 'frank@example.edu' and kind = 'event_reminder'), 0::bigint, '0032 expiry: reminder not sent after the event started');
+  perform t.ok((select status = 'skipped_expired' and error like 'Too late%' and body_html = '' from email_messages where email = 'frank@example.edu' and kind = 'event_reminder'),
+               '0032 expiry: marked skipped_expired ("Skipped — too late (budget)")');
+end $$;
+:as_chair1
+do $$ begin
+  perform t.ok(exists (select 1 from email_log(500) where status = 'skipped_expired' and to_emails = array['frank@example.edu']), '0032: delivery log shows the skipped email');
+end $$;
+
+-- ---- HMAC link signing + tracking ----
+:as_super
+update email_secrets set track_secret = 'test-secret';
+update email_messages set status = 'sent', sent_at = now() where campaign_id = 'announcement:' || current_setting('t.ann');
+do $$ begin
+  perform t.eq(email_link_sig('00000000-0000-0000-0000-000000000001', 'https://example.com/a?b=1&c=2'), '9f326b2007899e8b0516ecb8f4e54f58',
+               '0032 HMAC: same as HMAC-SHA256 in Node/Deno (left 32 hex)');
+end $$;
+:as_service
+do $$
+declare
+  v_id  uuid := (select id from email_messages where campaign_id = 'announcement:' || current_setting('t.ann'));
+  v_url text := 'https://example.com/rsvp?x=1&y=2';
+begin
+  perform t.eq(track_email_click(v_id, v_url, repeat('0', 32)), false, '0032 click: bad signature rejected (no redirect)');
+  perform t.eq(track_email_click(v_id, 'https://evil.example/', email_link_sig(v_id, v_url)), false, '0032 click: a signature for another URL is rejected');
+  perform t.eq(track_email_click(v_id, 'javascript:alert(1)', email_link_sig(v_id, 'javascript:alert(1)')), false, '0032 click: only http(s) URLs');
+  perform t.eq(track_email_click(gen_random_uuid(), v_url, email_link_sig(v_id, v_url)), false, '0032 click: signature is tied to the message');
+  perform t.eq((select count(*) from email_events where message_id = v_id and type = 'click'), 0::bigint, '0032 click: nothing logged for bad signatures');
+  perform t.eq(track_email_click(v_id, v_url, (select sig from email_sign_links(v_id, array[v_url]))), true, '0032 click: good signature accepted + logged');
+  perform t.eq((select url from email_events where message_id = v_id and type = 'click'), v_url, '0032 click: URL recorded');
+  perform t.eq(track_email_open(v_id, 'Mozilla/5.0 ' || repeat('x', 300)), true, '0032 open: logged');
+  perform t.ok((select length(user_agent) <= 120 from email_events where message_id = v_id and type = 'open'), '0032 open: user agent kept short');
+  perform t.eq(track_email_open(gen_random_uuid(), 'x'), false, '0032 open: unknown message ignored');
+  perform t.eq((select count(*) from email_sign_links(gen_random_uuid(), array[v_url])), 0::bigint, '0032 sign: nothing for unknown messages');
+  perform t.eq((select count(*) from email_sign_links(v_id, array['ftp://x', v_url, 'mailto:a@b.co'])), 1::bigint, '0032 sign: only http(s) links');
+end $$;
+
+-- ---- unsubscribe (anon, token only) ----
+:as_super
+update email_messages set status = 'queued', claimed_at = null where kind = 'wrapped' and email = 'alice@example.edu';
+select set_config('t.tok', (select token from email_unsub_tokens where user_id = t.u('alice')), false) \g /dev/null
+select set_config('t.alice', (select points || '|' || display_name || '|' || campus || '|' || role from profiles where id = t.u('alice')), false) \g /dev/null
+:as_anon
+do $$ declare r json; begin
+  perform t.throws($q$select unsubscribe_by_token('nope')$q$, 'invalid_token', '0032 unsubscribe: garbage token → harmless error');
+  perform t.throws(format('select unsubscribe_by_token(%L)', repeat('a', 32)), 'invalid_token', '0032 unsubscribe: unknown token → harmless error');
+  perform t.throws(format('select unsubscribe_by_token(%L)', t.u('alice')), 'invalid_token', '0032 unsubscribe: the user id is not a token');
+  perform t.denied('select count(*) from email_unsub_tokens', '0032: anon cannot read tokens');
+  perform t.denied('select count(*) from email_messages', '0032: anon cannot read messages');
+  perform t.denied('select claim_email_messages()', '0032: anon cannot claim emails');
+  perform t.denied(format('select track_email_open(%L)', gen_random_uuid()), '0032: anon cannot call tracking RPCs directly');
+  perform t.denied('select email_stats()', '0032: anon cannot read stats');
+  r := unsubscribe_by_token(current_setting('t.tok'));
+  perform t.ok((r->>'unsubscribed')::boolean and not (r->>'alreadyOff')::boolean, '0032 unsubscribe: one click turns emails off');
+  perform t.ok(position('ali' in lower(r::text)) = 0 and position('@' in r::text) = 0, '0032 unsubscribe: the response reveals nothing about the person');
+  r := unsubscribe_by_token(current_setting('t.tok'));
+  perform t.ok((r->>'alreadyOff')::boolean, '0032 unsubscribe: second click → already off');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok((select not email_opt_in and points || '|' || display_name || '|' || campus || '|' || role = current_setting('t.alice') from profiles where id = t.u('alice')),
+               '0032 unsubscribe: only email_opt_in changed');
+  perform t.eq((select count(*) from email_events where type = 'unsubscribe' and user_id = t.u('alice')), 1::bigint, '0032 unsubscribe: one event recorded');
+end $$;
+:as_service
+select count(*) from claim_email_messages(50) \g /dev/null
+:as_super
+do $$ begin
+  perform t.eq((select status from email_messages where kind = 'wrapped' and email = 'alice@example.edu'), 'skipped_opted_out', '0032: queued emails to someone who unsubscribed are skipped');
+end $$;
+
+-- ---- bounces ----
+update email_messages set status = 'sent', sent_at = now() - interval '1 hour'
+ where email = 'carol@example.edu' and status in ('queued', 'sending');
+select enqueue_email('test', array['carol@example.edu'], 'First', 's', 's', 'test:t32a') \g /dev/null
+select enqueue_email('test', array['carol@example.edu'], 'Second', 's', 's', 'test:t32b') \g /dev/null
+update email_messages set status = 'sent', sent_at = now() - interval '45 minutes' where email = 'carol@example.edu' and subject = 'First';
+update email_messages set status = 'sent', sent_at = now() - interval '30 minutes' where email = 'carol@example.edu' and subject = 'Second';
+:as_service
+do $$ declare r json; begin
+  r := record_email_bounce('Carol@Example.edu', '550 5.1.1 The email account that you tried to reach does not exist.', true);
+  perform t.ok((r->>'matched')::boolean and not (r->>'flagged')::boolean, '0032 bounce: matched to the latest email, 1 hard bounce → not flagged yet');
+  perform t.eq((select status from email_messages where id = (r->>'messageId')::uuid), 'bounced', '0032 bounce: message marked bounced');
+  r := record_email_bounce('carol@example.edu', '550 5.1.1 does not exist', true);
+  perform t.ok((r->>'flagged')::boolean and (r->>'hardBounces')::int = 2, '0032 bounce: 2nd hard bounce flags the address');
+  r := record_email_bounce('nobody@nowhere.example', 'x', true);
+  perform t.ok(not (r->>'matched')::boolean, '0032 bounce: unknown address ignored');
+end $$;
+:as_super
+select enqueue_email('event_reminder', array['carol@example.edu'], 'Reminder', 'r', 'r', 'reminder:00000000-0000-0000-0000-0000000032e2:carol2') \g /dev/null
+do $$ begin
+  perform t.ok((select email_bounced and email_bounced_at is not null from profiles where id = t.u('carol')), '0032 bounce: profiles.email_bounced set');
+  perform t.eq((select status from email_messages where campaign_id = 'event_reminder:00000000-0000-0000-0000-0000000032e2' and email = 'carol@example.edu' and subject = 'Reminder'),
+               'skipped_bouncing', '0032 bounce: emails to a bouncing address pause');
+end $$;
+:as_admin
+do $$ begin
+  perform t.ok(exists (select 1 from email_bouncing_users() where user_id = t.u('carol')), '0032: staff see who is bouncing');
+end $$;
+:as_carol
+do $$ begin
+  perform t.ok((my_email_status()->>'bounced')::boolean, '0032: carol sees her bouncing banner');
+  perform clear_my_email_bounce();
+  perform t.ok(not (my_email_status()->>'bounced')::boolean, '0032: "my email works now" clears it');
+  perform t.throws('select email_bouncing_users()', 'forbidden', '0032: participants can''t list bouncing users');
+end $$;
+
+-- ---- stats + drill-down (staff only) ----
+:as_super
+select enqueue_email('announcement', array['dave@example.edu', 'frank@example.edu', 'ref2@example.edu', 'ref3@example.edu'], 'YACquest: Stats test', 's',
+                     email_layout('Stats test', '<p>s</p>'), 'announcement:00000000-0000-0000-0000-0000000032a1') \g /dev/null
+do $$
+declare c text := 'announcement:00000000-0000-0000-0000-0000000032a1';
+begin
+  update email_messages set status = 'sent', sent_at = now() - interval '1 hour' where campaign_id = c;
+  update email_messages set status = 'bounced' where campaign_id = c and email = 'ref2@example.edu';
+  insert into email_events (message_id, user_id, type, url)
+  select m.id, m.user_id, x.type, x.url from email_messages m,
+         (values ('dave@example.edu', 'open', null), ('dave@example.edu', 'open', null), ('dave@example.edu', 'click', 'https://ncssmyac.github.io/YACquest/'),
+                 ('frank@example.edu', 'open', null), ('ref2@example.edu', 'bounce', null), ('ref3@example.edu', 'unsubscribe', null)) x(email, type, url)
+   where m.campaign_id = c and m.email = x.email;
+end $$;
+:as_admin
+do $$
+declare
+  s json := email_stats(1);
+  c json;
+  r record;
+begin
+  select x into c from json_array_elements(s->'campaigns') x where x->>'id' = 'announcement:00000000-0000-0000-0000-0000000032a1';
+  perform t.ok((c->>'recipients')::int = 4 and (c->>'sent')::int = 4 and (c->>'opened')::int = 2 and (c->>'clicked')::int = 1
+               and (c->>'bounced')::int = 1 and (c->>'unsubscribed')::int = 1, '0032 stats: per-email sent 4 · opened 2 (unique) · clicked 1 · bounced 1 · unsubscribed 1');
+  perform t.eq(c->>'label', 'YACquest: Stats test', '0032 stats: label falls back to the subject');
+  perform t.ok((s->'totals'->>'delivered')::int = (s->'totals'->>'sent')::int - (s->'totals'->>'bounced')::int, '0032 stats: delivered = sent − bounced');
+  perform t.ok((s->'totals'->>'ctr')::int = round(100.0 * (s->'totals'->>'clicked')::int / greatest(1, (s->'totals'->>'delivered')::int)), '0032 stats: click-through rate');
+  perform t.ok((s->'totals'->>'unsubscribed')::int >= 1, '0032 stats: unsubscribes counted');
+  perform t.ok((s->'totals'->>'skipped')::int >= 3, '0032 stats: skipped counted');
+  perform t.eq(json_array_length(s->'daily'), 1, '0032 stats: one point per day');
+  perform t.eq((select count(*) from email_campaign_recipients('announcement:00000000-0000-0000-0000-0000000032a1')), 4::bigint, '0032 drill-down: one row per recipient');
+  select * into r from email_campaign_recipients('announcement:00000000-0000-0000-0000-0000000032a1') where email = 'dave@example.edu';
+  perform t.ok(r.opened and r.clicked_urls = array['https://ncssmyac.github.io/YACquest/'] and not r.bounced and r.name = (select display_name from profiles where id = t.u('dave')) and r.campus = (select campus from profiles where id = t.u('dave')), '0032 drill-down: opened + which link');
+  perform t.ok((select bounced from email_campaign_recipients('announcement:00000000-0000-0000-0000-0000000032a1') where email = 'ref2@example.edu'), '0032 drill-down: bounced');
+  perform t.ok((select unsubscribed from email_campaign_recipients('announcement:00000000-0000-0000-0000-0000000032a1') where email = 'ref3@example.edu'), '0032 drill-down: unsubscribed');
+  perform t.ok(exists (select 1 from email_history_for(t.u('dave')) h where h.label = 'YACquest: Stats test' and h.opened and h.clicked), '0032: per-person email history');
+  perform t.eq((email_queue_status()->>'budget')::int, 450, '0032 queue: budget from app_config');
+end $$;
+:as_service
+select email_run_finished('{"sent": 3, "failed": 0, "imap": "error", "imapError": "IMAP is turned off in Gmail"}') \g /dev/null
+:as_admin
+do $$ declare q json := email_queue_status(); begin
+  perform t.ok(q->>'bounceCheck' = 'error' and q->>'bounceError' = 'IMAP is turned off in Gmail' and q->>'nextRunAt' is not null, '0032 queue: last run + bounce check state');
+end $$;
+:as_alice
+do $$ begin
+  perform t.throws('select email_stats()', 'forbidden', '0032: participants can''t read email stats');
+  perform t.throws($q$select email_campaign_recipients('test')$q$, 'forbidden', '0032: participants can''t drill down');
+  perform t.throws(format('select email_history_for(%L)', t.u('dave')), 'forbidden', '0032: participants can''t read someone''s email history');
+  perform t.throws('select email_queue_status()', 'forbidden', '0032: participants can''t read the queue');
+  perform t.denied('select record_email_bounce(''a@b.co'')', '0032: participants can''t report bounces');
+end $$;
+rollback;
+
+-- =============================================================================
+-- 0033. BREW & QUEST: limited reward events, passes, Latte Night Scholar, Early Bird
+-- Check-ins use now() (check_in's window); pass validity + ordering use fixed dates.
+-- =============================================================================
+:as_super
+begin;
+update profiles set role = 'participant' where id in (t.u('alice'), t.u('bob'), t.u('carol'), t.u('dave'), t.u('erin'), t.u('ref2'), t.u('ref3'), t.u('ref4'));
+update profiles set role = 'admin' where id = t.u('admin');
+update profiles set role = 'chair' where id = t.u('chair1');
+update profiles set referred_by = null where id in (t.u('alice'), t.u('bob'), t.u('carol'), t.u('dave'), t.u('erin'), t.u('ref2'));
+update profiles set display_name = v.n from (values ('alice', 'Alice A.'), ('bob', 'Bob'), ('carol', 'Carol'), ('dave', 'Dave'), ('erin', 'Erin')) v(h, n) where id = t.u(v.h);
+insert into events (id, cycle_id, title, campus, kind, location, starts_at, ends_at, activity_id) values
+  ('00000000-0000-0000-0000-0000000033e1', active_cycle_id(), 'Brew & Quest @ Cup of Joe', 'ncsu', 'active', 'Cup of Joe', now() - interval '10 minutes', now() + interval '2 hours', 'home_event'),
+  ('00000000-0000-0000-0000-0000000033e2', active_cycle_id(), 'Brew & Quest @ Epilogue', 'unc', 'active', 'Epilogue', now() - interval '10 minutes', now() + interval '2 hours', 'home_event'),
+  ('00000000-0000-0000-0000-0000000033e3', active_cycle_id(), 'Plain Social', 'duke', 'active', 'Quad', now() - interval '10 minutes', now() + interval '2 hours', 'home_event'),
+  ('00000000-0000-0000-0000-0000000033e4', active_cycle_id(), 'Brew & Quest @ TBD', 'duke', 'active', 'TBD', '2026-12-05 14:00-05', '2026-12-05 16:00-05', 'home_event');
+insert into event_secrets (event_id, password) values
+  ('00000000-0000-0000-0000-0000000033e1', 'brew1'), ('00000000-0000-0000-0000-0000000033e2', 'brew2'),
+  ('00000000-0000-0000-0000-0000000033e3', 'plain3'), ('00000000-0000-0000-0000-0000000033e4', 'brew4')
+on conflict (event_id) do update set password = excluded.password;
+
+do $$ begin
+  perform t.eq(event_outfit_items('latte_night_scholar'), array['cozy_beanie', 'latte_aplus', 'moonlit_nook'], '0033: Latte Night Scholar = beanie, A+ latte, moonlit study nook');
+  perform t.ok((select bool_and(rule_type = 'event') from cosmetics where id in ('cozy_beanie', 'latte_aplus', 'moonlit_nook')), '0033: event-only rule type');
+  perform t.ok(gen_secret_word() ~ '^[A-Z]+-[0-9]{2}$', '0033: generated secret word looks like MOCHA-42');
+end $$;
+
+-- ---- setup (staff) ----
+:as_admin
+do $$ declare r json; begin
+  r := set_event_reward('00000000-0000-0000-0000-0000000033e1', jsonb_build_object('itemLabel', 'free coffee', 'limit', 3, 'venue', 'Cup of Joe', 'secretWord', ' mocha-42 ',
+         'message', 'First quest: meet us at {venue}! The first {limit} people to meet us get {item} on us ☕'));
+  perform t.eq(r->>'secretWord', 'MOCHA-42', '0033 setup: secret word trimmed + upper-cased');
+  r := set_event_reward('00000000-0000-0000-0000-0000000033e2', jsonb_build_object('limit', 2, 'venue', 'Epilogue', 'message', 'Meet us at Epilogue!'));
+  perform t.ok(r->>'secretWord' ~ '^[A-Z]+-[0-9]{2}$' and r->>'itemLabel' = 'free coffee' and r->>'outfitSet' = 'latte_night_scholar', '0033 setup: blank secret word generated; defaults filled');
+  perform set_event_reward('00000000-0000-0000-0000-0000000033e4', jsonb_build_object('limit', 2, 'message', 'Duke soon'));
+  perform t.eq((select venue from admin_event_rewards() where event_id = '00000000-0000-0000-0000-0000000033e4'), 'TBD', '0033 setup: venue defaults to TBD');
+  perform t.throws($q$select set_event_reward('00000000-0000-0000-0000-0000000033e1', '{"limit": 0, "message": "x"}')$q$, 'limit', '0033 setup: limit ≥ 1');
+  perform t.throws($q$select set_event_reward('00000000-0000-0000-0000-0000000033e1', '{"limit": "lots", "message": "x"}')$q$, 'limit', '0033 setup: limit must be a number');
+  perform t.throws($q$select set_event_reward('00000000-0000-0000-0000-0000000033e1', '{"limit": 3, "message": "x", "outfitSet": "nope"}')$q$, 'outfitSet', '0033 setup: unknown outfit set');
+  perform t.throws($q$select set_event_reward('00000000-0000-0000-0000-0000000033e1', '{"limit": 3, "message": ""}')$q$, 'message', '0033 setup: message required');
+end $$;
+
+-- ---- secret word is staff only ----
+:as_alice
+do $$ begin
+  perform t.throws($q$select set_event_reward('00000000-0000-0000-0000-0000000033e1', '{"limit": 99, "message": "x"}')$q$, 'forbidden', '0033: participants can''t set up rewards');
+  perform t.throws('select * from admin_event_rewards()', 'forbidden', '0033: participants can''t read the secret words');
+  perform t.throws($q$select admin_event_passes('00000000-0000-0000-0000-0000000033e1')$q$, 'forbidden', '0033: participants can''t read the pass list');
+  perform t.throws(format('select admin_mark_pass_used(%L, %L)', '00000000-0000-0000-0000-0000000033e1', t.u('alice')), 'forbidden', '0033: participants can''t mark passes as staff');
+  perform t.denied('select count(*) from event_rewards', '0033: event_rewards table not readable');
+  perform t.denied('select count(*) from reward_passes', '0033: reward_passes table not readable');
+  perform t.denied('select count(*) from event_unlocks', '0033: event_unlocks table not readable');
+  perform t.denied(format('select grant_event_reward(%L, %L)', '00000000-0000-0000-0000-0000000033e1', t.u('alice')), '0033: grant_event_reward is internal');
+  perform t.ok((select count(*) = 3 and bool_and(to_jsonb(r) - 'event_id' - 'item_label' - 'limit_count' - 'venue' - 'outfit_set' - 'message' = '{}'::jsonb)
+                  from event_rewards_public() r where r.event_id::text like '00000000-0000-0000-0000-0000000033e%'),
+               '0033: public view has no secret word and no pass counts');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied('select * from event_rewards_public()', '0033: anon can''t read rewards');
+  perform t.denied('select my_event_rewards()', '0033: anon can''t read passes');
+  perform t.denied($q$select mark_my_pass_used('00000000-0000-0000-0000-0000000033e1')$q$, '0033: anon can''t mark passes');
+end $$;
+
+-- ---- check-ins: staff first (outfit + points, never a pass) ----
+:as_admin
+do $$ declare r json; begin
+  r := check_in('00000000-0000-0000-0000-0000000033e1', 'BREW1');
+  perform t.eq((r->>'points')::int, tier_points(2), '0033: staff earn the event points (normal rules)');
+  perform t.ok(r->'reward'->'items' is not null and json_array_length(r->'reward'->'items') = 3 and (r->'reward'->>'pass') is null, '0033: staff get the outfit but no pass');
+  perform t.ok(array['cozy_beanie', 'latte_aplus', 'moonlit_nook'] <@ my_unlocks(), '0033: staff own the outfit');
+end $$;
+:as_alice
+do $$ declare r json; p json; begin
+  r := check_in('00000000-0000-0000-0000-0000000033e1', 'brew1');
+  p := r->'reward'->'pass';
+  perform t.eq((r->>'points')::int, tier_points(2), '0033: participant earns the event points');
+  perform t.eq((p->>'passNo')::int, 1, '0033 first-N: first participant gets pass #1 (staff didn''t use one)');
+  perform t.ok((p->>'limit')::int = 3 and p->>'venue' = 'Cup of Joe' and p->>'item' = 'free coffee' and p->>'secretWord' = 'MOCHA-42' and p->>'eventTitle' = 'Brew & Quest @ Cup of Joe',
+               '0033: pass carries limit, venue, item, secret word');
+  perform t.eq(((p->>'validUntil')::timestamptz - (p->>'checkedInAt')::timestamptz), interval '30 minutes', '0033: pass valid 30 minutes after check-in');
+  perform t.eq(r->'reward'->>'badge', 'early_bird', '0033: pass holder earns Early Bird');
+  perform t.ok((select earned from my_badges() where id = 'early_bird'), '0033: Early Bird shows as earned');
+end $$;
+:as_bob
+do $$ begin
+  perform t.eq((check_in('00000000-0000-0000-0000-0000000033e1', 'brew1')->'reward'->'pass'->>'passNo')::int, 2, '0033 first-N: second participant gets #2');
+end $$;
+:as_carol
+do $$ begin
+  perform t.eq((check_in('00000000-0000-0000-0000-0000000033e1', 'brew1')->'reward'->'pass'->>'passNo')::int, 3, '0033 first-N: third participant gets #3 (the last one)');
+end $$;
+:as_dave
+do $$ declare r json; begin
+  r := check_in('00000000-0000-0000-0000-0000000033e1', 'brew1');
+  perform t.eq((r->>'points')::int, tier_points(2), '0033: after the limit, still the event points');
+  perform t.ok((r->'reward'->>'pass') is null and (r->'reward'->>'badge') is null, '0033: no pass once the limit is reached');
+  perform t.ok(position('MOCHA' in r::text) = 0 and position('limit' in r::text) = 0 and position('issued' in r::text) = 0,
+               '0033: people without a pass are never told the secret word or counts');
+  perform t.ok(array['cozy_beanie', 'latte_aplus', 'moonlit_nook'] <@ my_unlocks(), '0033: outfit unlocked for everyone who checks in');
+  perform t.ok(not (select earned from my_badges() where id = 'early_bird'), '0033: no Early Bird without a pass');
+  perform t.eq((select count(*) from my_badges() where id <> 'early_bird'), 16::bigint, '0033: still 16 core badges');
+  perform equip_look('cozy_beanie', 'latte_aplus', 'moonlit_nook');
+  perform t.ok((select hat = 'cozy_beanie' and accessory = 'latte_aplus' and background = 'moonlit_nook' from profiles where id = t.u('dave')), '0033: "Wear it now" equips all 3 pieces');
+  perform t.throws($q$select mark_my_pass_used('00000000-0000-0000-0000-0000000033e1')$q$, 'not_found', '0033: no pass to mark');
+  perform t.eq(json_array_length(my_event_rewards()->'passes'), 0, '0033: my_event_rewards: no passes for dave');
+end $$;
+:as_chair1
+do $$ begin
+  perform t.ok((check_in('00000000-0000-0000-0000-0000000033e1', 'brew1')->'reward'->>'pass') is null, '0033: chairs never consume a pass');
+end $$;
+:as_ref2
+do $$ begin
+  perform t.ok((check_in('00000000-0000-0000-0000-0000000033e3', 'plain3')->>'reward') is null, '0033: normal events unchanged (no reward)');
+  perform t.ok(not ('cozy_beanie' = any (my_unlocks())), '0033: outfit not obtainable without a Brew & Quest check-in');
+  perform t.throws($q$select equip_look('cozy_beanie', null, null)$q$, 'locked', '0033: can''t wear it without earning it');
+end $$;
+
+-- ---- one free item per person across ALL Brew & Quest events ----
+:as_alice
+do $$ declare r json; begin
+  r := check_in('00000000-0000-0000-0000-0000000033e2', 'brew2');
+  perform t.ok((r->>'points')::int = tier_points(2) and (r->'reward'->>'pass') is null and json_array_length(r->'reward'->'items') = 3,
+               '0033: second Brew & Quest: points + outfit, but no second pass');
+end $$;
+:as_erin
+do $$ begin
+  perform t.eq((check_in('00000000-0000-0000-0000-0000000033e2', 'brew2')->'reward'->'pass'->>'passNo')::int, 1, '0033: Epilogue''s first pass goes to the next new person');
+end $$;
+
+-- ---- my passes, new-outfit alert, self mark used ----
+:as_alice
+do $$ declare m json; begin
+  m := my_event_rewards();
+  perform t.eq(json_array_length(m->'unseen'), 3, '0033 alert: 3 new outfit items unseen');
+  perform t.ok(json_array_length(m->'passes') = 1 and m->'passes'->0->>'secretWord' = 'MOCHA-42', '0033: my valid pass (with the secret word) is reachable again');
+  perform t.eq(mark_event_unlocks_seen(), 3, '0033 alert: opening the wardrobe marks them seen');
+  perform t.eq(json_array_length(my_event_rewards()->'unseen'), 0, '0033 alert: nothing new after that');
+  perform t.eq(mark_my_pass_used('00000000-0000-0000-0000-0000000033e1')->>'usedBy', 'self', '0033: slide to mark as used (self)');
+  perform t.ok((my_event_rewards()->'passes'->0->>'usedAt') is not null and (my_event_rewards()->'passes'->0->>'secretWord') is null, '0033: used pass no longer shows the secret word');
+  perform t.eq(mark_my_pass_used('00000000-0000-0000-0000-0000000033e1')->>'usedBy', 'self', '0033: marking twice is harmless');
+end $$;
+
+-- ---- validity (fixed dates) ----
+:as_super
+update reward_passes set created_at = '2025-12-02 14:15:00-05' where user_id = t.u('bob') and event_id = '00000000-0000-0000-0000-0000000033e1';
+do $$ declare p reward_passes; begin
+  select * into p from reward_passes where user_id = t.u('bob') and event_id = '00000000-0000-0000-0000-0000000033e1';
+  perform t.eq((reward_pass_json(p, false)->>'validUntil')::timestamptz, '2025-12-02 14:45:00-05'::timestamptz, '0033 validity: 2:15 PM check-in → valid until 2:45 PM');
+  perform t.ok(not (reward_pass_json(p, false) ? 'secretWord'), '0033: reward_pass_json hides the secret unless asked');
+end $$;
+:as_bob
+do $$ begin
+  perform t.throws($q$select mark_my_pass_used('00000000-0000-0000-0000-0000000033e1')$q$, 'expired', '0033 validity: can''t mark an expired pass');
+  perform t.ok((my_event_rewards()->'passes'->0->>'secretWord') is null, '0033 validity: expired pass no longer returns the secret word');
+end $$;
+
+-- ---- staff: pass list, mark used / undo, can't remove or shrink below issued ----
+:as_admin
+do $$ declare a json; begin
+  perform t.eq(admin_mark_pass_used('00000000-0000-0000-0000-0000000033e1', t.u('carol'))->>'usedBy', 'staff', '0033: staff mark a pass used');
+  a := admin_event_passes('00000000-0000-0000-0000-0000000033e1');
+  perform t.ok((a->>'limit')::int = 3 and (a->>'issued')::int = 3 and (a->>'used')::int = 2 and a->>'secretWord' = 'MOCHA-42', '0033 door: 3/3 handed out, 2 used, secret word for staff');
+  perform t.eq((select string_agg(x->>'displayName', ',' order by (x->>'passNo')::int) from json_array_elements(a->'passes') x), 'Alice A.,Bob,Carol', '0033 door: passes in check-in order');
+  perform t.ok(not exists (select 1 from json_array_elements(a->'passes') x where x->>'userId' in (t.u('admin')::text, t.u('chair1')::text, t.u('dave')::text)), '0033 door: staff + late arrivals not on the pass list');
+  perform t.ok((admin_mark_pass_used('00000000-0000-0000-0000-0000000033e1', t.u('carol'), false)->>'usedAt') is null, '0033: staff can undo a mistaken tap');
+  perform t.eq((select issued from admin_event_rewards() where event_id = '00000000-0000-0000-0000-0000000033e1'), 3, '0033 admin chip: issued count');
+  perform t.throws($q$select set_event_reward('00000000-0000-0000-0000-0000000033e1', null)$q$, 'has_passes', '0033: can''t remove a reward after passes went out');
+  perform t.throws($q$select set_event_reward('00000000-0000-0000-0000-0000000033e1', '{"limit": 2, "message": "x"}')$q$, 'limit', '0033: limit can''t go below passes handed out');
+  perform t.ok(set_event_reward('00000000-0000-0000-0000-0000000033e4', null) is null, '0033: unused reward can be removed');
+  perform t.ok(not exists (select 1 from admin_event_rewards() where event_id = '00000000-0000-0000-0000-0000000033e4'), '0033: …and it is gone');
+end $$;
+
+-- ---- first-N ordering + atomicity at the table level (fixed dates) ----
+:as_super
+do $$ declare v_state text; r jsonb; begin
+  insert into event_rewards (event_id, limit_count, venue, secret_word, outfit_set, message)
+  values ('00000000-0000-0000-0000-0000000033e4', 2, 'Duke café', 'CHAI-11', 'latte_night_scholar', 'x');
+  r := grant_event_reward('00000000-0000-0000-0000-0000000033e4', t.u('ref2'), '2026-12-05 14:01-05');
+  perform t.eq((r->'pass'->>'passNo')::int, 1, '0033 order: 2:01 PM → #1');
+  r := grant_event_reward('00000000-0000-0000-0000-0000000033e4', t.u('ref3'), '2026-12-05 14:02-05');
+  perform t.eq((r->'pass'->>'passNo')::int, 2, '0033 order: 2:02 PM → #2');
+  r := grant_event_reward('00000000-0000-0000-0000-0000000033e4', t.u('ref4'), '2026-12-05 14:03-05');
+  perform t.ok(r ? 'items' and not (r ? 'pass'), '0033 order: #3 of a limit of 2 → no pass, never over the limit');
+  perform t.eq((select count(*) from reward_passes where event_id = '00000000-0000-0000-0000-0000000033e4'), 2::bigint, '0033: exactly limit_count passes');
+  perform t.eq(((r->'pass') is null), true, '0033: no pass info for #3');
+  begin
+    insert into reward_passes (event_id, user_id, series, pass_no) values ('00000000-0000-0000-0000-0000000033e4', t.u('ref4'), 'x', 2);
+  exception when others then v_state := sqlstate; end;
+  perform t.eq(v_state, '23505', '0033: unique (event, pass #) — two people can never share a number');
+  v_state := null;
+  begin
+    insert into reward_passes (event_id, user_id, series, pass_no) values ('00000000-0000-0000-0000-0000000033e2', t.u('alice'), 'latte_night_scholar', 9);
+  exception when others then v_state := sqlstate; end;
+  perform t.eq(v_state, '23505', '0033: unique (series, person) — one free item per person across events');
+  perform t.ok(exists (select 1 from admin_actions where action = 'event_reward_set' and details->>'title' = 'Brew & Quest @ Cup of Joe'), '0033 setup: logged in the admin action log');
+  perform t.ok(exists (select 1 from admin_actions where action = 'reward_pass_used' and target_user_id = t.u('carol')), '0033: mark used is logged');
+  perform t.ok(position('for update' in pg_get_functiondef('public.grant_event_reward(uuid, uuid, timestamptz)'::regprocedure)) > 0, '0033: pass assignment takes a row lock per event');
+  perform t.ok((select earned from badges_for(t.u('ref2')) where id = 'early_bird') and not (select earned from badges_for(t.u('ref4')) where id = 'early_bird'), '0033: Early Bird only for pass holders');
 end $$;
 rollback;
 

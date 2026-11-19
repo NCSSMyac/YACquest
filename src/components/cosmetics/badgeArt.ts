@@ -251,6 +251,23 @@ export const BADGE_ART: Record<string, BadgeArt> = {
       '..kk..kk..',
     ],
   },
+  // 0033: Early Bird ☕ (special, Brew & Quest pass holders) — a steaming latte at sunrise
+  early_bird: {
+    ring: 'O',
+    fill: 'y',
+    symbol: [
+      '...w..w...',
+      '..w..w....',
+      '.kkkkkkk..',
+      '.k_w_w_k..',
+      '.kwwwwwkkk',
+      '.kwwwwwk.k',
+      '.kwwwwwkkk',
+      '.kwwwwwk..',
+      '..kwwwk...',
+      '...kkk....',
+    ],
+  },
   // 0022: Hot Streak — a pixel flame
   hot_streak: {
     ring: 'r',

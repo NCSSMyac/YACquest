@@ -22,10 +22,11 @@ beforeEach(async () => {
 });
 
 describe('badges', () => {
-  it('returns all 16 badges in display order with progress', async () => {
+  it('returns all 16 badges in display order with progress (0033: + the special Early Bird last)', async () => {
     asUser('yak001');
     const list = await api.myBadges();
-    expect(list.map((b) => b.id)).toEqual(BADGES.map((b) => b.id));
+    expect(BADGES).toHaveLength(16);
+    expect(list.map((b) => b.id)).toEqual([...BADGES.map((b) => b.id), 'early_bird']);
     for (const b of list) expect(b.progress).toBeLessThanOrEqual(b.goal);
   });
 

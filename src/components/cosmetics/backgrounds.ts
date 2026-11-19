@@ -4,6 +4,7 @@
  */
 import { EXTRA_PALETTE } from './art';
 import { SEASONAL_BACKGROUNDS } from './seasonalArt';
+import { LIMITED_BACKGROUNDS } from './limitedArt';
 
 export const FRAME = { x: -2, y: -4, w: 36, h: 36 } as const;
 
@@ -287,6 +288,7 @@ const BUILDERS: Record<string, () => Grid> = {
   hall_of_heroes: hallOfHeroes,
   // 0028 seasonal (seasonalArt.ts)
   ...SEASONAL_BACKGROUNDS,
+  ...LIMITED_BACKGROUNDS,
 };
 
 const cache = new Map<string, string[]>();

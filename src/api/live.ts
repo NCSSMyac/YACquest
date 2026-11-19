@@ -8,7 +8,7 @@
 import type { Session, User as AuthUser } from '@supabase/supabase-js';
 import { CAMPUSES, PRIZE, TIER_POINTS, type CampusId } from '../config';
 import { ACTIVITIES, activityById } from '../lib/activities';
-import { BADGES } from '../lib/badges';
+import { BADGES, SPECIAL_BADGES } from '../lib/badges';
 import { STAFF_BADGES } from '../lib/staffRewards';
 import { NAME_NOT_ALLOWED, nameIsClean } from '../lib/nameFilter';
 import { getSupabase, siteUrl } from '../lib/supabase';
@@ -24,6 +24,12 @@ import type {
   Dashboard,
   EmailLogRow,
   EmailStatus,
+  EmailCampaignStat,
+  EmailHistoryRow,
+  EmailQueueStatus,
+  EmailRecipientRow,
+  EmailStats,
+  MyEmailStatus,
   LeaderRow,
   LedgerEntry,
   LedgerSource,
@@ -75,6 +81,12 @@ import type {
   EventSurveyInput,
   EventSurveyResults,
   EventSurveyStatus,
+  CheckInReward,
+  CoffeePass,
+  EventPasses,
+  EventReward,
+  EventRewardInput,
+  MyEventRewards,
 } from '../types';
 import { cleanSurveyText, surveyError } from '../lib/eventSurvey';
 import { ApiError, emitChange } from './shared';
@@ -632,7 +644,7 @@ export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Pr
   if (!events.length) return [];
   const ids = events.map((e) => e.id);
   const isAdmin = user.role === 'admin' || user.role === 'chair';
-  const [checkins, secrets, rsvps, surveyed] = await Promise.all([
+  const [checkins, secrets, rsvps, surveyed, rewards] = await Promise.all([
     sb().from('ledger').select('ref_id').eq('user_id', user.id).eq('source', 'checkin').in('ref_id', ids).then(rows),
     isAdmin ? sb().from('event_secrets').select('event_id, password').in('event_id', ids).then(rows) : Promise.resolve([] as AnyRow[]),
     rsvpSummary(),
@@ -641,7 +653,10 @@ export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Pr
       ? Promise.resolve(null)
       : sb().from('event_surveys').select('event_id').eq('user_id', user.id).in('event_id', ids)
           .then((r) => (r.error ? null : new Set(((r.data as AnyRow[] | null) ?? []).map((x) => str(x.event_id)))), () => null),
+    // 0033: special reward events (public part only). Nothing if the server doesn't have 0033 yet.
+    rpc<AnyRow[] | null>('event_rewards_public').catch(() => null),
   ]);
+  const rewardOf = new Map((rewards ?? []).map((r) => [str(pick(r, 'event_id')), toReward(r)]));
   const attended = new Set(((checkins as AnyRow[]) ?? []).map((r) => str(r.ref_id)));
   const pw = new Map(((secrets as AnyRow[]) ?? []).map((r) => [str(r.event_id), str(r.password)]));
   // Participants never receive passwords (RLS on event_secrets enforces this too).
@@ -652,6 +667,7 @@ export async function listEvents(scope: 'upcoming' | 'past' | 'all' = 'all'): Pr
     goingCount: rsvps.get(e.id)?.goingCount ?? 0,
     myRsvp: rsvps.get(e.id)?.myRsvp ?? false,
     ...(surveyed ? { surveyDone: surveyed.has(e.id) } : {}),
+    ...(rewardOf.has(e.id) ? { reward: rewardOf.get(e.id) } : {}),
   }));
 }
 
@@ -728,12 +744,120 @@ export async function myRecap(): Promise<QuestRecap> {
   };
 }
 
-export async function checkIn(eventId: string, password: string): Promise<{ points: number; activity: Activity }> {
+export async function checkIn(eventId: string, password: string): Promise<{ points: number; activity: Activity; reward?: CheckInReward }> {
   if (!password.trim()) fail('wrong_password', 'Enter the event password.');
   const res = one(await rpc<AnyRow | AnyRow[]>('check_in', { p_event_id: eventId, p_password: password.trim() })) ?? {};
   emitChange();
   const activity = activityById(str(pick(res, 'activity_id'))) ?? activityById('home_event')!;
-  return { points: num(res.points), activity };
+  // 0033: special reward events add {outfitSet, items, badge?, pass?}; `pass` only for the person who got one.
+  const rw = res.reward as AnyRow | null | undefined;
+  if (!rw) return { points: num(res.points), activity };
+  const pass = pick<AnyRow | null>(rw, 'pass');
+  const reward: CheckInReward = {
+    outfitSet: str(pick(rw, 'outfit_set')),
+    items: strList(rw.items),
+    ...(rw.badge === 'early_bird' ? { badge: 'early_bird' as const } : {}),
+    ...(pass ? { pass: toPass(pass) } : {}),
+  };
+  return { points: num(res.points), activity, reward };
+}
+
+// ───────────────────────────── 0033: Brew & Quest (limited reward events) ─────────────────────────────
+
+function toReward(r: AnyRow): EventReward {
+  return {
+    itemLabel: str(pick(r, 'item_label')),
+    limit: num(pick(r, 'limit_count') ?? r.limit),
+    venue: str(r.venue),
+    outfitSet: str(pick(r, 'outfit_set')),
+    message: str(r.message),
+  };
+}
+
+function toPass(p: AnyRow): CoffeePass {
+  const usedBy = opt(pick(p, 'used_by'));
+  return {
+    eventId: str(pick(p, 'event_id')),
+    eventTitle: str(pick(p, 'event_title')),
+    campus: (str(p.campus) || 'all') as CoffeePass['campus'],
+    passNo: num(pick(p, 'pass_no')),
+    limit: num(p.limit),
+    venue: str(p.venue),
+    item: str(p.item),
+    ...(opt(pick(p, 'secret_word')) ? { secretWord: str(pick(p, 'secret_word')) } : {}),
+    checkedInAt: str(pick(p, 'checked_in_at')),
+    validUntil: str(pick(p, 'valid_until')),
+    ...(opt(pick(p, 'used_at')) ? { usedAt: str(pick(p, 'used_at')) } : {}),
+    ...(usedBy === 'self' || usedBy === 'staff' ? { usedBy } : {}),
+  };
+}
+
+/** my_event_rewards(): unseen outfit items + my passes. Empty on a server without 0033. */
+export async function myEventRewards(): Promise<MyEventRewards> {
+  let r: AnyRow | null;
+  try {
+    r = one(await rpc<AnyRow | AnyRow[] | null>('my_event_rewards'));
+  } catch (e) {
+    if (e instanceof ApiError && /function|schema cache|does not exist/i.test(e.message)) return { unseen: [], passes: [] };
+    throw e;
+  }
+  return { unseen: strList(r?.unseen), passes: ((r?.passes as AnyRow[] | null) ?? []).map(toPass) };
+}
+
+export async function markEventUnlocksSeen(): Promise<number> {
+  const n = await rpc<number | null>('mark_event_unlocks_seen');
+  emitChange();
+  return num(n);
+}
+
+export async function markPassUsed(eventId: string): Promise<{ usedAt: string; usedBy: 'self' | 'staff' }> {
+  const r = one(await rpc<AnyRow | AnyRow[]>('mark_my_pass_used', { p_event_id: eventId })) ?? {};
+  emitChange();
+  return { usedAt: str(pick(r, 'used_at')), usedBy: str(pick(r, 'used_by')) === 'staff' ? 'staff' : 'self' };
+}
+
+export async function adminEventPasses(eventId: string): Promise<EventPasses> {
+  const r = one(await rpc<AnyRow | AnyRow[]>('admin_event_passes', { p_event_id: eventId })) ?? {};
+  return {
+    eventId: str(pick(r, 'event_id')),
+    limit: num(r.limit),
+    issued: num(r.issued),
+    used: num(r.used),
+    itemLabel: str(pick(r, 'item_label')),
+    venue: str(r.venue),
+    secretWord: str(pick(r, 'secret_word')),
+    outfitSet: str(pick(r, 'outfit_set')),
+    passes: ((r.passes as AnyRow[] | null) ?? []).map((p) => {
+      const usedBy = opt(pick(p, 'used_by'));
+      return {
+        passNo: num(pick(p, 'pass_no')),
+        userId: str(pick(p, 'user_id')),
+        displayName: str(pick(p, 'display_name')),
+        handle: str(p.handle),
+        campus: str(p.campus) as CampusId,
+        createdAt: str(pick(p, 'created_at')),
+        validUntil: str(pick(p, 'valid_until')),
+        ...(opt(pick(p, 'used_at')) ? { usedAt: str(pick(p, 'used_at')) } : {}),
+        ...(usedBy === 'self' || usedBy === 'staff' ? { usedBy } : {}),
+      };
+    }),
+  };
+}
+
+export async function adminMarkPassUsed(eventId: string, userId: string, used = true): Promise<void> {
+  await rpc('admin_mark_pass_used', { p_event_id: eventId, p_user_id: userId, p_used: used });
+  emitChange();
+}
+
+/** set_event_reward: object = set, null = remove (refused once passes went out), undefined = leave as is. */
+async function saveReward(eventId: string, reward: EventRewardInput | null | undefined) {
+  if (reward === undefined) return;
+  await rpc('set_event_reward', {
+    p_event_id: eventId,
+    p_reward: reward
+      ? { itemLabel: reward.itemLabel, limit: reward.limit, venue: reward.venue, secretWord: reward.secretWord ?? '', outfitSet: reward.outfitSet, message: reward.message }
+      : null,
+  });
 }
 
 export async function canSubmit(activityId: string, eventId?: string): Promise<string | null> {
@@ -985,7 +1109,7 @@ export async function awardActivity(userId: string, activityId: string, note: st
 }
 
 export async function adminListEvents(): Promise<(YacEvent & AdminEventRsvpCounts & { followup?: EventFollowupStatus; olderCycle?: boolean; surveyCount?: number; surveyAverage?: number })[]> {
-  const [list, counts, surveys, followups, cycle, answers] = await Promise.all([
+  const [list, counts, surveys, followups, cycle, answers, rewards] = await Promise.all([
     // Every cycle's events (admin_list_events has no cycle filter); olderCycle marks archived-cycle ones.
     rpc<AnyRow[]>('admin_list_events'),
     // 0022 (admins + chairs): RSVP counts per event. Zeros if the server doesn't have 0022 yet.
@@ -996,7 +1120,10 @@ export async function adminListEvents(): Promise<(YacEvent & AdminEventRsvpCount
     activeCycle().catch(() => null),
     // 0030: in-app survey answers per event. null if the server doesn't have 0030 yet (no Survey button).
     rpc<AnyRow[] | null>('admin_event_survey_counts').catch(() => null),
+    // 0033: special reward events with the secret word + pass counts (staff). Nothing without 0033.
+    rpc<AnyRow[] | null>('admin_event_rewards').catch(() => null),
   ]);
+  const rewardOf = new Map((rewards ?? []).map((r) => [str(pick(r, 'event_id')), { ...toReward(r), secretWord: str(pick(r, 'secret_word')), issued: num(r.issued), used: num(r.used) }]));
   const answered = answers ? new Map(answers.map((r) => [str(pick(r, 'event_id')), r])) : null;
   const older = new Set(cycle ? (list ?? []).filter((r) => { const c = pick(r, 'cycle_id'); return c != null && str(c) !== cycle.id; }).map((r) => str(r.id)) : []);
   const byId = new Map((counts ?? []).map((r) => [str(pick(r, 'event_id')), r]));
@@ -1014,6 +1141,7 @@ export async function adminListEvents(): Promise<(YacEvent & AdminEventRsvpCount
       ...(older.has(e.id) ? { olderCycle: true } : {}),
       ...(answered ? { surveyCount: num(answered.get(e.id)?.responses) } : {}),
       ...(answered?.get(e.id) && pick(answered.get(e.id)!, 'average') != null ? { surveyAverage: num(pick(answered.get(e.id)!, 'average')) } : {}),
+      ...(rewardOf.has(e.id) ? { reward: rewardOf.get(e.id) } : {}),
     };
   });
 }
@@ -1066,13 +1194,16 @@ const eventJson = (input: EventInput) => ({
 export async function createEvent(input: EventInput): Promise<YacEvent> {
   validateEvent(input);
   const row = one(await rpc<AnyRow | AnyRow[]>('create_event', { p_event: eventJson(input) }));
+  const ev = toEvent(row ?? {});
+  if (input.reward && ev.id) await saveReward(ev.id, input.reward);
   emitChange();
-  return toEvent(row ?? {});
+  return ev;
 }
 
 export async function updateEvent(id: string, input: EventInput): Promise<YacEvent> {
   validateEvent(input);
   const row = one(await rpc<AnyRow | AnyRow[]>('update_event', { p_id: id, p_event: eventJson(input) }));
+  await saveReward(id, input.reward);
   emitChange();
   return toEvent(row ?? {});
 }
@@ -1285,6 +1416,112 @@ export async function retryEmail(id: string): Promise<void> {
   sendQueuedEmailsNow();
 }
 
+// ───────────────────────────── 0032: email stats, tracking, unsubscribe, bounces ─────────────────────────────
+
+const bool = (v: unknown) => v === true || v === 'true';
+
+function toCampaign(r: AnyRow): EmailCampaignStat {
+  return {
+    id: str(r.id), label: str(r.label), kind: str(r.kind), firstAt: str(pick(r, 'firstAt')),
+    recipients: num(r.recipients), sent: num(r.sent), opened: num(r.opened), clicked: num(r.clicked), bounced: num(r.bounced),
+    unsubscribed: num(r.unsubscribed), skipped: num(r.skipped), waiting: num(r.waiting), failed: num(r.failed),
+  };
+}
+
+/** email_stats (0032): staff only. */
+export async function emailStats(days = 30): Promise<EmailStats> {
+  const r = ((await rpc<AnyRow>('email_stats', { p_days: days })) ?? {}) as AnyRow;
+  const t = (r.totals ?? {}) as AnyRow;
+  return {
+    days: num(r.days),
+    totals: {
+      sent: num(t.sent), delivered: num(t.delivered), opened: num(t.opened), clicked: num(t.clicked),
+      openRate: num(pick(t, 'openRate')), ctr: num(t.ctr), bounced: num(t.bounced), unsubscribed: num(t.unsubscribed),
+      skipped: num(t.skipped), expired: num(t.expired), failed: num(t.failed),
+    },
+    daily: ((r.daily as AnyRow[] | null) ?? []).map((x) => ({ day: str(x.day), sent: num(x.sent), opened: num(x.opened), clicked: num(x.clicked) })),
+    campaigns: ((r.campaigns as AnyRow[] | null) ?? []).map(toCampaign),
+  };
+}
+
+/** email_campaign_recipients (0032): staff only. */
+export async function emailCampaignRecipients(campaignId: string): Promise<EmailRecipientRow[]> {
+  return ((await rpc<AnyRow[]>('email_campaign_recipients', { p_campaign: campaignId })) ?? []).map((r) => ({
+    messageId: str(pick(r, 'message_id')),
+    userId: opt(pick(r, 'user_id')),
+    name: str(r.name),
+    campus: (opt(r.campus) as CampusId | undefined) ?? undefined,
+    email: str(r.email),
+    status: str(r.status) as EmailRecipientRow['status'],
+    sentAt: opt(pick(r, 'sent_at')),
+    opened: bool(r.opened),
+    openedAt: opt(pick(r, 'opened_at')),
+    clickedUrls: strList(pick(r, 'clicked_urls')),
+    bounced: bool(r.bounced),
+    unsubscribed: bool(r.unsubscribed),
+    error: opt(r.error),
+  }));
+}
+
+/** email_history_for (0032): staff only. */
+export async function emailHistoryFor(userId: string): Promise<EmailHistoryRow[]> {
+  return ((await rpc<AnyRow[]>('email_history_for', { p_user: userId })) ?? []).map((r) => ({
+    id: str(r.id), kind: str(r.kind), label: str(r.label), subject: str(r.subject),
+    status: str(r.status) as EmailHistoryRow['status'], createdAt: str(pick(r, 'created_at')), sentAt: opt(pick(r, 'sent_at')),
+    opened: bool(r.opened), clicked: bool(r.clicked), error: opt(r.error),
+  }));
+}
+
+/** email_queue_status (0032): staff only. */
+export async function emailQueueStatus(): Promise<EmailQueueStatus> {
+  const r = ((await rpc<AnyRow>('email_queue_status')) ?? {}) as AnyRow;
+  return {
+    budget: num(r.budget), reserve: num(r.reserve), sent24h: num(pick(r, 'sent24h')), waiting: num(r.waiting),
+    waitingHigh: num(pick(r, 'waitingHigh')), skippedToday: num(pick(r, 'skippedToday')),
+    lastRunAt: opt(pick(r, 'lastRunAt')), nextRunAt: opt(pick(r, 'nextRunAt')),
+    bounceCheck: (str(pick(r, 'bounceCheck')) || 'never') as EmailQueueStatus['bounceCheck'],
+    bounceError: opt(pick(r, 'bounceError')), lastBounceCheckAt: opt(pick(r, 'lastBounceCheckAt')),
+  };
+}
+
+/** email_bouncing_users (0032): staff only → user ids. Empty before 0032 is run. */
+export async function emailBouncingUsers(): Promise<string[]> {
+  try {
+    return ((await rpc<AnyRow[]>('email_bouncing_users')) ?? []).map((r) => str(pick(r, 'user_id')));
+  } catch (e) {
+    if (e instanceof ApiError && e.code === 'forbidden') throw e;
+    return [];
+  }
+}
+
+export async function adminClearEmailBounce(userId: string): Promise<void> {
+  await rpc('admin_clear_email_bounce', { p_user: userId });
+  emitChange();
+}
+
+/** my_email_status (0032). null when the database doesn't have it yet (so Me never breaks). */
+export async function myEmailStatus(): Promise<MyEmailStatus | null> {
+  try {
+    const r = ((await rpc<AnyRow>('my_email_status')) ?? {}) as AnyRow;
+    return { optIn: pick(r, 'optIn') !== false, bounced: bool(r.bounced), bouncedAt: opt(pick(r, 'bouncedAt')) };
+  } catch {
+    return null;
+  }
+}
+
+export async function clearMyEmailBounce(): Promise<void> {
+  await rpc('clear_my_email_bounce');
+  emitChange();
+}
+
+/** unsubscribe_by_token (0032): works without logging in. */
+export async function unsubscribeByToken(token: string): Promise<{ alreadyOff: boolean }> {
+  const r = ((await rpc<AnyRow>('unsubscribe_by_token', { p_token: token.trim() })) ?? {}) as AnyRow;
+  if (me) me = { ...me, emailOptIn: false };
+  emitChange();
+  return { alreadyOff: bool(pick(r, 'alreadyOff')) };
+}
+
 export async function adminActionLog(opts: { before?: number; limit?: number } = {}): Promise<AdminAction[]> {
   return ((await rpc<AnyRow[]>('admin_action_log', { p_limit: opts.limit ?? 50, p_before: opts.before ?? null })) ?? []).map((r) => {
     const details = pick<unknown>(r, 'details');
@@ -1419,7 +1656,8 @@ export async function myBadges(): Promise<BadgeProgress[]> {
     progress: num(r.progress),
     goal: Math.max(1, num(r.goal)),
   }));
-  const order = new Map(BADGES.map((b, i) => [b.id, i]));
+  // 0033: core badges in display order, then the special ones (Early Bird).
+  const order = new Map([...BADGES, ...SPECIAL_BADGES].map((b, i) => [b.id, i]));
   return list.filter((b) => order.has(b.id)).sort((a, b) => order.get(a.id)! - order.get(b.id)!);
 }
 
@@ -1851,8 +2089,9 @@ export async function myWrapped(): Promise<WrappedData> {
     favoriteCampus: (opt(pick(r, 'favorite_campus')) ?? null) as WrappedData['favoriteCampus'],
     favoriteKind: (opt(pick(r, 'favorite_kind')) ?? null) as WrappedData['favoriteKind'],
     bestMonth: best ? { month: str(best.month), points: num(best.points) } : null,
-    badgesEarned: num(pick(r, 'badges_earned')),
-    badgeTotal: num(pick(r, 'badge_total')) || BADGES.length,
+    // 0033: the server also lists the special Early Bird; the app counts the 16 core badges only.
+    badgesEarned: strList(pick(r, 'earned_badge_ids')).filter((id) => order.has(id)).length,
+    badgeTotal: BADGES.length,
     earnedBadgeIds: strList(pick(r, 'earned_badge_ids')).filter((id) => order.has(id)),
     rarestBadge: rare ? { id: str(rare.id), pct: num(rare.pct), holders: num(rare.holders) } : rare === null ? null : undefined,
     bestStreak: num(pick(r, 'best_streak')),

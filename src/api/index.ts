@@ -144,4 +144,20 @@ export const {
   emailLog,
   retryEmail,
   adminActionLog,
+  // 0032: personalized emails — stats + drill-down (staff), queue state, bounces, unsubscribe (no login)
+  emailStats,
+  emailCampaignRecipients,
+  emailHistoryFor,
+  emailQueueStatus,
+  emailBouncingUsers,
+  adminClearEmailBounce,
+  myEmailStatus,
+  clearMyEmailBounce,
+  unsubscribeByToken,
+  // 0033: Brew & Quest — my passes + new-outfit alert, mark my pass used; staff pass list + mark used
+  myEventRewards,
+  markEventUnlocksSeen,
+  markPassUsed,
+  adminEventPasses,
+  adminMarkPassUsed,
 } = impl;

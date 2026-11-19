@@ -1,50 +1,325 @@
 /**
  * YACquest — send-emails (Supabase Edge Function, Deno)
  *
- * Sends the weekly committee report and prize alerts that the database puts in
- * `email_outbox` (see supabase/migrations/0004_emails_and_audit.sql and docs/BACKEND.md).
+ * Sends what the database queued: one email per person (0032 email_messages, already personalized),
+ * never BCC. Docs: docs/BACKEND.md ("0004", "0032") and docs/SETUP.md ("Weekly email + prize alerts",
+ * "Personalized emails, tracking and bounces").
  *
- * DEPLOY (no command line needed — full steps in docs/SETUP.md, "Weekly email + prize alerts"):
- *   1. Supabase → Edge Functions → Deploy a new function → Via Editor → name it `send-emails`,
- *      paste this whole file, Deploy.
- *   2. Edge Functions → Secrets: SMTP_USER (the YAC Gmail), SMTP_PASS (its 16-letter app password),
- *      optional SMTP_HOST (default smtp.gmail.com), SMTP_PORT (default 465), SMTP_FROM_NAME (default YACquest).
+ * DEPLOY (no command line needed):
+ *   1. Supabase → Edge Functions → send-emails → Code (or Deploy a new function → Via Editor → name
+ *      `send-emails`) → paste this WHOLE file → Deploy.
+ *   2. Edge Functions → Secrets: SMTP_USER (the YAC Gmail), SMTP_PASS (its 16-letter app password).
+ *      Optional: SMTP_FROM_NAME (sender name; default "YACquest · NCSSM Young Alumni" — if you set this
+ *      secret earlier, change it to that), SMTP_HOST / SMTP_PORT (default smtp.gmail.com / 465),
+ *      BOUNCE_CHECK=off to skip reading bounce notices.
  *      SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are provided automatically.
  *   3. Integrations → Cron: run it every 10 minutes (`*\/10 * * * *`), POST.
+ *   Bounce checks read the same Gmail over IMAP: Gmail → Settings → Forwarding and POP/IMAP → Enable IMAP.
  *
- * Each run: remove files of deleted accounts (0027, storage_purge_queue) → queue this week's report if it's due → claim up to 20 waiting emails →
- * send each one (recipients in BCC so they don't see each other) → record sent/failed.
- * Failed emails are retried by later runs (up to 5 tries); chairs can also press Retry.
+ * Each run (must finish well inside the ~150 s Edge limit):
+ *   remove files of deleted accounts (0027) → queue reminders / follow-ups / Wrapped / this week's report
+ *   if due → for ~90 s: claim a few emails (budget, priority and expiry are decided by the database),
+ *   send each to ONE address with tracked links, an open pixel and one-click unsubscribe headers,
+ *   ~20 a minute with small random gaps → put back anything claimed but not sent → check Gmail for
+ *   bounce notices (≤ 25 s, never blocks sending) → record the run (Admin → System shows it).
+ * Failed emails are retried by later runs (up to 5 tries); YACquest Chairs can also press Retry.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2.49.1';
 import nodemailer from 'npm:nodemailer@6.9.16';
 
-type OutboxRow = {
+// ════ BEGIN emailCore (copied from supabase/functions/_shared/emailCore.ts — edit it there, then run node scripts/sync-edge-core.mjs) ════
+// ═══════════════════════════════════════════════════════════════════════════
+// YACquest email core (0032) — pure helpers shared by the two Edge Functions
+// (send-emails, email-track) and unit tested by vitest
+// (src/__tests__/emailCore.test.ts).
+//
+// The Supabase dashboard deploys ONE pasted file per function, so this module is
+// copied verbatim into both index.ts files between the "BEGIN/END emailCore"
+// markers. After editing this file run `node scripts/sync-edge-core.mjs`
+// (a vitest test fails if the copies drift).
+//
+// No imports and no Deno/Node APIs: plain TypeScript only.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type EmailKind =
+  | 'weekly_report' | 'prize_qualified' | 'prize_info' | 'test'
+  | 'announcement' | 'event_reminder' | 'event_followup' | 'wrapped';
+
+/** Emails to participants: personalized, opt-out respected, unsubscribe footer + List-Unsubscribe headers. */
+export const PARTICIPANT_KINDS: readonly string[] = ['announcement', 'event_reminder', 'event_followup', 'wrapped'];
+export const isParticipantKind = (kind: string) => PARTICIPANT_KINDS.includes(kind);
+
+/**
+ * Lower number = goes first. Same as SQL public.email_priority().
+ * 1 staff + prize alerts + test + weekly report, 2 event reminders, 3 follow-ups, 4 announcements, 5 Wrapped.
+ */
+export const EMAIL_PRIORITY: Record<string, number> = {
+  prize_qualified: 1, prize_info: 1, test: 1, weekly_report: 1,
+  event_reminder: 2, event_followup: 3, announcement: 4, wrapped: 5,
+};
+export const emailPriority = (kind: string) => EMAIL_PRIORITY[kind] ?? 4;
+
+/** Free @gmail.com: ~500 recipients per rolling 24 h. Google Workspace: use 1900. */
+export const BUDGET = { daily: 450, reserve: 50, workspaceDaily: 1900, announcementDays: 3 } as const;
+
+/** Sending pace inside one 10-minute run (Edge Functions stop after ~150 s on the free plan). */
+export const THROTTLE = { perMinute: 20, sendWindowMs: 90_000, imapBudgetMs: 25_000, claimChunk: 5 } as const;
+
+/** Wait between two emails: about 3 s (20 a minute) with a little randomness so it doesn't look robotic. */
+export function spacingMs(rand: () => number = Math.random): number {
+  const base = 60_000 / THROTTLE.perMinute;
+  return Math.round(base - 500 + rand() * 1000);
+}
+
+export interface QueuedMessage {
+  id: string;
+  priority: number;
+  createdAt: string;
+  sendBefore?: string | null;
+}
+
+/**
+ * Which queued emails go out now. Mirrors SQL public.claim_email_messages():
+ * expired rows are skipped; the rolling 24 h budget counts sent + in-flight; priority 1–2 may use the
+ * whole budget, priority 3+ only what's left above the reserve (so reminders can always go).
+ */
+export function planBatch(
+  queue: readonly QueuedMessage[],
+  o: { now: Date; sentLast24h: number; inFlight?: number; budget?: number; reserve?: number; limit?: number },
+): { send: string[]; expired: string[] } {
+  const now = o.now.getTime();
+  const budget = o.budget ?? BUDGET.daily;
+  const reserve = o.reserve ?? BUDGET.reserve;
+  const limit = o.limit ?? THROTTLE.claimChunk;
+  const expired = queue.filter((m) => m.sendBefore && new Date(m.sendBefore).getTime() <= now).map((m) => m.id);
+  const live = queue
+    .filter((m) => !expired.includes(m.id))
+    .slice()
+    .sort((a, b) => a.priority - b.priority || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  const left = budget - o.sentLast24h - (o.inFlight ?? 0);
+  const high = live.filter((m) => m.priority <= 2).slice(0, Math.max(0, Math.min(limit, left)));
+  const lowRoom = Math.max(0, Math.min(limit - high.length, left - reserve - high.length));
+  const low = live.filter((m) => m.priority > 2).slice(0, lowRoom);
+  return { send: [...high, ...low].map((m) => m.id), expired };
+}
+
+/** UTC offset of New York at that instant, in minutes (−300 in winter, −240 in summer). */
+function newYorkOffsetMinutes(d: Date): number {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York', hourCycle: 'h23',
+      year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric',
+    }).formatToParts(d).map((x) => [x.type, x.value]),
+  );
+  const asUtc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+  return Math.round((asUtc - Math.floor(d.getTime() / 1000) * 1000) / 60_000);
+}
+
+/** Midnight at the end of that day in New York, as an ISO string. */
+export function endOfDayNewYork(iso: string): string {
+  const d = new Date(iso);
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: 'numeric', day: 'numeric' })
+      .formatToParts(d).map((x) => [x.type, x.value]),
+  );
+  const guess = new Date(Date.UTC(+p.year, +p.month - 1, +p.day + 1, 0, 0, 0));
+  return new Date(guess.getTime() - newYorkOffsetMinutes(guess) * 60_000).toISOString();
+}
+
+const addDays = (iso: string, n: number) => new Date(new Date(iso).getTime() + n * 86_400_000).toISOString();
+
+/**
+ * Latest time an email may still go out (null = never expires). Same rules as SQL public.email_campaign():
+ *  event_reminder → event start · event_followup → event end + 3 days · announcement → queued + 3 days
+ *  (or the start of an upcoming event it mentions, if sooner) · wrapped → cycle end (queued after the end:
+ *  queued + 3 days) · weekly_report → end of that day (New York) · prize alerts + test → never.
+ */
+export function sendBeforeFor(
+  kind: string,
+  c: { createdAt: string; eventStartsAt?: string; eventEndsAt?: string; cycleEndsAt?: string; announcementDays?: number; mentionedEventStartsAt?: string },
+): string | null {
+  switch (kind) {
+    case 'event_reminder':
+      return c.eventStartsAt ?? null;
+    case 'event_followup':
+      return c.eventEndsAt ? addDays(c.eventEndsAt, 3) : addDays(c.createdAt, 3);
+    case 'announcement': {
+      const days = addDays(c.createdAt, c.announcementDays ?? BUDGET.announcementDays);
+      return c.mentionedEventStartsAt && c.mentionedEventStartsAt < days ? c.mentionedEventStartsAt : days;
+    }
+    case 'wrapped':
+      return c.cycleEndsAt && c.cycleEndsAt > c.createdAt ? c.cycleEndsAt : addDays(c.createdAt, 3);
+    case 'weekly_report':
+      return endOfDayNewYork(c.createdAt);
+    default:
+      return null;
+  }
+}
+
+// ───────────────────────────── tracking links ─────────────────────────────
+
+/** Public base URL of the email-track Edge Function. */
+export const trackBase = (supabaseUrl: string) => supabaseUrl.replace(/\/+$/, '') + '/functions/v1/email-track';
+export const openPixelUrl = (base: string, msgId: string) => `${base}/o/${msgId}.gif`;
+export const clickUrl = (base: string, msgId: string, url: string, sig: string) =>
+  `${base}/c/${msgId}?u=${encodeURIComponent(url)}&s=${sig}`;
+export const unsubscribePostUrl = (base: string, token: string) => `${base}/u/${token}`;
+
+/** Unsubscribe links (app page or one-click endpoint) are never rewritten into tracked links. */
+export const isUnsubscribeUrl = (url: string) => /#\/unsubscribe\b|\/email-track\/u\//.test(url);
+
+const unescapeAttr = (s: string) =>
+  s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+const escapeAttr = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+const HREF_RE = /(<a\b[^>]*?\bhref\s*=\s*)(["'])(https?:\/\/[^"']+)\2/gi;
+
+/** The http(s) links in the email (unescaped, unique, in order), without unsubscribe links. */
+export function extractLinks(html: string): string[] {
+  const out: string[] = [];
+  for (const m of html.matchAll(HREF_RE)) {
+    const url = unescapeAttr(m[3]);
+    if (!isUnsubscribeUrl(url) && !out.includes(url)) out.push(url);
+  }
+  return out;
+}
+
+/** Replaces each signed http(s) link with its tracked /c/ link. Links without a signature stay as they are. */
+export function rewriteLinks(html: string, msgId: string, base: string, sigs: ReadonlyMap<string, string>): string {
+  return html.replace(HREF_RE, (whole, pre: string, q: string, raw: string) => {
+    const url = unescapeAttr(raw);
+    const sig = sigs.get(url);
+    if (!sig || isUnsubscribeUrl(url)) return whole;
+    return `${pre}${q}${escapeAttr(clickUrl(base, msgId, url, sig))}${q}`;
+  });
+}
+
+/** Adds the 1×1 open pixel just before </body> (or at the end). */
+export function addOpenPixel(html: string, pixelUrl: string): string {
+  const img = `<img src="${escapeAttr(pixelUrl)}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0" />`;
+  return /<\/body>/i.test(html) ? html.replace(/<\/body>/i, img + '</body>') : html + img;
+}
+
+/** RFC 2369 + RFC 8058 one-click unsubscribe headers (Gmail shows its own "Unsubscribe" button). */
+export function listUnsubscribeHeaders(base: string, token: string, mailto?: string): Record<string, string> {
+  const parts = [`<${unsubscribePostUrl(base, token)}>`];
+  if (mailto) parts.push(`<mailto:${mailto}?subject=unsubscribe>`);
+  return { 'List-Unsubscribe': parts.join(', '), 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' };
+}
+
+/** Message-ID on the sender's own domain, so replies and threads work. */
+export function messageIdFor(msgId: string, senderEmail: string): string {
+  const domain = (senderEmail.split('@')[1] || 'gmail.com').toLowerCase();
+  return `<yacquest.${msgId}@${domain}>`;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const isUuid = (s: string) => UUID_RE.test(s);
+/** Unsubscribe tokens: 32 hex characters (public.email_unsub_tokens). */
+export const isUnsubToken = (s: string) => /^[0-9a-f]{32}$/.test(s);
+/** Link signatures: 32 hex characters (left half of an HMAC-SHA256, public.email_link_sig). */
+export const isSig = (s: string) => /^[0-9a-f]{32}$/.test(s);
+
+/** /…/o/<uuid>.gif → open, /…/c/<uuid> → click, /…/u/<token> → unsubscribe. Anything else → null. */
+export function parseTrackPath(pathname: string): { kind: 'open' | 'click' | 'unsub'; id: string } | null {
+  const m = pathname.match(/\/(o|c|u)\/([^/?#]+)\/?$/);
+  if (!m) return null;
+  if (m[1] === 'o') {
+    const id = m[2].replace(/\.gif$/i, '');
+    return isUuid(id) ? { kind: 'open', id: id.toLowerCase() } : null;
+  }
+  if (m[1] === 'c') return isUuid(m[2]) ? { kind: 'click', id: m[2].toLowerCase() } : null;
+  return isUnsubToken(m[2]) ? { kind: 'unsub', id: m[2] } : null;
+}
+
+/** A clicked link may only redirect to http(s) (and only after the signature check). */
+export const safeRedirect = (url: string) => /^https?:\/\/[^\s]+$/i.test(url);
+
+/** 43-byte transparent 1×1 GIF. */
+export const TRANSPARENT_GIF = new Uint8Array([
+  71, 73, 70, 56, 57, 97, 1, 0, 1, 0, 128, 0, 0, 0, 0, 0, 255, 255, 255, 33, 249, 4, 1, 0, 0, 0, 0,
+  44, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 68, 1, 0, 59,
+]);
+
+export const shortUserAgent = (ua: string | null | undefined) => (ua ?? '').replace(/[\r\n]+/g, ' ').slice(0, 120);
+
+// ───────────────────────────── bounces (Gmail DSNs) ─────────────────────────────
+
+/** Gmail's "Delivery Status Notification" senders. */
+export function isDsnFrom(from: string): boolean {
+  return /mailer-daemon@|postmaster@|mail delivery subsystem/i.test(from);
+}
+
+const EMAIL_IN = /[A-Z0-9._%+'-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+
+/**
+ * Reads a bounce message (raw RFC 822 source). Returns the failed recipients (lower-case), whether it's a
+ * permanent failure (5.x.x / Action: failed) and a short reason. "Delayed" notices (4.x.x) return null:
+ * Gmail is still trying. Also null when no recipient can be found.
+ */
+export function parseDsn(raw: string): { recipients: string[]; hard: boolean; status?: string; reason: string } | null {
+  const src = raw.replace(/=\r?\n/g, '').replace(/\r\n/g, '\n');
+  const unfolded = src.replace(/\n[ \t]+/g, ' ');
+  const found = new Set<string>();
+  for (const m of unfolded.matchAll(/^X-Failed-Recipients:\s*(.+)$/gim))
+    for (const e of m[1].match(EMAIL_IN) ?? []) found.add(e.toLowerCase());
+  for (const m of unfolded.matchAll(/^(?:Final|Original)-Recipient:\s*rfc822;\s*<?([^>\s]+)>?/gim)) found.add(m[1].toLowerCase());
+  if (!found.size) {
+    const g = unfolded.match(/(?:wasn't|was not|couldn't be|could not be) delivered to\s+<?([A-Z0-9._%+'-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)*\.[A-Z]{2,})/i);
+    if (g) found.add(g[1].toLowerCase());
+  }
+  const actions = [...unfolded.matchAll(/^Action:\s*(\w+)/gim)].map((m) => m[1].toLowerCase());
+  const status = unfolded.match(/^Status:\s*([245]\.\d{1,3}\.\d{1,3})/im)?.[1];
+  if (actions.length && actions.every((a) => a === 'delayed')) return null;
+  if (status?.startsWith('4') && !actions.includes('failed')) return null;
+  if (!found.size) return null;
+  const diag = unfolded.match(/^Diagnostic-Code:\s*(?:smtp;\s*)?(.+)$/im)?.[1]
+    ?? unfolded.match(/(The (?:email )?account that you tried to reach[^\n]*|address couldn't be found[^\n]*|Address not found[^\n]*)/i)?.[1]
+    ?? 'Delivery failed';
+  const hard = status ? status.startsWith('5') : actions.includes('failed') || /address (?:couldn't|could not) be found|does not exist|user unknown|no such user/i.test(unfolded);
+  return { recipients: [...found], hard, status, reason: diag.trim().slice(0, 300) };
+}
+// ════ END emailCore ════
+
+type Claimed = {
   id: string;
   kind: string;
-  to_emails: string[] | null;
+  email: string;
   subject: string | null;
   body_text: string | null;
   body_html: string | null;
+  unsub_token: string | null;
+  attempts: number;
+  priority: number;
 };
 
+const EDGE_LIMIT_MS = 150_000;
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let t: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    p.finally(() => clearTimeout(t)),
+    new Promise<never>((_, rej) => { t = setTimeout(() => rej(new Error(`${label} timed out after ${Math.round(ms / 1000)} s`)), ms); }),
+  ]);
+}
+const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 Deno.serve(async () => {
+  const started = Date.now();
   const url = Deno.env.get('SUPABASE_URL');
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   if (!url || !serviceKey) return json({ error: 'SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are missing.' }, 500);
-
   const db = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
-  // 1. Queue this week's report if it's due (the database decides and never double-queues).
+  // 1. Queue this week's report if it's due (+ reminders, follow-ups, Wrapped — the database decides, never twice).
   const due = await db.rpc('enqueue_weekly_report_if_due');
   if (due.error) return json({ error: `enqueue_weekly_report_if_due: ${due.error.message}` }, 500);
   const enqueuedWeekly = due.data === true;
 
-  // 1b. (0027) Remove uploaded files of deleted accounts through the Storage API (plain SQL can't delete files).
-  //     Never blocks the emails: on any error it just tries again next run.
+  // 1b. (0027) Remove uploaded files of deleted accounts through the Storage API. Never blocks the emails.
   let purged = 0;
   try {
     const q = await db.rpc('claim_storage_purge', { p_limit: 100 });
@@ -63,62 +338,154 @@ Deno.serve(async () => {
     console.error('storage purge failed', e);
   }
 
-  // 2. Claim a batch of emails to send.
-  const batch = await db.rpc('claim_email_batch', { p_limit: 20 });
-  if (batch.error) return json({ error: `claim_email_batch: ${batch.error.message}` }, 500);
-  const rows = (batch.data ?? []) as OutboxRow[];
-
-  const mark = async (id: string, ok: boolean, error: string | null) => {
-    const res = await db.rpc('mark_email_result', { p_id: id, p_ok: ok, p_error: error });
-    if (res.error) console.error('mark_email_result failed', id, res.error.message);
-  };
-
-  if (!rows.length) return json({ enqueuedWeekly, purged, sent: 0, failed: 0 });
-
-  // 3. SMTP settings (Edge Function secrets).
+  // 2. SMTP settings (Edge Function secrets).
   const host = Deno.env.get('SMTP_HOST') || 'smtp.gmail.com';
   const port = Number(Deno.env.get('SMTP_PORT') || 465);
-  const user = Deno.env.get('SMTP_USER') || '';
+  const user = (Deno.env.get('SMTP_USER') || '').trim();
   const pass = (Deno.env.get('SMTP_PASS') || '').replace(/\s+/g, ''); // Google shows app passwords with spaces
-  const fromName = Deno.env.get('SMTP_FROM_NAME') || 'YACquest';
+  const fromName = (Deno.env.get('SMTP_FROM_NAME') || 'YACquest · NCSSM Young Alumni').replace(/["\r\n]/g, '');
+  const base = trackBase(url);
+
+  const mark = async (id: string, ok: boolean, error: string | null) => {
+    const res = await db.rpc('mark_email_message', { p_id: id, p_ok: ok, p_error: error });
+    if (res.error) console.error('mark_email_message failed', id, res.error.message);
+  };
 
   if (!user || !pass) {
     const msg = 'Email isn’t set up: add the SMTP_USER and SMTP_PASS secrets to the send-emails Edge Function (see docs/SETUP.md).';
+    const batch = await db.rpc('claim_email_messages', { p_limit: THROTTLE.claimChunk });
+    const rows = (batch.data ?? []) as Claimed[];
     for (const r of rows) await mark(r.id, false, msg);
-    return json({ enqueuedWeekly, sent: 0, failed: rows.length, error: msg }, 500);
+    await db.rpc('email_run_finished', { p_stats: { sent: 0, failed: rows.length, imap: 'off', imapError: msg } });
+    return json({ enqueuedWeekly, purged, sent: 0, failed: rows.length, error: msg }, rows.length ? 500 : 200);
   }
 
   const transport = nodemailer.createTransport({ host, port, secure: port === 465, auth: { user, pass } });
-  const from = `"${fromName.replace(/"/g, '')}" <${user}>`;
+  const from = `"${fromName}" <${user}>`;
 
+  async function sendOne(r: Claimed) {
+    let html = r.body_html ?? '';
+    // Tracked links: the database signs each http(s) link (its secret never leaves the database).
+    const links = extractLinks(html);
+    if (links.length) {
+      const s = await db.rpc('email_sign_links', { p_msg: r.id, p_urls: links });
+      if (s.error) console.error('email_sign_links', s.error.message);
+      const sigs = new Map(((s.data ?? []) as { url: string; sig: string }[]).map((x) => [x.url, x.sig]));
+      html = rewriteLinks(html, r.id, base, sigs);
+    }
+    const participant = isParticipantKind(r.kind);
+    if (participant && html) html = addOpenPixel(html, openPixelUrl(base, r.id));
+    const headers = participant && r.unsub_token ? listUnsubscribeHeaders(base, r.unsub_token, user) : undefined;
+    await transport.sendMail({
+      from,
+      to: r.email, // one person per email — never BCC
+      replyTo: user,
+      subject: r.subject || 'YACquest',
+      text: r.body_text || undefined,
+      html: html || undefined,
+      messageId: messageIdFor(r.id, user),
+      headers,
+    });
+  }
+
+  // 3. Send for up to ~90 s, ~20 a minute. Whatever is left waits for the next run (10 minutes).
   let sent = 0;
   let failed = 0;
-  for (const r of rows) {
-    const bcc = (r.to_emails ?? []).filter(Boolean);
-    if (!bcc.length) {
-      await mark(r.id, false, 'No recipients.');
-      failed++;
-      continue;
-    }
-    try {
-      await transport.sendMail({
-        from,
-        to: from, // the sender; real recipients are in BCC so they don't see each other
-        bcc,
-        subject: r.subject ?? 'YACquest',
-        text: r.body_text ?? undefined,
-        html: r.body_html ?? undefined,
-      });
-      await mark(r.id, true, null);
-      sent++;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error('send failed', r.id, msg);
-      await mark(r.id, false, msg);
-      failed++;
+  let released = 0;
+  let stop = false;
+  while (!stop && Date.now() - started < THROTTLE.sendWindowMs) {
+    const batch = await db.rpc('claim_email_messages', { p_limit: THROTTLE.claimChunk });
+    if (batch.error) { console.error('claim_email_messages', batch.error.message); break; }
+    const rows = (batch.data ?? []) as Claimed[];
+    if (!rows.length) break;
+    for (let i = 0; i < rows.length; i++) {
+      if (Date.now() - started > THROTTLE.sendWindowMs) {
+        const rest = rows.slice(i).map((r) => r.id);
+        const rel = await db.rpc('release_email_messages', { p_ids: rest });
+        released += rel.error ? 0 : Number(rel.data ?? 0);
+        stop = true;
+        break;
+      }
+      const r = rows[i];
+      try {
+        await withTimeout(sendOne(r), 30_000, 'SMTP');
+        await mark(r.id, true, null);
+        sent++;
+      } catch (e) {
+        console.error('send failed', r.id, errText(e));
+        await mark(r.id, false, errText(e));
+        failed++;
+      }
+      await sleep(spacingMs());
     }
   }
   transport.close();
 
-  return json({ enqueuedWeekly, purged, sent, failed });
+  // 4. Bounce notices (Gmail "Delivery Status Notification (Failure)") over IMAP. Never blocks sending.
+  let imap: 'ok' | 'off' | 'error' | 'skipped' = 'off';
+  let imapError: string | null = null;
+  let bounces = 0;
+  const left = EDGE_LIMIT_MS - (Date.now() - started) - 15_000;
+  if ((Deno.env.get('BOUNCE_CHECK') || '').toLowerCase() === 'off') {
+    imap = 'off';
+    imapError = 'BOUNCE_CHECK=off';
+  } else if (left < 8_000) {
+    imap = 'skipped';
+  } else {
+    try {
+      bounces = await withTimeout(checkBounces(db, user, pass), Math.min(THROTTLE.imapBudgetMs, left), 'IMAP');
+      imap = 'ok';
+    } catch (e) {
+      imap = 'error';
+      imapError = errText(e).slice(0, 300);
+      console.error('bounce check failed', imapError);
+    }
+  }
+
+  await db.rpc('email_run_finished', { p_stats: { sent, failed, released, bounces, imap, imapError } });
+  return json({ enqueuedWeekly, purged, sent, failed, released, bounces, imap, imapError });
 });
+
+/** Reads unseen bounce notices from the last 3 days, records them, marks them seen and files them. */
+async function checkBounces(db: ReturnType<typeof createClient>, user: string, pass: string): Promise<number> {
+  const { ImapFlow } = await import('npm:imapflow@2.9.1');
+  const client = new ImapFlow({
+    host: 'imap.gmail.com', port: 993, secure: true, auth: { user, pass }, logger: false,
+    connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000,
+  });
+  let found = 0;
+  await client.connect();
+  try {
+    const lock = await client.getMailboxLock('INBOX');
+    try {
+      const since = new Date(Date.now() - 3 * 86_400_000);
+      const uids = ((await client.search({ seen: false, since, or: [{ from: 'mailer-daemon' }, { from: 'postmaster' }] }, { uid: true })) || []) as number[];
+      const list = uids.slice(0, 50);
+      const done: number[] = [];
+      if (list.length) {
+        for await (const msg of client.fetch(list, { uid: true, source: true, envelope: true }, { uid: true })) {
+          const fromText = (msg.envelope?.from ?? []).map((a: { name?: string; address?: string }) => `${a.name ?? ''} <${a.address ?? ''}>`).join(', ');
+          if (!isDsnFrom(fromText)) continue;
+          done.push(msg.uid);
+          const dsn = parseDsn(msg.source ? new TextDecoder().decode(msg.source) : '');
+          if (!dsn) continue;
+          for (const rcpt of dsn.recipients) {
+            const res = await db.rpc('record_email_bounce', { p_email: rcpt, p_reason: dsn.reason, p_hard: dsn.hard });
+            if (res.error) console.error('record_email_bounce', res.error.message);
+            else if ((res.data as { matched?: boolean } | null)?.matched) found++;
+          }
+        }
+      }
+      if (done.length) {
+        await client.messageFlagsAdd(done, ['\\Seen'], { uid: true });
+        try { await client.mailboxCreate('YACquest bounces'); } catch { /* already there */ }
+        try { await client.messageMove(done, 'YACquest bounces', { uid: true }); } catch { /* marking them seen is enough */ }
+      }
+    } finally {
+      lock.release();
+    }
+  } finally {
+    await client.logout().catch(() => {});
+  }
+  return found;
+}

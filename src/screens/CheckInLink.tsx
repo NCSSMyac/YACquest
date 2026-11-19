@@ -8,8 +8,10 @@ import { useAuth } from '../lib/auth';
 import { noteCelebratedPoints } from '../lib/celebrate';
 import { peekPendingCheckIn, savePendingCheckIn } from '../lib/pendingCheckin';
 import { errorMessage } from '../lib/useAsync';
+import { RewardCheckIn } from '../components/reward/RewardCheckIn';
+import type { CheckInReward } from '../types';
 
-type Result = { ok: true; points: number; at: Date } | { ok: false; error: string };
+type Result = { ok: true; points: number; at: Date; reward?: CheckInReward } | { ok: false; error: string };
 
 /**
  * `#/checkin?event=<eventId>&code=<password>` — what an event's QR code opens (Admin → Events → QR code).
@@ -39,7 +41,7 @@ export default function CheckInLink() {
     );
     api.checkIn(eventId, code).then(
       (r) => {
-        setResult({ ok: true, points: r.points, at: new Date() });
+        setResult({ ok: true, points: r.points, at: new Date(), reward: r.reward });
         noteCelebratedPoints(user.id, r.points);
       },
       (e) => setResult({ ok: false, error: errorMessage(e) }),
@@ -55,7 +57,11 @@ export default function CheckInLink() {
   return (
     <div className="app-shell" role="main" style={{ paddingTop: 24 }}>
       {/* Full-screen "CHECKED IN ✓" pass with coins + a live clock (replaces the small pop). */}
-      {result?.ok && showPass && (
+      {/* 0033: special reward events get the reveal takeover instead (then Coffee Pass or Home). */}
+      {result?.ok && showPass && result.reward && (
+        <RewardCheckIn reward={result.reward} points={result.points} eventTitle={title || 'Brew & Quest'} onClose={() => setShowPass(false)} />
+      )}
+      {result?.ok && showPass && !result.reward && (
         <CheckInConfirm
           pass={{ eventTitle: title || 'YAC event', points: result.points, checkedInAt: result.at }}
           onDone={() => {

@@ -121,6 +121,9 @@ export function describeAction(a: AdminAction): string {
     case 'eoy_item_checked':
     case 'eoy_item_unchecked':
       return `${actor} ${a.action === 'eoy_item_checked' ? 'ticked' : 'unticked'} “${EOY_LABELS[s(d.item)] ?? s(d.item)}” on the end-of-year checklist`;
+    // 0032
+    case 'email_bounce_cleared':
+      return `${actor} turned emails back on for ${target} (bouncing address fixed)`;
     case 'report_settings_changed':
       return `${actor} changed the weekly email settings${settingsChange(d)}`;
     default:

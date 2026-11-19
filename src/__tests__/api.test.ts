@@ -403,14 +403,17 @@ describe('announcements', () => {
     const a = await api.sendAnnouncement({ title: 'Admin news', body: 'Hi all', audience: 'all', sendEmail: true });
     expect(a.recipients).toBe(load().users.length);
     expect(a.emailed).toBeGreaterThan(0);
-    expect(load().outbox.some((o) => o.kind === 'announcement' && o.subject === '📣 YACquest: Admin news')).toBe(true);
+    expect(load().outbox.some((o) => o.kind === 'announcement' && o.subject === 'YACquest: Admin news')).toBe(true); // 0032: no emoji in the subject
     asUser('yak001');
     await expect(api.sendAnnouncement({ title: 'Big news', body: 'Hi', audience: 'all', sendEmail: false })).rejects.toMatchObject({ code: 'forbidden' });
     await expect(api.sendAnnouncement({ title: 'Big news', body: 'Hi', audience: 'all', sendEmail: true })).rejects.toMatchObject({ code: 'forbidden' });
     asUser('iesha');
     const r = await api.sendAnnouncement({ title: 'Big news', body: 'Hi', audience: 'all', sendEmail: true });
     expect(r.emailed).toBeGreaterThan(0);
-    expect(load().outbox.filter((o) => o.kind === 'announcement').every((o) => o.toEmails.length <= 90)).toBe(true);
+    // 0032: one outbox row per announcement, split into one email per person (never BCC)
+    const bigNews = load().outbox.filter((o) => o.kind === 'announcement' && o.subject === 'YACquest: Big news');
+    expect(bigNews).toHaveLength(1);
+    expect((load().messages ?? []).filter((m) => m.outboxId === bigNews[0].id)).toHaveLength(r.emailed);
   });
   it('validates title and target', async () => {
     asUser('admin');

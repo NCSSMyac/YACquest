@@ -3,7 +3,7 @@
  * Both must export the same functions — index.ts checks this at compile time.
  */
 import type { CampusId } from '../config';
-import type { Activity, AvatarId, LeaderRow, PrizeStatus, Role, Submission, User, YacEvent } from '../types';
+import type { Activity, AvatarId, EventRewardInput, LeaderRow, PrizeStatus, Role, Submission, User, YacEvent } from '../types';
 
 export class ApiError extends Error {
   constructor(public code: string, message: string) {
@@ -66,7 +66,11 @@ export interface AdminOverview {
   nearGoal: LeaderRow[];
 }
 
-export type EventInput = Omit<YacEvent, 'id' | 'attendeeCount' | 'activityId'> & { password: string };
+export type EventInput = Omit<YacEvent, 'id' | 'attendeeCount' | 'activityId' | 'reward'> & {
+  password: string;
+  /** 0033: a special "limited reward" event (Brew & Quest). null/undefined = a normal event. */
+  reward?: EventRewardInput | null;
+};
 
 export interface TeamMember {
   id: string;

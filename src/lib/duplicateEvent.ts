@@ -17,6 +17,18 @@ export interface EventForm {
   password: string;
   /** 0026: optional feedback survey link ('' = none). Duplicate keeps it. */
   surveyUrl: string;
+  /** 0033: "Special reward event" section (Brew & Quest). null/undefined = toggle off. */
+  reward?: RewardForm | null;
+}
+
+/** 0033: the special reward section of the form (limit kept as text while typing). */
+export interface RewardForm {
+  itemLabel: string;
+  limit: string;
+  venue: string;
+  secretWord: string;
+  outfitSet: string;
+  message: string;
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -27,7 +39,12 @@ export const toLocalInput = (iso: string | Date) => {
 };
 
 export function editForm(e: YacEvent): EventForm {
-  return { title: e.title, campus: e.campus, kind: e.kind, location: e.location, start: toLocalInput(e.startsAt), end: toLocalInput(e.endsAt), grace: e.checkInGraceMinutes, password: e.password ?? '', surveyUrl: e.surveyUrl ?? '' };
+  return {
+    title: e.title, campus: e.campus, kind: e.kind, location: e.location, start: toLocalInput(e.startsAt), end: toLocalInput(e.endsAt), grace: e.checkInGraceMinutes, password: e.password ?? '', surveyUrl: e.surveyUrl ?? '',
+    reward: e.reward
+      ? { itemLabel: e.reward.itemLabel, limit: String(e.reward.limit), venue: e.reward.venue, secretWord: e.reward.secretWord ?? '', outfitSet: e.reward.outfitSet, message: e.reward.message }
+      : null,
+  };
 }
 
 /** Same title, tier, campus, location, length, grace and survey link; one week later (same wall-clock time); new password. */
@@ -37,5 +54,7 @@ export function duplicateForm(e: YacEvent, newPassword: string): EventForm {
   const next = new Date(start);
   next.setDate(next.getDate() + 7);
   const end = new Date(next.getTime() + length);
-  return { ...editForm(e), start: toLocalInput(next), end: toLocalInput(end), password: newPassword };
+  const f = editForm(e);
+  // 0033: a copied special event keeps its reward setup but never the old secret word (the server makes a new one).
+  return { ...f, start: toLocalInput(next), end: toLocalInput(end), password: newPassword, reward: f.reward ? { ...f.reward, secretWord: '' } : f.reward };
 }

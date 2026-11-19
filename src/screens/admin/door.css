@@ -116,3 +116,22 @@
   .door-recent li.pop, .door-count-num, .door-status.open .door-dot { animation: none; }
   .door-bar-track > span { transition: none; }
 }
+
+/* ───────────── 0033 Brew & Quest: coffee counter, secret word, pass list (staff only) ───────────── */
+.door-bq { margin-top: var(--space-4); padding: var(--space-3); border: var(--px) solid var(--navy-900); background: linear-gradient(135deg, #14214f, #3b2580); color: #fff8e7; display: flex; flex-direction: column; gap: var(--space-3); }
+.door-bq-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: var(--space-3); }
+.door-bq-left, .door-bq-word { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.door-bq-label { font-family: var(--font-pixel); font-size: 10px; letter-spacing: 0.5px; color: #cfc4ff; text-transform: uppercase; }
+.door-bq-num { font-size: 22px; font-weight: 800; }
+.door-bq-num b { font-size: 40px; color: var(--gold-300); font-variant-numeric: tabular-nums; }
+.door-bq-staff { font-size: 12px; color: #cfc4ff; }
+.door-bq-secret { font-family: ui-monospace, monospace; font-weight: 900; font-size: clamp(24px, 7vw, 44px); letter-spacing: 2px; color: #fff; background: rgba(0, 0, 0, 0.25); padding: 4px 8px; border: 2px dashed var(--gold-300); overflow-wrap: anywhere; }
+.door-bq-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow: auto; }
+.door-bq-list li { display: flex; align-items: center; gap: 8px; padding: 4px 6px; background: rgba(255, 255, 255, 0.08); border: 2px solid rgba(255, 255, 255, 0.2); }
+.door-bq-list li.used { background: rgba(127, 216, 166, 0.12); }
+.door-bq-list .door-time { color: #cfc4ff; }
+.door-bq-no { flex: none; font-family: var(--font-pixel); font-size: 12px; color: var(--gold-300); min-width: 30px; }
+.door-bq-mark { flex: none; min-height: 44px; min-width: 88px; }
+.door-bq-mark.ghost { color: #fff; border-color: #fff; }
+.door-bq-csv { align-self: flex-start; min-height: 44px; }
+@media (max-width: 420px) { .door-bq-top { grid-template-columns: minmax(0, 1fr); } }

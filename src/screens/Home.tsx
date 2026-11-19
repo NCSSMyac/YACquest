@@ -23,6 +23,9 @@ import { randomYakPun, yakPunOfTheDay } from '../lib/yakPuns';
 import { useStaffRewards } from '../lib/useStaffRewards';
 import { WRAPPED } from '../config';
 import { wrappedWindow } from '../lib/wrapped';
+import { HomeRewardBanners, useSecondTick } from '../components/RewardBanner';
+import { useEventRewards } from '../lib/useEventRewards';
+import { homePass, outfitSetOfItem, passState } from '../lib/rewardEvents';
 
 const WIDE_QUERY = '(min-width: 820px)';
 
@@ -248,6 +251,9 @@ export default function Home() {
   return (
     <div className="stack dash home-dash">
       <TodayChip />
+      <CoffeePassChip />
+      <NewOutfitLine />
+      <HomeRewardBanners />
       {greeting}
       {wrappedBanner}
       {wide ? (
@@ -267,6 +273,36 @@ export default function Home() {
         </>
       )}
     </div>
+  );
+}
+
+/** 0033: "☕ Your Coffee Pass" while it's still within its 30 minutes (in case the pass screen was closed). */
+function CoffeePassChip() {
+  const { passes } = useEventRewards();
+  const now = useSecondTick(passes.length > 0);
+  const p = homePass(passes, now);
+  if (!p) return null;
+  const st = passState(p, now);
+  return (
+    <Link to={`/coffee-pass?event=${encodeURIComponent(p.eventId)}`} className="today-chip pass-chip">
+      <span className="today-chip-fixed"><span aria-hidden="true">☕ </span>Your Coffee Pass</span>
+      <b className="today-chip-title">#{p.passNo} · {p.venue}</b>
+      <span className="today-chip-cta">{st === 'used' ? 'Used ✓' : 'Show'}<span aria-hidden="true"> ▶</span></span>
+    </Link>
+  );
+}
+
+/** 0033: "🎁 Your Latte Night Scholar outfit is here — try it on!" until the Wardrobe has been opened. */
+function NewOutfitLine() {
+  const { unseen } = useEventRewards();
+  const set = unseen.map(outfitSetOfItem).find(Boolean);
+  if (!set) return null;
+  return (
+    <Link to="/prize?tab=wardrobe&cat=limited" className="today-chip outfit-chip">
+      <span aria-hidden="true">🎁</span>
+      <span className="outfit-chip-text">Your <b>{set.name}</b> outfit is here — try it on!</span>
+      <span className="new-dot inline" aria-hidden="true">NEW</span>
+    </Link>
   );
 }
 

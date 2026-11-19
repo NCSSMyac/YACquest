@@ -165,6 +165,9 @@ export default function Me() {
         </div>
       </Panel>
 
+      {/* 0032: two hard bounces paused their emails */}
+      <BounceBanner email={user.email} />
+
       <Card glyph="scroll" title="Points history" id="points" action={history.length ? <span className="chip neutral">{history.length}</span> : undefined}>
         {ledger.loading && !ledger.data ? (
           <Loading />
@@ -378,5 +381,37 @@ function DeleteAccount({ handle, onDeleted }: { handle: string; onDeleted: () =>
         </form>
       </Modal>
     </Accordion>
+  );
+}
+
+/** 0032: "Emails to you are bouncing" — shown when two emails in a row couldn't be delivered. */
+function BounceBanner({ email }: { email: string }) {
+  const toast = useToast();
+  const st = useAsync(() => api.myEmailStatus(), []);
+  const [busy, setBusy] = useState(false);
+  if (!st.data?.bounced) return null;
+  async function fixed() {
+    setBusy(true);
+    try {
+      await api.clearMyEmailBounce();
+      st.setData((d) => (d ? { ...d, bounced: false } : d));
+      toast('Thanks! We’ll try your email again.', 'success');
+    } catch (e) {
+      toast(errorMessage(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Panel className="bounce-banner" tone="gold">
+      <div className="stack" style={{ gap: 6 }} role="status">
+        <b>Our emails to you are bouncing</b>
+        <p style={{ margin: 0, fontSize: 14 }}>
+          Emails to <b className="wrap-anywhere">{email}</b> couldn’t be delivered, so we paused them. You still see everything here in the app.
+          Check the address (a typo or a full mailbox?). If you need a different email, write to <span className="wrap-anywhere">{CONTACT_EMAILS[0]}</span>.
+        </p>
+        <button type="button" className="btn small" disabled={busy} onClick={() => void fixed()}>{busy ? '…' : 'My email works now'}</button>
+      </div>
+    </Panel>
   );
 }

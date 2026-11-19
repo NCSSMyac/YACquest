@@ -10,6 +10,7 @@ import { TodayEventProvider, useTodayEvent } from './TodayEvent';
 import { localTourDone, setLocalTourDone, shouldAutoShowTour, useTourRequest } from '../lib/tour';
 import { claimToasts } from '../lib/seasonal';
 import { useToast } from './ui';
+import { EventRewardsProvider, useEventRewards } from '../lib/useEventRewards';
 
 /** 0028: once per session per person, claim seasonal items whose window is open today; toast what's new. */
 const seasonalClaimedFor = new Set<string>();
@@ -33,7 +34,9 @@ const WelcomeTour = lazy(() => import('./WelcomeTour'));
 export function Layout() {
   return (
     <TodayEventProvider>
-      <Shell />
+      <EventRewardsProvider>
+        <Shell />
+      </EventRewardsProvider>
     </TodayEventProvider>
   );
 }
@@ -46,6 +49,8 @@ function Shell() {
   // An RSVP'd event today counts as one more thing on the bell.
   const today = useTodayEvent();
   const count = unread + (today ? 1 : 0);
+  // 0033: sparkly NEW dot on Prize until the new limited outfit has been seen in the Wardrobe.
+  const newOutfit = useEventRewards().unseen.length > 0;
   // The admin dashboard (and Admin → Stats, 0025) spread into two columns on wide screens; every other page keeps the phone-width column.
   // 0026: participant Home too (two columns like the admin dashboard).
   const wide = ['', '/admin', '/admin/stats'].includes(useLocation().pathname.replace(/\/+$/, ''));
@@ -98,7 +103,9 @@ function Shell() {
         <div className="inner">
           <NavLink to="/" end><HomeIcon />Home</NavLink>
           <NavLink to="/earn"><SwordIcon />Quests</NavLink>
-          <NavLink to="/prize"><ChestIcon />Prize</NavLink>
+          <NavLink to="/prize">
+            <ChestIcon />Prize{newOutfit && <><span className="new-dot" aria-hidden="true">NEW</span><span className="sr-only"> (new outfit)</span></>}
+          </NavLink>
           <NavLink to="/ranks"><TrophyIcon />Ranks</NavLink>
           {isStaff(user) ? <NavLink to="/admin"><ShieldIcon />Admin</NavLink> : null}
           <NavLink to="/me"><UserIcon />Me</NavLink>

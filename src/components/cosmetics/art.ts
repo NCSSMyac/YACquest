@@ -6,6 +6,7 @@
 import type { AvatarId } from '../../types';
 import { GRIDS } from '../Sprite';
 import { SEASONAL_ACCESSORY_ART, SEASONAL_HAT_ART, SEASONAL_PALETTE, type SeasonalArt } from './seasonalArt';
+import { LIMITED_ACCESSORY_ART, LIMITED_HAT_ART, LIMITED_PALETTE } from './limitedArt';
 
 /** Extra colors used by cosmetics/backgrounds (chars unused by the characters). */
 export const EXTRA_PALETTE: Record<string, string> = {
@@ -30,6 +31,8 @@ export const EXTRA_PALETTE: Record<string, string> = {
   R: '#a3282a', // deep red (Hero's Cape, staff-only art)
   // 0028 seasonal items use symbol chars (seasonalArt.ts)
   ...SEASONAL_PALETTE,
+  // 0033 limited edition (limitedArt.ts)
+  ...LIMITED_PALETTE,
 };
 
 export interface Art {
@@ -109,6 +112,8 @@ export const HAT_ART: Record<string, Art> = {
   },
   // 0028 seasonal
   ...SEASONAL_HAT_ART,
+  // 0033 limited edition
+  ...LIMITED_HAT_ART,
 };
 
 /** `anchor: 'side'` (0028 Diya) sits beside the character (SIDE_ANCHOR) instead of at the neck. */
@@ -163,6 +168,8 @@ export const ACCESSORY_ART: Record<string, SeasonalArt> = {
   },
   // 0028 seasonal
   ...SEASONAL_ACCESSORY_ART,
+  // 0033 limited edition
+  ...LIMITED_ACCESSORY_ART,
 };
 
 /** Sparkle aura: twinkling stars placed around the character (frame coords, 32×32 grid). */

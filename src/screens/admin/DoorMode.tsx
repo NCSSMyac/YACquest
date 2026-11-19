@@ -16,7 +16,8 @@ import { checkInUrl } from '../../lib/pendingCheckin';
 import { kindPoints } from '../../lib/eventKinds';
 import { qrDataUrl } from '../../lib/qr';
 import { errorMessage } from '../../lib/useAsync';
-import type { EventCheckin, YacEvent } from '../../types';
+import type { EventCheckin, EventPasses, YacEvent } from '../../types';
+import { csvDateTime, csvFilename, downloadCsv, toCsv } from '../../lib/csv';
 import './door.css';
 
 type WakeState = 'on' | 'off' | 'unsupported';
@@ -158,6 +159,25 @@ export default function DoorMode() {
     };
   }, [eventId]);
 
+  // 0033: special reward events — passes (staff only), polled like the counter.
+  const hasReward = !!event?.reward;
+  const [passes, setPasses] = useState<EventPasses | null>(null);
+  const [passErr, setPassErr] = useState<string | null>(null);
+  const loadPasses = useCallback(async () => {
+    try {
+      setPasses(await api.adminEventPasses(eventId));
+      setPassErr(null);
+    } catch (e) {
+      setPassErr(errorMessage(e));
+    }
+  }, [eventId]);
+  useEffect(() => {
+    if (!hasReward) return;
+    void loadPasses();
+    const i = setInterval(() => void loadPasses(), 5000);
+    return () => clearInterval(i);
+  }, [hasReward, loadPasses]);
+
   function exit() {
     try {
       if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
@@ -267,6 +287,7 @@ export default function DoorMode() {
             </ul>
           )}
           {stale && <p className="door-stale" role="status">Reconnecting… the count may be a little behind.</p>}
+          {hasReward && <DoorPasses passes={passes} error={passErr} title={event.title} eventId={eventId} onChanged={loadPasses} />}
           <p className="door-tip">
             <span className="chip t1">+{kindPoints(event.kind)} pts</span>
             <span>Open your phone camera, scan the code, done! No account yet? It walks you through sign-up.</span>
@@ -274,5 +295,65 @@ export default function DoorMode() {
         </section>
       </main>
     </div>
+  );
+}
+
+/**
+ * 0033 Brew & Quest at the door (staff only): "Free coffees left: 12 / 30", the secret word big for the
+ * volunteer to tell the café, every pass (# · name · time · Used / Not yet; tap to mark used or undo),
+ * and a CSV for reconciling the café tab.
+ */
+function DoorPasses({ passes, error, title, eventId, onChanged }: { passes: EventPasses | null; error: string | null; title: string; eventId: string; onChanged: () => Promise<void> }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  if (!passes) return error ? <p className="door-stale" role="status">{error}</p> : <Loading lines={2} />;
+  const left = Math.max(0, passes.limit - passes.issued);
+  const item = passes.itemLabel.replace(/^free\s+/i, '');
+  async function toggle(userId: string, used: boolean) {
+    setBusy(userId);
+    try {
+      await api.adminMarkPassUsed(eventId, userId, used);
+      await onChanged();
+    } finally {
+      setBusy(null);
+    }
+  }
+  const csv = () =>
+    downloadCsv(
+      csvFilename('coffee-passes', title),
+      toCsv(['pass_no', 'name', 'handle', 'campus', 'checked_in', 'valid_until', 'used', 'used_at', 'marked_by'],
+        passes.passes.map((p) => [p.passNo, p.displayName, p.handle, campusName(p.campus), csvDateTime(p.createdAt), csvDateTime(p.validUntil), !!p.usedAt, csvDateTime(p.usedAt), p.usedBy ?? ''])),
+    );
+  return (
+    <section className="door-bq" aria-label="Coffee passes (staff only)">
+      <div className="door-bq-top">
+        <div className="door-bq-left" aria-live="polite">
+          <span className="door-bq-label">Free {item}s left</span>
+          <span className="door-bq-num"><b>{left}</b> / {passes.limit}</span>
+          <span className="door-bq-staff">Staff only · {passes.used} used</span>
+        </div>
+        <div className="door-bq-word">
+          <span className="door-bq-label">Secret word for {passes.venue}</span>
+          <span className="door-bq-secret">{passes.secretWord}</span>
+        </div>
+      </div>
+      {passes.passes.length === 0 ? (
+        <p className="door-empty">No passes yet. The first {passes.limit} to check in get one.</p>
+      ) : (
+        <ol className="door-bq-list">
+          {passes.passes.map((p) => (
+            <li key={p.userId} className={p.usedAt ? 'used' : undefined}>
+              <span className="door-bq-no">#{p.passNo}</span>
+              <span className="door-name">{p.displayName}</span>
+              <span className="door-time">{timeText(p.createdAt)}</span>
+              <button type="button" className={`btn small ${p.usedAt ? 'green' : 'ghost'} door-bq-mark`} disabled={busy === p.userId}
+                onClick={() => void toggle(p.userId, !p.usedAt)}>
+                {p.usedAt ? 'Used ✓' : 'Not yet'}<span className="sr-only">{p.usedAt ? `: pass ${p.passNo}, ${p.displayName}. Tap to undo` : `: pass ${p.passNo}, ${p.displayName}. Tap to mark used`}</span>
+              </button>
+            </li>
+          ))}
+        </ol>
+      )}
+      <button type="button" className="btn small navy door-bq-csv" onClick={csv} disabled={!passes.passes.length}>⬇ Passes CSV (café tab)</button>
+    </section>
   );
 }
