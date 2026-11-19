@@ -6,7 +6,8 @@ import { CAMPUSES, type CampusId } from '../../config';
 import type { AvatarId, Look } from '../../types';
 import { GRIDS, PALETTE } from '../Sprite';
 import { ACCESSORY_ART, EXTRA_PALETTE, HAT_ANCHOR, HAT_ART, NECK_ANCHOR, SPARKLES, mageWithoutHat, nudge } from './art';
-import { FRAME, backgroundGrid, campusPalette } from './backgrounds';
+import { FRAME, backgroundGrid, backgroundVec, campusPalette } from './backgrounds';
+import { drawVec, type VecArt } from './vector';
 import { EYE_ANCHOR, SIDE_ANCHOR, STAFF_ACCESSORY_ART, STAFF_HAT_ART } from './staffArt';
 
 export { FRAME };
@@ -17,6 +18,8 @@ export interface Layer {
   y: number;
   /** Seconds of delay for a twinkling layer (sparkles); undefined = static. */
   twinkle?: number;
+  /** 0034: draw this vector art (same units, top-left at x/y) instead of `grid`; `grid` is the pixel fallback. */
+  vec?: VecArt;
 }
 
 export const ALL_COLORS: Record<string, string> = { ...PALETTE, ...EXTRA_PALETTE };
@@ -27,12 +30,14 @@ export function paletteFor(campus?: CampusId): Record<string, string> {
 }
 
 const width = (g: string[]) => Math.max(...g.map((r) => r.length));
+const artW = (a: { grid: string[]; vec?: VecArt }) => a.vec?.w ?? width(a.grid);
+const artH = (a: { grid: string[]; vec?: VecArt }) => a.vec?.h ?? a.grid.length;
 
 export function composeLayers(id: AvatarId, look?: Look): Layer[] {
   const layers: Layer[] = [];
   const char = GRIDS[id] ? id : 'yak';
   const bg = look?.background ? backgroundGrid(look.background) : null;
-  if (bg) layers.push({ grid: bg, x: FRAME.x, y: FRAME.y });
+  if (bg) layers.push({ grid: bg, x: FRAME.x, y: FRAME.y, vec: backgroundVec(look!.background!) });
 
   // Staff-only items (0020) are looked up after the participant ones; the server decides who may wear them.
   const hat = look?.hat ? HAT_ART[look.hat] ?? STAFF_HAT_ART[look.hat] : undefined;
@@ -60,32 +65,65 @@ export function composeLayers(id: AvatarId, look?: Look): Layer[] {
     if (art.anchor === 'side') {
       // 0028 Diya: beside the character, on the left
       const e = SIDE_ANCHOR[char];
-      layers.push({ grid: art.grid, x: e.x + (n.x ?? 0), y: e.y + (art.sink ?? 0) + (n.y ?? 0) });
+      layers.push({ grid: art.grid, x: e.x + (n.x ?? 0), y: e.y + (art.sink ?? 0) + (n.y ?? 0), vec: art.vec });
     } else {
       const a = NECK_ANCHOR[char];
-      layers.push({ grid: art.grid, x: a.x - Math.floor(width(art.grid) / 2) + (n.x ?? 0), y: a.y + (art.sink ?? 0) + (n.y ?? 0) });
+      layers.push({ grid: art.grid, x: a.x - Math.floor(artW(art) / 2) + (n.x ?? 0), y: a.y + (art.sink ?? 0) + (n.y ?? 0), vec: art.vec });
     }
   }
 
   if (hat && look?.hat) {
     const a = HAT_ANCHOR[char];
     const n = nudge(char, look.hat);
-    layers.push({ grid: hat.grid, x: a.x - Math.floor(width(hat.grid) / 2) + (n.x ?? 0), y: a.y - hat.grid.length + 1 + (hat.sink ?? 0) + (n.y ?? 0) });
+    // vector hats center exactly on the anchor column (x + 0.5 = middle of that pixel)
+    const x = hat.vec ? a.x + 0.5 - hat.vec.w / 2 : a.x - Math.floor(width(hat.grid) / 2);
+    layers.push({ grid: hat.grid, x: x + (n.x ?? 0), y: a.y - artH(hat) + 1 + (hat.sink ?? 0) + (n.y ?? 0), vec: hat.vec });
   }
   return layers;
 }
 
-/** Flattens layers into a FRAME-sized grid of colors (null = transparent). Used by the preview script/tests. */
+/** Flattens layers into a FRAME-sized grid of colors (null = transparent). Used by the preview script/tests.
+ * Vector layers contribute their pixel fallback grid here; real renderers draw them with drawLayers(). */
 export function flatten(layers: Layer[], palette: Record<string, string>): (string | null)[][] {
   const out: (string | null)[][] = Array.from({ length: FRAME.h }, () => Array(FRAME.w).fill(null));
   for (const l of layers)
     l.grid.forEach((row, dy) =>
       [...row].forEach((ch, dx) => {
-        const fx = l.x + dx - FRAME.x;
-        const fy = l.y + dy - FRAME.y;
+        const fx = Math.floor(l.x) + dx - FRAME.x; // vector hats may sit on a half pixel
+        const fy = Math.floor(l.y) + dy - FRAME.y;
         const c = palette[ch];
         if (c && fy >= 0 && fy < FRAME.h && fx >= 0 && fx < FRAME.w) out[fy][fx] = c;
       }),
     );
   return out;
+}
+
+/**
+ * Paints layers on a canvas (share cards): the FRAME's top-left at (x, y), `scale` px per pixel.
+ * Pixel layers become crisp squares; vector layers (0034) are drawn as smooth paths.
+ */
+export function drawLayers(ctx: CanvasRenderingContext2D, layers: Layer[], palette: Record<string, string>, x: number, y: number, scale: number) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, FRAME.w * scale, FRAME.h * scale);
+  ctx.clip();
+  for (const l of layers) {
+    const ox = x + (l.x - FRAME.x) * scale;
+    const oy = y + (l.y - FRAME.y) * scale;
+    if (l.vec) {
+      drawVec(ctx, l.vec, ox, oy, scale);
+      continue;
+    }
+    l.grid.forEach((row, dy) =>
+      [...row].forEach((ch, dx) => {
+        const fx = l.x + dx - FRAME.x;
+        const fy = l.y + dy - FRAME.y;
+        const c = palette[ch];
+        if (!c || fx < 0 || fy < 0 || fx >= FRAME.w || fy >= FRAME.h) return;
+        ctx.fillStyle = c;
+        ctx.fillRect(ox + dx * scale, oy + dy * scale, scale, scale);
+      }),
+    );
+  }
+  ctx.restore();
 }

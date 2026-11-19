@@ -2,10 +2,13 @@
  * 0033 LIMITED EDITION wardrobe art: "Latte Night Scholar" (Brew & Quest 2026).
  * Same conventions as art.ts / seasonalArt.ts: Sprite palette chars + EXTRA_PALETTE, '.' transparent;
  * hats/accessories in 32×32 character coordinates, the background is 36×36 (FRAME).
+ * 0034: all three pieces are now drawn as vector art (limitedVec.ts) so they read instantly; the grids
+ * below remain as the pixel fallback (flatten(), tests).
  * These items are only ever earned by checking in at a Brew & Quest event (cosmetics rule 'event').
  */
 import type { Art } from './art';
 import type { SeasonalArt } from './seasonalArt';
+import { BEANIE_VEC, LATTE_VEC, NOOK_VEC } from './limitedVec';
 
 /** Extra colors (symbol chars not used anywhere else). Merged into EXTRA_PALETTE. */
 export const LIMITED_PALETTE: Record<string, string> = {
@@ -37,7 +40,7 @@ const BEANIE = [
 ];
 
 export const LIMITED_HAT_ART: Record<string, Art> = {
-  cozy_beanie: { grid: BEANIE, sink: 3 },
+  cozy_beanie: { grid: BEANIE, sink: 3, vec: BEANIE_VEC },
 };
 
 // ───────────── Accessory: A+ Latte (white cup, heart latte art, "A+" on the cup, steam) ─────────────
@@ -60,7 +63,7 @@ const LATTE = [
 
 export const LIMITED_ACCESSORY_ART: Record<string, SeasonalArt> = {
   // Held at the side like the Diya; sits a little lower so the cup reads as "in hand".
-  latte_aplus: { grid: LATTE, anchor: 'side', sink: 6 },
+  latte_aplus: { grid: LATTE, anchor: 'side', sink: 4, vec: LATTE_VEC },
 };
 
 // ───────────── Background: Moonlit Study Nook (36×36) ─────────────
@@ -141,3 +144,6 @@ export function moonlitNook(): Grid {
 export const LIMITED_BACKGROUNDS: Record<string, () => Grid> = {
   moonlit_nook: moonlitNook,
 };
+
+/** 0034: vector versions drawn instead of the pixel grids above (kept as data fallback for flatten()/tests). */
+export const LIMITED_BACKGROUND_VEC = { moonlit_nook: NOOK_VEC };

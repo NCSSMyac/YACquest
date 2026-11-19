@@ -7,13 +7,13 @@ import { CYCLE, INSTAGRAM_HANDLE, campusName } from '../config';
 import { fmtCycleRange } from './format';
 import { badgeById } from './badges';
 import { badgeGrid } from '../components/cosmetics/badgeArt';
-import { ALL_COLORS, composeLayers, flatten, paletteFor } from '../components/cosmetics/compose';
+import { ALL_COLORS, composeLayers, drawLayers, paletteFor } from '../components/cosmetics/compose';
 import type { WrappedData } from '../types';
 import { personality, wrappedPun, wrappedTiles } from './wrapped';
 import { monthName } from './format';
 import {
   BODY_FONT, C, CARD_H, CARD_SITE, CARD_W, PIXEL_FONT, STAR, STAR_PAL,
-  background, drawCharGrid, drawColorGrid, hash, loadFonts, pixelBox, rect, text, tile, cardBlob,
+  background, drawCharGrid, hash, loadFonts, pixelBox, rect, text, tile, cardBlob,
 } from './questCard';
 
 export { cardBlob };
@@ -81,7 +81,7 @@ export async function drawWrappedCard(d: WrappedData, canvas: HTMLCanvasElement 
     rect(ctx, inner.x, inner.y + gridPx - 6 * scale, gridPx, 6 * scale, '#7cc56b');
     rect(ctx, inner.x, inner.y + gridPx - 6 * scale, gridPx, scale, '#4f9e57');
   }
-  drawColorGrid(ctx, flatten(composeLayers(d.avatar, d.look), paletteFor(d.campus)), inner.x, inner.y, scale);
+  drawLayers(ctx, composeLayers(d.avatar, d.look), paletteFor(d.campus), inner.x, inner.y, scale);
   for (const [sx, sy] of [[cx - boxW / 2 - 46, by + 40], [cx + boxW / 2 + 8, by + boxW - 90]]) drawCharGrid(ctx, STAR, STAR_PAL, sx, sy, 8);
 
   // Name, campus, personality

@@ -6,6 +6,7 @@
 import type { AvatarId } from '../../types';
 import { GRIDS } from '../Sprite';
 import { SEASONAL_ACCESSORY_ART, SEASONAL_HAT_ART, SEASONAL_PALETTE, type SeasonalArt } from './seasonalArt';
+import type { VecArt } from './vector';
 import { LIMITED_ACCESSORY_ART, LIMITED_HAT_ART, LIMITED_PALETTE } from './limitedArt';
 
 /** Extra colors used by cosmetics/backgrounds (chars unused by the characters). */
@@ -39,6 +40,8 @@ export interface Art {
   grid: string[];
   /** Rows to push the art down past the anchor (e.g. a crown band sits lower on the head). */
   sink?: number;
+  /** 0034: drawn as vector art instead of `grid` (same units; the grid stays as the pixel fallback). */
+  vec?: VecArt;
 }
 
 export const HAT_ART: Record<string, Art> = {
@@ -207,7 +210,17 @@ export const NECK_ANCHOR: Record<AvatarId, { x: number; y: number }> = {
 };
 
 /** Per character × item nudges, for the few spots that need it. */
-const NUDGE: Partial<Record<AvatarId, Record<string, { x?: number; y?: number }>>> = {};
+const NUDGE: Partial<Record<AvatarId, Record<string, { x?: number; y?: number }>>> = {
+  // 0034 A+ Latte (vector cup + saucer): a step left so it reads as held, and up where the side anchor is low
+  // and the Cozy Knit Beanie pulled down a little where its pom-pom would poke out of the frame
+  yak: { latte_aplus: { x: -1 } },
+  golden_yak: { latte_aplus: { x: -1 } },
+  unicorn: { latte_aplus: { x: -1 }, cozy_beanie: { y: 1 } },
+  knight: { latte_aplus: { x: -1 }, cozy_beanie: { y: 1 } },
+  dragon: { latte_aplus: { x: -1, y: -1 }, cozy_beanie: { y: 1 } },
+  mage: { latte_aplus: { x: -1, y: -1 } },
+  ranger: { latte_aplus: { x: -1, y: -1 }, cozy_beanie: { y: 3 } },
+};
 
 export function nudge(id: AvatarId, item: string) {
   return NUDGE[id]?.[item] ?? {};

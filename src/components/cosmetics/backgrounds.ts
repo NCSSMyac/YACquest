@@ -4,7 +4,8 @@
  */
 import { EXTRA_PALETTE } from './art';
 import { SEASONAL_BACKGROUNDS } from './seasonalArt';
-import { LIMITED_BACKGROUNDS } from './limitedArt';
+import { LIMITED_BACKGROUNDS, LIMITED_BACKGROUND_VEC } from './limitedArt';
+import type { VecArt } from './vector';
 
 export const FRAME = { x: -2, y: -4, w: 36, h: 36 } as const;
 
@@ -302,6 +303,11 @@ export function backgroundGrid(id: string): string[] | null {
     cache.set(id, rows);
   }
   return rows;
+}
+
+/** 0034: vector version of a background (drawn instead of its grid), if it has one. */
+export function backgroundVec(id: string): VecArt | undefined {
+  return (LIMITED_BACKGROUND_VEC as Record<string, VecArt>)[id];
 }
 
 /** Palette overrides for the campus background. */

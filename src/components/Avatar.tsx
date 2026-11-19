@@ -8,10 +8,30 @@ import { cosmeticById } from '../lib/cosmetics';
 import { staffCosmeticById } from '../lib/staffRewards';
 import { AVATAR_NAMES } from './Sprite';
 import { ACCESSORY_ART, HAT_ART, SPARKLES } from './cosmetics/art';
-import { backgroundGrid } from './cosmetics/backgrounds';
+import { backgroundGrid, backgroundVec } from './cosmetics/backgrounds';
 import { FRAME, composeLayers, paletteFor } from './cosmetics/compose';
 import { gridRects, grayPalette, twinkleStyle } from './cosmetics/Pixels';
 import { STAFF_ACCESSORY_ART, STAFF_HAT_ART } from './cosmetics/staffArt';
+import { mapColors, type VecArt } from './cosmetics/vector';
+
+/** 0034: vector cosmetics as smooth SVG paths (the parent SVG is crispEdges for the pixel layers). */
+function vecPaths(art: VecArt, key: string, animate = true) {
+  return (
+    <g shapeRendering="geometricPrecision" strokeLinejoin="round" strokeLinecap="round">
+      {art.shapes.map((s, i) => (
+        <path
+          key={`${key}-${i}`}
+          d={s.d}
+          fill={s.fill ?? 'none'}
+          stroke={s.stroke}
+          strokeWidth={s.stroke ? s.sw ?? 0.6 : undefined}
+          opacity={s.op}
+          style={animate && s.twinkle !== undefined ? twinkleStyle(s.twinkle) : undefined}
+        />
+      ))}
+    </g>
+  );
+}
 
 const itemName = (id?: string) => cosmeticById(id)?.name ?? staffCosmeticById(id)?.name;
 
@@ -40,7 +60,9 @@ export function Avatar({
   const svg = (
     <svg viewBox={`${FRAME.x} ${FRAME.y} ${FRAME.w} ${FRAME.h}`} width={size} height={size} className={className} shapeRendering="crispEdges" role="img" aria-label={label}>
       {layers.map((l, i) =>
-        l.twinkle !== undefined ? (
+        l.vec ? (
+          <g key={i} transform={`translate(${l.x} ${l.y})`}>{vecPaths(l.vec, `l${i}`)}</g>
+        ) : l.twinkle !== undefined ? (
           <g key={i} style={twinkleStyle(l.twinkle)}>{gridRects(l.grid, palette, l.x, l.y, `l${i}`)}</g>
         ) : (
           <g key={i}>{gridRects(l.grid, palette, l.x, l.y, `l${i}`)}</g>
@@ -103,6 +125,14 @@ export function CosmeticIcon({ id, size = 40, campus, locked = false }: { id: st
   let palette = paletteFor(campus);
   if (locked) palette = grayPalette(palette);
   const name = itemName(id) ?? id;
+  const gray = (art: VecArt) => (locked ? mapColors(art, (hex) => grayPalette({ c: hex }).c) : art);
+  const bgVec = backgroundVec(id);
+  if (bgVec)
+    return (
+      <svg viewBox={`0 0 ${FRAME.w} ${FRAME.h}`} width={size} height={size} role="img" aria-label={name}>
+        {vecPaths(gray(bgVec), 'bg', !locked)}
+      </svg>
+    );
   const bg = backgroundGrid(id);
   if (bg)
     return (
@@ -121,6 +151,16 @@ export function CosmeticIcon({ id, size = 40, campus, locked = false }: { id: st
     );
   const art = HAT_ART[id] ?? ACCESSORY_ART[id] ?? STAFF_HAT_ART[id] ?? STAFF_ACCESSORY_ART[id];
   if (!art) return null;
+  if (art.vec) {
+    // the piece alone, large and centered (a little padding so the outline isn't clipped)
+    const { w, h } = art.vec;
+    const side = Math.max(w, h) + 1;
+    return (
+      <svg viewBox={`${(w - side) / 2} ${(h - side) / 2} ${side} ${side}`} width={size} height={size} role="img" aria-label={name}>
+        {vecPaths(gray(art.vec), 'i')}
+      </svg>
+    );
+  }
   const w = Math.max(...art.grid.map((r) => r.length));
   const h = art.grid.length;
   const side = Math.max(w, h) + 2;

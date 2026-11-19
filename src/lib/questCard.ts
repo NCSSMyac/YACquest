@@ -3,7 +3,7 @@
  * Lazy-loaded with import() from QuestCard.tsx so it stays out of the main bundle.
  *
  * cardModel() is pure (tested); drawQuestCard() paints it. Pixel art reuses the app's own grids:
- * composeLayers()+flatten() for the character's equipped look and badgeGrid() for badges, drawn with
+ * composeLayers()+drawLayers() for the character's equipped look (vector pieces drawn smooth) and badgeGrid() for badges, drawn with
  * imageSmoothingEnabled = false so every pixel stays crisp.
  */
 import { BADGES } from './badges';
@@ -12,7 +12,7 @@ import { fmtCycleRange } from './format';
 import { yakPun } from './yakPuns';
 import { STAFF_BADGES } from './staffRewards';
 import { badgeGrid } from '../components/cosmetics/badgeArt';
-import { ALL_COLORS, composeLayers, flatten, paletteFor } from '../components/cosmetics/compose';
+import { ALL_COLORS, composeLayers, drawLayers, paletteFor } from '../components/cosmetics/compose';
 import type { QuestRecap } from '../types';
 
 export const CARD_W = 1080;
@@ -250,7 +250,7 @@ export async function drawQuestCard(r: QuestRecap, canvas: HTMLCanvasElement = d
     rect(ctx, inner.x, inner.y + gridPx - 6 * scale, gridPx, 6 * scale, '#7cc56b');
     rect(ctx, inner.x, inner.y + gridPx - 6 * scale, gridPx, scale, '#4f9e57');
   }
-  drawColorGrid(ctx, flatten(layers, paletteFor(r.campus)), inner.x, inner.y, scale);
+  drawLayers(ctx, layers, paletteFor(r.campus), inner.x, inner.y, scale);
 
   // Name + campus
   const nameY = by + boxW + 104;
