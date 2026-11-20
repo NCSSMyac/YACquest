@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { cacheBustReload } from '../lib/chunkReload';
 import { APP_VERSION, fetchDeployedVersion, isNewerBuild, VERSION_CHECK_MS } from '../lib/version';
 
 /** 0027: "New version available — Refresh" when a newer build was deployed (checked on focus, at most every ~30 min). */
@@ -29,7 +30,7 @@ export function UpdateToast() {
   return (
     <div className="update-toast" role="status">
       <span>✨ New version available</span>
-      <button type="button" className="btn small navy" onClick={() => window.location.reload()}>Refresh</button>
+      <button type="button" className="btn small navy" onClick={cacheBustReload}>Refresh</button>
       <button type="button" className="btn small ghost" aria-label="Dismiss" onClick={() => setShow(false)}>✕</button>
     </div>
   );

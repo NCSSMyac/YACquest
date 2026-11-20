@@ -10,10 +10,13 @@ import '@fontsource/silkscreen/latin-700.css';
 import './styles/theme.css';
 import { installErrorBuffer } from './lib/errorBuffer';
 import { installOnlineListeners } from './lib/online';
+import { installChunkReload } from './lib/chunkReload';
 
 // 0027: remember the last few errors (for "Report a problem") and watch online/offline.
 installErrorBuffer();
 installOnlineListeners();
+// After a deploy, stale cached files make lazy screens fail to load: reload once with fresh files.
+installChunkReload();
 
 // Apply saved light/dark preference before first paint.
 try {
