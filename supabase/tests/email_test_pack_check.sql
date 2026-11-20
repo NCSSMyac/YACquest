@@ -148,8 +148,8 @@ begin
   -- participant emails: greeting, unsubscribe footer (link + token for the header), fill-ins
   for m in select * from public.email_messages where campaign_id = v_camp and public.email_is_participant_kind(kind) loop
     perform tp.ok(m.body_text like 'Hi Helper,%' and m.body_html like '%>Hi Helper,</p>%', m.kind || ': "Hi Helper," greeting');
-    perform tp.ok(v_unsub is not null and m.body_html like '%/#/unsubscribe?t=' || v_unsub || '%'
-                  and m.body_text like '%Unsubscribe in one click: %/#/unsubscribe?t=' || v_unsub || '%', m.kind || ': one-click unsubscribe link');
+    perform tp.ok(v_unsub is not null and m.body_html like '%/#/unsubscribe?t=' || v_unsub || '&amp;k=' || m.kind || '"%'
+                  and m.body_text like '%Unsubscribe from these in one click: %/#/unsubscribe?t=' || v_unsub || '&k=' || m.kind || E'\n%', m.kind || ': one-click unsubscribe link for this type (0039: &k=<kind>)');
     perform tp.ok(m.body_html not like '%You get this because%' and m.body_text not like '%You get this because%', m.kind || ': old footer replaced');
   end loop;
   select * into m from public.email_messages where campaign_id = v_camp and kind = 'announcement';
@@ -165,10 +165,24 @@ begin
                   m.kind || ': campus pun sign-off');
   end loop;
 
+  -- 0039: no emoji and no URGENT in any subject; times say ET; the winner email has no delivery details
+  perform tp.ok(not exists (select 1 from public.email_messages where campaign_id = v_camp
+                             and (regexp_replace(subject, '^\[TEST \d+/9\] ', '') ~ '[^\x20-\x7E’—·…–]' or subject ~* 'urgent')
+                             and kind <> 'announcement'),
+                'no emoji or URGENT in any generated subject (the announcement title is the sender''s own)');
+  perform tp.ok((select subject like '% ET' and body_text like '% starts at % ET.%' from public.email_messages where campaign_id = v_camp and kind = 'event_reminder'),
+                'reminder: "starts at … ET" in subject and body');
+  select * into m from public.email_messages where campaign_id = v_camp and kind = 'prize_info';
+  perform tp.ok(m.subject = '[TEST 9/9] YACquest winner info received: Sample Winner (spot #1)'
+                and m.body_text like '%For privacy, delivery details are only shown in the app.%' and m.body_html like '%/#/admin/prizes%'
+                and (m.body_text || m.body_html) !~* 'phone|mailing address|@example|555-|preference',
+                'prize_info: who + where to look, no delivery details');
+
   -- staff emails: staff footer, no unsubscribe
-  perform tp.ok((select bool_and(body_text like '%Manage these in Admin → System.%' and body_html not like '%unsubscribe%')
+  perform tp.ok((select bool_and(body_text like '%You get this because you''re on the YACquest staff email list. Manage these in Admin → System.%'
+                                 and body_html like '%You get this because you''re on the YACquest staff email list.%' and body_html not like '%unsubscribe%')
                    from public.email_messages where campaign_id = v_camp and kind in ('test', 'weekly_report', 'prize_qualified', 'prize_info')),
-                'staff emails: committee footer, no unsubscribe');
+                'staff emails: staff-list footer (text = HTML), no unsubscribe');
   perform tp.ok((select body_html like '%Weekly committee report%' from public.email_messages where campaign_id = v_camp and kind = 'weekly_report'),
                 'weekly report is the real build_weekly_report()');
 

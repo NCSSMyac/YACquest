@@ -35,19 +35,20 @@
 --     the budget and tells you (NOTICE) if anything might wait; see the end.
 --
 --   The 9 emails
---     1 test             "YACquest test email ✅" (Admin → System → Send test email)
+--     1 test             "YACquest test email" (Admin → System → Send test email)
 --     2 verify_email     "Confirm your YACquest email" (quick-start sign-up). Uses a
 --                        harmless test link: its token is saved as ALREADY USED, so
 --                        tapping it shows "All set! Your email was already
 --                        confirmed ✓" and changes nothing. Your real links still work.
 --     3 announcement     Admin → Announce, with every fill-in + a link to click
---     4 event_reminder   "Reminder: … starts at …" (sample event, 1 h ahead)
+--     4 event_reminder   "Reminder: … starts at … ET" (sample event, 1 h ahead)
 --     5 event_followup   "Thanks for coming to …!" + the ⭐ Rate button + campus pun
 --                        (sample event: the Rate page says the event doesn't exist)
---     6 wrapped          "Your YACquest Wrapped is here! 🎁" with your real numbers
+--     6 wrapped          "Your YACquest Wrapped is here" with your real numbers
 --     7 weekly_report    the real weekly committee report, built right now
---     8 prize_qualified  "🏆 YACquest: Sample Winner won spot #1" (no real winner)
---     9 prize_info       "URGENT 🎁 YACquest winner info: …" (sample delivery info)
+--     8 prize_qualified  "YACquest: Sample Winner won prize spot #1" (no real winner)
+--     9 prize_info       "YACquest winner info received: Sample Winner (spot #1)"
+--                        (no delivery details in the email since 0039; nothing real)
 --   Brew & Quest / limited rewards: no email exists for these (in-app only), so
 --   there is nothing to queue; see docs/TEST_CHECKLIST.md to test them.
 --
@@ -99,7 +100,6 @@ declare
   v_teaser  text;
   v_footer  text;
   rep       json;
-  c         jsonb;
   v_out     uuid;
   v_n       int;
   v_left    int;
@@ -126,7 +126,14 @@ begin
   -- Participant emails (3–6) are skipped for people who turned emails off, haven't confirmed
   -- their email, or whose address bounces: stop now instead of queuing emails that won't go.
   if not p.email_opt_in then
-    raise exception 'Email test pack: email updates are OFF for % (for example after testing Unsubscribe), so the announcement / reminder / follow-up / Wrapped tests would be skipped. Turn them back on in YACquest → Me → Settings ("Email me YACquest updates"), then press Run again. Nothing was queued.', v_addr;
+    raise exception 'Email test pack: email updates are OFF for % (for example after testing Unsubscribe), so the announcement / reminder / follow-up / Wrapped tests would be skipped. Turn them back on in YACquest → Me → Settings → Emails, then press Run again. Nothing was queued.', v_addr;
+  end if;
+  -- 0039: each type has its own switch
+  if not (p.email_announcements and p.email_events and p.email_wrapped) then
+    raise exception 'Email test pack: some email types are OFF for % (%), so those tests would be skipped. Turn all three on in YACquest → Me → Settings → Emails, then press Run again. Nothing was queued.', v_addr,
+      array_to_string(array_remove(array[case when not p.email_announcements then 'Announcements' end,
+                                         case when not p.email_events then 'Event reminders and thank-yous' end,
+                                         case when not p.email_wrapped then 'Yearly Wrapped' end], null), ', ');
   end if;
   if p.email_verified_at is null then
     raise exception 'Email test pack: % hasn''t confirmed their email yet, so participant emails would be skipped (in-app only). Confirm it first (red bar at the top of the app → Resend email), then press Run again. Nothing was queued.', v_addr;
@@ -141,16 +148,16 @@ begin
   v_name  := coalesce(nullif(trim(p.display_name), ''), 'there');
   v_camp  := 'testpack:' || v_run;
 
-  -- ── 1. test (copy of send_test_email(), 0004) ─────────────────────────────
+  -- ── 1. test (copy of send_test_email(), 0039) ─────────────────────────────
   k_kind := k_kind || 'test'::text;
-  k_subj := k_subj || 'YACquest test email ✅'::text;
-  k_text := k_text || format(E'Hi %s,\n\nThis is a test email from YACquest. If you can read this, committee emails are working.\n', v_name);
+  k_subj := k_subj || 'YACquest test email'::text;
+  k_text := k_text || format(E'Hi %s,\n\nThis is a test email from YACquest. If you can read this, YACquest staff emails are working.\n', v_name);
   k_html := k_html || public.email_layout('Test email',
       '<p style="margin:0 0 10px;">Hi ' || public.html_escape(v_name) || ',</p>'
-      || '<p style="margin:0;">This is a test email from YACquest. If you can read this, committee emails are working. ✅</p>');
+      || '<p style="margin:0;">This is a test email from YACquest. If you can read this, YACquest staff emails are working. ✅</p>');
   k_key  := k_key || ('test:testpack:' || v_run || ':1');
 
-  -- ── 2. verify_email (copy of queue_verification_email(), 0034) ─────────────
+  -- ── 2. verify_email (copy of queue_verification_email(), 0039) ─────────────
   -- Harmless test token: saved as ALREADY USED, for your account, so the link can never verify
   -- anything and your verified state is untouched (verify_email_token() answers "already used"
   -- before it looks at anything else; the app shows "All set!"). Real tokens aren't touched.
@@ -163,13 +170,13 @@ begin
   k_kind := k_kind || 'verify_email'::text;
   k_subj := k_subj || 'Confirm your YACquest email'::text;
   k_text := k_text || ('Hi ' || v_first || E',\n\n'
-    || E'Welcome to YACquest! You can already check in, earn points and play. Tap the link below to confirm this is your email. It locks in your points and makes you eligible for a prize spot.\n\n'
+    || E'Welcome to YACquest! You can already check in, earn points and play. Tap the link below to confirm this is your email. Confirming lets you hold a prize spot and get YACquest emails.\n\n'
     || 'Confirm my email: ' || v_url || E'\n\n'
     || E'The link works for 7 days. If you didn''t sign up for YACquest, you can ignore this email.\n\n'
     || E'—\nYACquest · NCSSM Young Alumni Council');
   v_html := public.email_layout('Confirm your YACquest email',
       '<p style="margin:0 0 12px;font-size:16px;">Hi ' || public.html_escape(v_first) || ',</p>'
-    || '<p style="margin:0 0 12px;">Welcome to YACquest! You can already check in, earn points and play. Tap the button to confirm this is your email. It locks in your points and makes you eligible for a prize spot.</p>'
+    || '<p style="margin:0 0 12px;">Welcome to YACquest! You can already check in, earn points and play. Tap the button to confirm this is your email. Confirming lets you hold a prize spot and get YACquest emails.</p>'
     || '<p style="margin:18px 0;"><a href="' || public.html_escape(v_url) || '" style="display:inline-block;background:#f2b33d;color:#0b2a5b;font-weight:700;text-decoration:none;padding:12px 20px;border-radius:8px;border:2px solid #0b2a5b;">Confirm my email</a></p>'
     || '<p style="margin:0 0 6px;font-size:13px;color:#5b6475;">Or paste this link into your browser:<br><span style="word-break:break-all;">' || public.html_escape(v_url) || '</span></p>'
     || '<p style="margin:12px 0 0;font-size:13px;color:#5b6475;">The link works for 7 days.</p>');
@@ -199,28 +206,28 @@ begin
       || ' via YACquest.</p>');
   k_key  := k_key || ('announcement:' || gen_random_uuid() || ':testpack:' || v_run || ':3');
 
-  -- ── 4. event_reminder (copy of queue_event_reminders(), 0024) ─────────────
+  -- ── 4. event_reminder (copy of queue_event_reminders(), 0039: "7:00 PM ET") ──
   -- Sample event (no events row): the key's made-up event id makes it expire 1 hour after queuing.
-  v_time := to_char((date_trunc('hour', v_now) + interval '1 hour') at time zone 'America/New_York', 'FMHH12:MI AM');
+  v_time := public.email_event_time(date_trunc('hour', v_now) + interval '1 hour');
   v_pts  := coalesce(public.tier_points(2), 0);
   v_title := 'Test Event (sample)';
   k_kind := k_kind || 'event_reminder'::text;
   k_subj := k_subj || ('Reminder: ' || v_title || ' starts at ' || v_time);
   k_text := k_text || (v_title || ' starts at ' || v_time || '.' || chr(10) || 'Where: YAC HQ (sample)' || chr(10) || chr(10)
           || 'Check in at the event to earn ' || v_pts || ' points.' || chr(10) || chr(10)
-          || 'You get this because you RSVP''d in YACquest and have email updates on (turn them off in Me).');
+          || 'You get this because you RSVP''d in YACquest and have event emails on (turn them off in Me → Settings).');
   k_html := k_html || public.email_layout('Reminder: ' || v_title,
         '<p style="font-size:16px;margin:0 0 8px"><b>' || public.html_escape(v_title) || '</b> starts at <b>'
         || public.html_escape(v_time) || '</b>.</p>'
         || '<p style="margin:0 0 8px">📍 ' || public.html_escape('YAC HQ (sample)') || '</p>'
         || '<p style="margin:0 0 12px">Check in at the event to earn <b>' || v_pts || ' points</b>.</p>'
-        || '<p style="font-size:12px;color:#4a5672;margin:0">You get this because you RSVP’d in YACquest and have email updates on (turn them off in Me).</p>');
+        || '<p style="font-size:12px;color:#4a5672;margin:0">You get this because you RSVP’d in YACquest and have event emails on (turn them off in Me → Settings).</p>');
   k_key  := k_key || ('reminder:' || gen_random_uuid() || ':testpack:' || v_run || ':4');
 
   -- ── 5. event_followup "Thanks for coming" (copy of send_followup_for_event(), 0030) ──
   -- The subject must start with "Thanks for coming" so the campus-pun sign-off is added (the
   -- [TEST] prefix goes on afterwards). Sample event id: the ⭐ Rate page says the event doesn't exist.
-  v_footer := 'You get this because you have email updates on in YACquest (turn them off in Me → Settings).';
+  v_footer := 'You get this because you have event emails on in YACquest (turn them off in Me → Settings).';
   v_spts := coalesce(public.tier_points(coalesce((select tier from public.activities where id = 'event_survey'), 3)), 0);
   v_url  := gen_random_uuid()::text;   -- sample event id
   v_link := v_app || '/#/survey/' || v_url;
@@ -236,7 +243,7 @@ begin
         || '<p style="font-size:12px;color:#4a5672;margin:0">' || public.html_escape(v_footer) || '</p>');
   k_key  := k_key || ('followup:' || v_url || ':testpack:' || v_run || ':5');
 
-  -- ── 6. wrapped (copy of queue_wrapped_notifications(), 0028), your real numbers (read only) ──
+  -- ── 6. wrapped (copy of queue_wrapped_notifications(), 0039), your real numbers (read only) ──
   v_events := (select count(distinct l.ref_id) from public.ledger l
                 where l.user_id = p.id and l.cycle_id = cyc.id and l.source = 'checkin' and l.amount > 0);
   v_badges := (select count(*) from public.badges_for(p.id) b where b.earned);
@@ -246,17 +253,17 @@ begin
                      v_badges, case when v_badges = 1 then 'badge' else 'badges' end);
   v_link := v_app || '/#/wrapped';
   k_kind := k_kind || 'wrapped'::text;
-  k_subj := k_subj || 'Your YACquest Wrapped is here! 🎁'::text;
+  k_subj := k_subj || 'Your YACquest Wrapped is here'::text;
   k_text := k_text || ('Your YACquest Wrapped is here!' || chr(10) || chr(10)
           || 'Your ' || coalesce(cyc.name, 'year') || ' in a nutshell: ' || v_teaser || '.' || chr(10) || chr(10)
           || 'See the whole story (best month, rarest badge, your YAC personality) and a card to share: ' || v_link
-          || chr(10) || chr(10) || v_footer);
-  k_html := k_html || public.email_layout('Your YACquest Wrapped is here! 🎁',
+          || chr(10) || chr(10) || replace(v_footer, 'event emails', 'Wrapped emails'));
+  k_html := k_html || public.email_layout('Your YACquest Wrapped is here',
         '<p style="font-size:16px;margin:0 0 10px">Your <b>' || public.html_escape(coalesce(cyc.name, 'year')) || '</b> in a nutshell:</p>'
         || '<p style="font-size:22px;font-weight:800;color:#0b2a5b;margin:0 0 14px">' || public.html_escape(v_teaser) || '</p>'
         || '<p style="margin:0 0 14px">See the whole story (your best month, rarest badge and YAC personality) and get a card to share.</p>'
         || '<p style="margin:0 0 14px"><a href="' || public.html_escape(v_link) || '" style="display:inline-block;background:#f2b33d;color:#0b2a5b;font-weight:700;padding:10px 14px;text-decoration:none;border-radius:6px">Open my Wrapped 🎁</a></p>'
-        || '<p style="font-size:12px;color:#4a5672;margin:0">' || public.html_escape(v_footer) || '</p>');
+        || '<p style="font-size:12px;color:#4a5672;margin:0">' || public.html_escape(replace(v_footer, 'event emails', 'Wrapped emails')) || '</p>');
   k_key  := k_key || ('wrapped:' || gen_random_uuid() || ':testpack:' || v_run || ':6');
 
   -- ── 7. weekly_report: the real report (build_weekly_report() only reads) ───
@@ -267,15 +274,15 @@ begin
   k_html := k_html || coalesce(rep->>'html', '');
   k_key  := k_key || ('weekly_report:testpack:' || v_run || ':7');
 
-  -- ── 8. prize_qualified (copy of on_prize_claim_alert() INSERT, 0015) — sample winner ──
+  -- ── 8. prize_qualified (copy of on_prize_claim_alert() INSERT, 0039) — sample winner ──
   k_kind := k_kind || 'prize_qualified'::text;
-  k_subj := k_subj || format('🏆 YACquest: %s won spot #%s', 'Sample Winner', 1);
+  k_subj := k_subj || format('YACquest: %s won prize spot #%s', 'Sample Winner', 1);
   k_text := k_text || (format(E'%s (%s) reached %s points and won prize spot #%s of %s — a $%s gift card.\n\n'
              'They are waiting to send their delivery info. You will get another email as soon as they do.\n',
              'Sample Winner', public.campus_label(coalesce(p.campus, 'unc')), cfg.prize_goal, 1, cfg.prize_count, cfg.prize_value_usd)
         || E'\n🐂 Yak of the week: ' || public.yak_pun_of_the_week() || E'\n'
         || E'\n(TEST: no real prize spot was given.)\n');
-  k_html := k_html || public.email_layout(format('%s won spot #%s', 'Sample Winner', 1),
+  k_html := k_html || public.email_layout(format('%s won prize spot #%s', 'Sample Winner', 1),
         '<p style="margin:0 0 10px;font-size:17px;"><b>' || public.html_escape('Sample Winner') || '</b> ('
         || public.campus_label(coalesce(p.campus, 'unc')) || ') reached <b>' || cfg.prize_goal || ' points</b> and won prize spot <b>#'
         || 1 || ' of ' || cfg.prize_count || '</b> — a <b>$' || cfg.prize_value_usd || ' gift card</b>. 🏆</p>'
@@ -284,33 +291,14 @@ begin
         || '<p style="margin:12px 0 0;color:#c0392b;font-size:13px;">TEST: no real prize spot was given.</p>');
   k_key  := k_key || ('prize_qualified:testpack:' || v_run || ':8');
 
-  -- ── 9. prize_info (copy of on_prize_claim_alert() UPDATE, 0015) — sample delivery info ──
-  c := jsonb_build_object('fullName', 'Sample Winner', 'email', 'sample.winner@example.com', 'phone', '(919) 555-0100',
-                          'address', '1 Sample St, Durham NC 27705', 'preference', 'Amazon', 'notes', 'TEST: not a real winner.');
+  -- ── 9. prize_info (on_prize_claim_alert() UPDATE, 0039) — sample winner, the same builder as the real one ──
+  -- Since 0039 the email has no delivery details: only who, which spot, where to look, the deadline and the reference.
+  rep := public.prize_info_email('Sample Winner', coalesce(p.campus, 'unc'), 1, 'TEST-0000');
   k_kind := k_kind || 'prize_info'::text;
-  k_subj := k_subj || format('URGENT 🎁 YACquest winner info: %s (spot #%s)', 'Sample Winner', 1);
-  k_text := k_text || (format(E'%s won spot #%s and sent their delivery info. Please send the $%s gift card by %s.\n\n'
-             'Full name: %s\nEmail: %s\nPhone: %s\nMailing address: %s\nGift card preference: %s\nNotes: %s\n'
-             'Reference: %s\nCampus: %s\n',
-             'Sample Winner', 1, cfg.prize_value_usd, to_char(cfg.fulfill_by, 'Mon FMDD, YYYY'),
-             c->>'fullName', c->>'email', c->>'phone', c->>'address', c->>'preference', c->>'notes',
-             'TEST-0000', public.campus_label(coalesce(p.campus, 'unc')))
-        || E'\n🐂 Yak of the week: ' || public.yak_pun_of_the_week() || E'\n');
-  k_html := k_html || public.email_layout(format('Winner info: %s (spot #%s)', 'Sample Winner', 1),
-        '<p style="margin:0 0 12px;background:#fff6e3;border:1px solid #f2b33d;border-radius:8px;padding:10px 12px;">'
-        || '<b style="color:#c0392b;">Action needed:</b> send the <b>$' || cfg.prize_value_usd || ' gift card</b> by <b>'
-        || coalesce(to_char(cfg.fulfill_by, 'Mon FMDD, YYYY'), '—') || '</b>, then mark spot #1 fulfilled in YACquest.</p>'
-        || '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:14px;">'
-        || public.prize_alert_row('Full name', c->>'fullName')
-        || public.prize_alert_row('Email', c->>'email')
-        || public.prize_alert_row('Phone', c->>'phone')
-        || public.prize_alert_row('Mailing address', c->>'address')
-        || public.prize_alert_row('Gift card preference', c->>'preference')
-        || public.prize_alert_row('Notes', c->>'notes')
-        || public.prize_alert_row('Reference', 'TEST-0000')
-        || public.prize_alert_row('Campus', public.campus_label(coalesce(p.campus, 'unc')))
-        || '</table>'
-        || '<p style="margin:12px 0 0;color:#5b6475;font-size:13px;font-style:italic;">🐂 Yak of the week: ' || public.html_escape(public.yak_pun_of_the_week()) || '</p>');
+  k_subj := k_subj || (rep->>'subject');
+  k_text := k_text || ((rep->>'text') || E'\n(TEST: not a real winner.)\n');
+  k_html := k_html || replace(rep->>'html', '<!--yac:signoff-->',
+        '<p style="margin:12px 0 0;color:#c0392b;font-size:13px;">TEST: not a real winner.</p><!--yac:signoff-->');
   k_key  := k_key || ('prize_info:testpack:' || v_run || ':9');
 
   if cardinality(k_kind) <> v_total then

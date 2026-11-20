@@ -1,29 +1,29 @@
 /**
- * {campus_pun}: one friendly line per campus for participant emails (announcement fill-in and the
+ * {campus_pun}: one friendly, school-spirit line per campus (0039: all positive, no rivalry jokes) for participant emails (announcement fill-in and the
  * event thank-you email). The line rotates: it's picked deterministically per send from a seed key
  * (the announcement / event id), so everyone at one campus gets the same line in one send and the
  * next send usually gets another one.
  *
- * KEEP IN SYNC with public.campus_puns() in supabase/migrations/0032_email_personalization_tracking.sql:
+ * KEEP IN SYNC with public.campus_puns() in supabase/migrations/0039_email_wording_prefs_health.sql (0032 before):
  * same lines, same order (src/__tests__/emailPersonalization.test.ts checks this). Use the plain ' apostrophe.
  */
 import type { CampusId } from '../config';
 
 export const CAMPUS_PUNS: Record<CampusId, readonly string[]> = {
   duke: [
-    "Bet they don't teach you that at Duke 😈",
-    'Even Blue Devils need a break — come hang!',
-    'Devilishly good to see you, Duke.',
+    'Go Blue Devils — see you soon!',
     'From the Gothic Wonderland to YAC: welcome back!',
+    "Duke's got spirit — bring it to the next event!",
+    'Forever Duke, forever NCSSM.',
   ],
   unc: [
-    "Bet they don't teach you that at UNC 🐏",
-    'Heel yeah, see you there!',
+    'Go Heels!',
     'Carolina blue skies ahead 💙',
+    'Heel yeah, see you there!',
     'Ram-arkable things happen when Tar Heels show up.',
   ],
   ncsu: [
-    "Bet they don't teach you that at NC State 🐺",
+    'Go Pack!',
     'Howl about joining us?',
     'Wolfpack, roll call! 🐾',
     'Think and Do — and come hang with YAC!',

@@ -9,10 +9,10 @@ import { Panel } from '../components/ui';
 import { Accordion } from '../components/Blocks';
 import { CONTACT_EMAILS } from '../config';
 import { useAuth } from '../lib/auth';
-import { EMAIL_OPT_IN_LABEL } from '../lib/emailWording';
+import { EMAIL_PREF_ITEMS } from '../lib/emailWording';
 import { RETENTION } from '../../supabase/functions/_shared/emailCore';
 
-export const PRIVACY_UPDATED = 'November 19, 2026';
+export const PRIVACY_UPDATED = 'November 20, 2026';
 
 export default function Privacy() {
   const { user } = useAuth();
@@ -51,7 +51,7 @@ export default function Privacy() {
             <li><b>Uploads:</b> screenshots you send as quest proof and event photos, with your note.</li>
             <li><b>Feedback, prize ideas and problem reports</b> you send (see below).</li>
             <li><b>Notifications:</b> the messages the app shows you (approvals, announcements, prize news) and whether you read them.</li>
-            <li><b>Your choices:</b> “{EMAIL_OPT_IN_LABEL}” on or off, photo-wall on or off, whether you’ve seen the welcome tour.</li>
+            <li><b>Your choices:</b> which emails you want ({EMAIL_PREF_ITEMS.map((i) => `“${i.label}”`).join(', ')}), photo-wall on or off, whether you’ve seen the welcome tour.</li>
             <li><b>Email activity:</b> which emails we sent you and whether they went out, and for optional member emails when you opened one or clicked a link (see “Emails” below).</li>
             <li><b>Friend codes:</b> your code, and who signed up with it (so the bonus goes to the right people).</li>
             <li><b>Prize winners only:</b> name, email, phone and mailing address to deliver the gift card.</li>
@@ -63,7 +63,7 @@ export default function Privacy() {
             <li><b>Other players</b> see your display name, campus, character and points on the leaderboards, and the photos you chose to share on a photo wall. Friends who used your code see each other’s display name, campus, character and whether they came to an event.</li>
             <li><b>The YAC team (admins and YACquest Chairs)</b> also see your email and username, your uploads (to review them), your points history, check-ins and RSVPs, and feedback you send (without your name if you sent it anonymously). They can keep short private <b>staff notes</b> about players to help with questions; only staff can see these.</li>
             <li><b>Email stats (admins and YACquest Chairs):</b> how many people opened or clicked each email, and each person’s email history: what we sent them, whether it arrived, and whether they opened it or clicked a link.</li>
-            <li><b>YACquest Chairs only</b> see prize winners’ delivery info in the app, the staff action log (who changed points, roles or events), the email delivery log, and can export the player list. Winners’ delivery info is also emailed to the staff prize-alert list (see below).</li>
+            <li><b>YACquest Chairs only</b> see prize winners’ delivery info in the app, the staff action log (who changed points, roles or events), the email delivery log, and can export the player list. The staff prize-alert list only gets an email saying a winner sent their details, never the details themselves (see below).</li>
           </ul>
         </Accordion>
 
@@ -74,7 +74,7 @@ export default function Privacy() {
 
         <Accordion icon="🎁" title="Prize winners’ delivery info" summary="Staff who send the gift card; only for that">
           <p>If you win, you send your name, email, phone and mailing address. It’s used <b>only</b> to deliver your gift card.</p>
-          <p style={{ margin: 0 }}>YACquest Chairs see it in the app. It’s also emailed to the staff <b>prize-alert list</b>: the YACquest Chairs, the admins, and any extra addresses a YACquest Chair adds (for example a YAC board member who helps send the cards). Our copy of that email is emptied once your prize is marked delivered, or after {RETENTION.sensitiveBodyDays} days at the latest.</p>
+          <p style={{ margin: 0 }}>Only the YACquest Chairs see it, in the app (Admin → Prizes). The staff <b>prize-alert list</b> (the YACquest Chairs, the admins, and any extra addresses a YACquest Chair adds, for example a YAC board member who helps send the cards) gets an email that you sent your details, with your display name, campus and prize spot, but <b>not</b> your name, email, phone, address or notes. Our copy of that email is emptied once your prize is marked delivered, or after {RETENTION.sensitiveBodyDays} days at the latest.</p>
         </Accordion>
 
         <Accordion icon="💬" title="Feedback and problem reports" summary="Optionally anonymous; reports include a few tech details">
@@ -87,7 +87,7 @@ export default function Privacy() {
           <p><b>What they record:</b> each one has a tiny invisible image that tells us when it was opened, and its links go through YACquest first so we know which link was clicked. We store the time, which link, and a shortened description of your browser or email app (its “user agent”, cut to 120 characters). We <b>don’t</b> store your IP address or your location. Opens are approximate: some email apps load images on their own, and some block them.</p>
           <p><b>Not tracked at all:</b> the email that confirms your address, password reset emails, and emails to the YAC team (weekly report, prize alerts).</p>
           <p><b>Who sees it:</b> admins and YACquest Chairs see open and click stats and each person’s email history. Staff also get a weekly report email with the leaderboard, people close to the prize and recent feedback.</p>
-          <p style={{ margin: 0 }}><b>Turning them off:</b> one setting covers all four kinds. Untick “{EMAIL_OPT_IN_LABEL}” in Me → Settings, tap <b>Unsubscribe in one click</b> at the bottom of any of these emails, use your email app’s Unsubscribe button, or send an email with the subject “unsubscribe” to the address our emails come from (from the address you signed up with). You’ll still see everything in the app, and you can turn emails back on any time in Me → Settings.</p>
+          <p style={{ margin: 0 }}><b>Turning them off:</b> you choose each kind in Me → Settings → Emails: {EMAIL_PREF_ITEMS.map((i) => `“${i.label}”`).join(', ')}. <b>Unsubscribe from these in one click</b> at the bottom of an email, or your email app’s Unsubscribe button, turns off just that kind. Sending an email with the subject “unsubscribe” to the address our emails come from (from the address you signed up with) turns them all off. You’ll still see everything in the app, and you can turn any of them back on in Me → Settings.</p>
         </Accordion>
 
         <Accordion icon="🗄️" title="Where it’s stored" summary="Supabase (US East) · GitHub Pages · Gmail">
@@ -103,7 +103,7 @@ export default function Privacy() {
           <p style={{ marginBottom: 4 }}>Email records are cleaned up automatically, once a day:</p>
           <ul className="privacy-list" style={{ margin: 0 }}>
             <li><b>Opens, clicks and the email log</b> (who we emailed, what and when): deleted after <b>{RETENTION.logMonths} months</b>.</li>
-            <li><b>Prize-alert emails</b> with a winner’s delivery details: their contents are erased as soon as the prize is marked delivered, and after <b>{RETENTION.sensitiveBodyDays} days</b> at the latest. Weekly staff reports (they name players and quote feedback) are erased after {RETENTION.sensitiveBodyDays} days too.</li>
+            <li><b>Prize-alert emails</b> (they name the winner, never their delivery details): their contents are erased as soon as the prize is marked delivered, and after <b>{RETENTION.sensitiveBodyDays} days</b> at the latest. Weekly staff reports (they name players and quote feedback) are erased after {RETENTION.sensitiveBodyDays} days too.</li>
             <li><b>Email confirmation links</b> and the confirmation email’s contents: deleted after {RETENTION.verifyTokenDays} days.</li>
             <li><b>Your unsubscribe link</b> keeps working for as long as you have an account, so old emails can still turn emails off.</li>
           </ul>

@@ -4,32 +4,56 @@
  * does the real thing. Greeting, fill-ins, campus-pun sign-off and the footer go into the markers that
  * the email layout leaves: <!--yac:greeting-->, <!--yac:signoff-->, <!--yac:footer-->…<!--/yac:footer-->.
  */
+import { EMAIL_TYPE_PHRASE, appUnsubscribeUrl, emailTypeOf } from '../../supabase/functions/_shared/emailCore';
 import { campusPun, punSeed } from './campusPuns';
 import { escapeHtml, fillValues, greetingLine, renderFillIns, type FillContext, type FillPerson } from './emailFill';
+import type { EmailPrefs } from '../types';
 
 export const PARTICIPANT_EMAIL_KINDS = ['announcement', 'event_reminder', 'event_followup', 'wrapped'] as const;
 export const isParticipantEmail = (kind: string) => (PARTICIPANT_EMAIL_KINDS as readonly string[]).includes(kind);
 
 export const APP_URL = 'https://ncssmyac.github.io/YACquest/';
-export const unsubscribeUrl = (token: string, appUrl = APP_URL) => `${appUrl.replace(/\/+$/, '')}/#/unsubscribe?t=${token}`;
+/** The one-click link in a member email (0039: `kind` adds &k=<kind> so only that email type is turned off). */
+export const unsubscribeUrl = (token: string, appUrl = APP_URL, kind?: string | null) => appUnsubscribeUrl(appUrl, token, kind);
 
 export const IDENTITY_LINE = 'YACquest · NCSSM Young Alumni Council';
-export const STAFF_FOOTER = 'You get this because you are on the YAC committee list. Manage these in Admin → System.';
+/** 0039: staff emails (weekly report, prize alerts, test). Same words in HTML and plain text (SQL email_staff_footer_text()). */
+export const STAFF_FOOTER = "You get this because you're on the YACquest staff email list. Manage these in Admin → System.";
+export const staffFooterText = () => `—\n${STAFF_FOOTER}\n${IDENTITY_LINE}`;
 
-export function participantFooterHtml(unsubUrl: string | null): string {
+/** "announcement" / "event reminder and thank-you" / "yearly Wrapped" (SQL email_type_phrase()). */
+const phraseOf = (kind: string) => {
+  const t = emailTypeOf(kind);
+  return t ? EMAIL_TYPE_PHRASE[t] : '';
+};
+
+/** Member email footer (SQL email_footer_html_for()): names the type; the one-click link turns off only that type. */
+export function participantFooterHtml(unsubUrl: string | null, kind: string): string {
   return (
-    "You're getting this because you have YACquest emails on. " +
-    (unsubUrl ? `<a href="${escapeHtml(unsubUrl)}" style="color:#0b2a5b;">Unsubscribe in one click</a> · ` : '') +
-    `Manage in the app (Me → Settings)<br>${IDENTITY_LINE}`
+    `You're getting this because you have YACquest ${phraseOf(kind)} emails on. ` +
+    (unsubUrl ? `<a href="${escapeHtml(unsubUrl)}" style="color:#0b2a5b;">Unsubscribe from these in one click</a> · ` : '') +
+    `Manage all email choices in the app (Me → Settings)<br>${IDENTITY_LINE}`
   );
 }
 
-export function participantFooterText(unsubUrl: string | null): string {
+export function participantFooterText(unsubUrl: string | null, kind: string): string {
   return (
-    "—\nYou're getting this because you have YACquest emails on." +
-    (unsubUrl ? `\nUnsubscribe in one click: ${unsubUrl}` : '') +
-    `\nManage in the app: Me → Settings\n${IDENTITY_LINE}`
+    `—\nYou're getting this because you have YACquest ${phraseOf(kind)} emails on.` +
+    (unsubUrl ? `\nUnsubscribe from these in one click: ${unsubUrl}` : '') +
+    `\nManage all email choices in the app: Me → Settings\n${IDENTITY_LINE}`
   );
+}
+
+/** 0039: does this person want this kind of email? Staff / account kinds: always. (SQL email_type_on().) */
+export function emailKindOn(kind: string, prefs: EmailPrefs): boolean {
+  const t = emailTypeOf(kind);
+  return t === 'announcement' ? prefs.announcements : t === 'events' ? prefs.events : t === 'wrapped' ? prefs.wrapped : true;
+}
+
+/** "Event reminder and thank-you emails are off for this person." (SQL email_type_off_error()). */
+export function emailTypeOffError(kind: string): string {
+  const ph = phraseOf(kind);
+  return ph ? `${ph[0].toUpperCase()}${ph.slice(1)} emails are off for this person.` : 'Email updates are off for this person.';
 }
 
 /** The shared email look (same as public.email_layout in 0032), with the per-recipient markers. */
@@ -73,12 +97,12 @@ export interface RenderOptions extends FillContext {
 export function renderForRecipient(e: RenderInput, person: (FillPerson & { emailOptIn?: boolean }) | null, o: RenderOptions = {}) {
   let { subject, text, html } = e;
   if (!isParticipantEmail(e.kind)) {
-    if (!text.includes('Admin → System')) text += `\n\n—\n${IDENTITY_LINE}. Manage these in Admin → System.`;
+    if (!text.includes('Admin → System')) text = `${text.replace(/[\n ]+$/, '')}\n\n${staffFooterText()}`;
     html = html.replace('<!--yac:greeting-->', '').replace('<!--yac:signoff-->', '');
     return { subject, text, html };
   }
   const values = person ? fillValues(person, { ...o, seedKey: e.campaignId }) : null;
-  const unsub = o.unsubToken ? unsubscribeUrl(o.unsubToken, o.appUrl) : null;
+  const unsub = o.unsubToken ? unsubscribeUrl(o.unsubToken, o.appUrl, e.kind) : null;
   const greet = greetingLine(person?.displayName);
   const pun =
     person && ((e.kind === 'event_followup' && e.subject.startsWith('Thanks for coming')) || e.kind === 'wrapped')
@@ -91,10 +115,10 @@ export function renderForRecipient(e: RenderInput, person: (FillPerson & { email
     text = renderFillIns(text, values);
     html = renderFillIns(html, values, { html: true });
   }
-  text = `${greet}\n\n${text}${pun ? `\n\n${pun}` : ''}\n\n${participantFooterText(unsub)}`;
+  text = `${greet}\n\n${text}${pun ? `\n\n${pun}` : ''}\n\n${participantFooterText(unsub, e.kind)}`;
   html = html.replace('<!--yac:greeting-->', `<p style="margin:0 0 12px;font-size:16px;">${escapeHtml(greet)}</p>`);
   if (pun) html = html.replace('<!--yac:signoff-->', `<p style="margin:14px 0 0;color:#4a5672;font-style:italic;">${escapeHtml(pun)}</p>`);
-  html = html.replace(/<!--yac:footer-->[\s\S]*<!--\/yac:footer-->/, participantFooterHtml(unsub)).replace('<!--yac:signoff-->', '');
+  html = html.replace(/<!--yac:footer-->[\s\S]*<!--\/yac:footer-->/, participantFooterHtml(unsub, e.kind)).replace('<!--yac:signoff-->', '');
   return { subject, text, html };
 }
 
@@ -109,4 +133,34 @@ export function announcementEmail(title: string, body: string, senderName: strin
   );
   const text = `${body}\n\nOpen YACquest: ${link}\n\n— Sent by ${senderName} via YACquest.`;
   return { subject: `YACquest: ${title}`, text, html };
+}
+
+/**
+ * 0039: "YACquest winner info received" (SQL prize_info_email()): who, which spot, where to look, the deadline and the
+ * reference. Never the winner's delivery details (they're only shown in the app, Admin → Prizes, YACquest Chairs).
+ */
+export function prizeInfoEmail(
+  o: { name: string; campusName?: string | null; spot: number; reference?: string | null; valueUsd: number; deadline: string },
+  appUrl = APP_URL,
+) {
+  const link = `${appUrl.replace(/\/+$/, '')}/#/admin/prizes`;
+  const lead = `${o.name || 'A winner'}${o.campusName ? ` (${o.campusName})` : ''} sent their delivery details for prize spot #${o.spot}.`;
+  const chair = "A YACquest chair can see them in Admin → Prizes (only chairs can open it). If you're not a chair, please pass this on to one.";
+  const ref = o.reference || '—';
+  const value = `$${o.valueUsd}`;
+  return {
+    subject: `YACquest winner info received: ${o.name || 'A winner'} (spot #${o.spot})`,
+    text:
+      `${lead} Open YACquest → Admin → Prizes to see them and send the ${value} gift card by ${o.deadline}. For privacy, delivery details are only shown in the app.\n\n` +
+      `${chair}\nOpen Admin → Prizes: ${link}\n\nReference: ${ref}`,
+    html: emailLayout(
+      `Winner info received: spot #${o.spot}`,
+      `<p style="margin:0 0 12px;font-size:16px;">${escapeHtml(lead)}</p>` +
+        '<p style="margin:0 0 12px;background:#fff6e3;border:1px solid #f2b33d;border-radius:8px;padding:10px 12px;">' +
+        `Open YACquest → <b>Admin → Prizes</b> to see them and send the <b>${escapeHtml(value)} gift card</b> by <b>${escapeHtml(o.deadline)}</b>. For privacy, delivery details are only shown in the app.</p>` +
+        `<p style="margin:0 0 12px;"><a href="${escapeHtml(link)}" style="display:inline-block;background:#f2b33d;color:#0b2a5b;font-weight:700;padding:10px 14px;text-decoration:none;border-radius:6px">Open Admin → Prizes</a></p>` +
+        `<p style="margin:0 0 12px;color:#5b6475;font-size:13px;">${escapeHtml(chair)}</p>` +
+        `<p style="margin:0;font-size:13px;color:#5b6475;">Reference: <b style="color:#1c2333;">${escapeHtml(ref)}</b></p>`,
+    ),
+  };
 }

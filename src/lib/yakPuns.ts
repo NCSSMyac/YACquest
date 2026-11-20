@@ -2,7 +2,7 @@
  * Yak puns. The app shows a "Yak of the day" (same for everyone, changes at midnight Eastern);
  * the weekly committee email and prize alerts show a "Yak of the week".
  *
- * KEEP IN SYNC with public.yak_pun() in supabase/migrations/0015_yak_puns.sql — same puns,
+ * KEEP IN SYNC with public.yak_pun() in supabase/migrations/0039_email_wording_prefs_health.sql (0015 before) — same puns,
  * same order (src/__tests__/yakPuns.test.ts checks this). Use ’ (curly apostrophe), not '.
  */
 export const YAK_PUNS: readonly string[] = [
@@ -33,12 +33,10 @@ export const YAK_PUNS: readonly string[] = [
   'Yak-ity split, here come the points.',
   'Yak-nowledge your greatness.',
   'Fur real, you’ve got this.',
-  'Big yak energy.',
   'Quest, yak, repeat.',
   'Mountains are just yak speed bumps.',
   'Aim high. Yaks live at 15,000 feet.',
   'Yak-ing it one quest at a time.',
-  'Yak in business, baby!',
   'Everything’s going yak-cording to plan.',
   'Hair today, points tomorrow.',
   'Yak-tivate quest mode!',

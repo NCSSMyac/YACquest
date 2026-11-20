@@ -29,7 +29,13 @@ export interface User {
   friendCode: string; // e.g. YAC-7Q2K
   referredBy?: string; // user id
   createdAt: string;
+  /** "Any member email on" (0039: true when at least one of emailPrefs is on). Kept for older servers + Sign-up. */
   emailOptIn: boolean;
+  /**
+   * 0039: the three email choices (Me → Settings). Missing on a server without 0039: the app then treats all three
+   * as `emailOptIn` (see emailPrefsOf()).
+   */
+  emailPrefs?: EmailPrefs;
   /** False until the person confirms their email (0034: the app's own link; before 0034: Supabase's). */
   emailVerified?: boolean;
   /**
@@ -498,6 +504,8 @@ export interface AudienceCount {
   email: number;
   /** One person only: why they wouldn't be emailed. */
   emailReason?: AudienceEmailReason;
+  /** 0039, one person only: their three email choices (missing before 0039). */
+  emailTypes?: EmailPrefs;
 }
 
 /** 0038: the weekly cap on all-member announcement emails + the cancel window. */
@@ -1062,4 +1070,47 @@ export interface MyEmailStatus {
   optIn: boolean;
   bounced: boolean;
   bouncedAt?: string;
+  /** 0039: per type (missing before 0039). */
+  prefs?: EmailPrefs;
+}
+
+/**
+ * 0039: per-person email choices (profiles.email_announcements / email_events / email_wrapped).
+ * announcements = "Announcements"; events = "Event reminders and thank-yous" (event_reminder + event_followup);
+ * wrapped = "Yearly Wrapped". Staff and account emails don't depend on them.
+ */
+export interface EmailPrefs {
+  announcements: boolean;
+  events: boolean;
+  wrapped: boolean;
+}
+export type EmailPrefKey = keyof EmailPrefs;
+
+/** 0039: unsubscribe_by_token → which type was turned off ('all' = every member email, old links). */
+export interface UnsubscribeResult {
+  alreadyOff: boolean;
+  type?: 'announcement' | 'events' | 'wrapped' | 'all';
+  /** Other member emails are still on (so "Also turn off all YACquest emails" makes sense). */
+  othersOn?: boolean;
+}
+
+/** 0039: email_health() — the Admin dashboard banner and the Admin → System line. */
+export type EmailHealthLevel = 'red' | 'amber';
+export interface EmailHealthReason {
+  code: 'not_running' | 'gmail_login' | 'not_sending' | 'bounce_check' | 'stuck' | 'tracking' | 'budget' | string;
+  level: EmailHealthLevel;
+  title: string;
+  /** "What to do" (one line). */
+  todo: string;
+  /** The raw error, when there is one. */
+  detail?: string;
+}
+export interface EmailHealth {
+  status: 'green' | EmailHealthLevel;
+  reasons: EmailHealthReason[];
+  lastRunAt?: string;
+  minutesSinceRun?: number;
+  sent24h: number;
+  budget: number;
+  checkedAt: string;
 }

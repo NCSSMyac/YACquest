@@ -101,22 +101,22 @@ describe('one opt-out setting, the same words everywhere', () => {
     expect(EMAIL_OPT_IN_LABEL).toBe('Email me YACquest updates');
     expect(EMAIL_OPT_IN_HINT).toBe('Announcements, event reminders, post-event thank-yous and your yearly Wrapped. You’ll still see everything in the app.');
   });
-  it('unsubscribe page names all four kinds', () => {
+  it('unsubscribe page (link without a kind, 0039: older emails) names all four kinds', () => {
     for (const s of [UNSUB_DONE, UNSUB_BACK_ON]) for (const w of ['announcements', 'event reminders', 'event follow-ups', 'Wrapped']) expect(s).toContain(w);
     expect(UNSUB_DONE.startsWith('You won’t get YACquest emails anymore: announcements, event reminders, event follow-ups or Wrapped.')).toBe(true);
-    expect(UNSUB_CHANGE_MIND).toContain('“Email me YACquest updates”');
+    expect(UNSUB_CHANGE_MIND).toContain('Me → Settings → Emails');
   });
-  it('Announce hints: one person is emailed only with emails on and a confirmed address', () => {
+  it('Announce hints (0039): emailed only with “Announcements” on and a confirmed address', () => {
     expect(ANNOUNCE_EMAIL_HINT_ONE).not.toContain('Goes to their account email');
-    expect(ANNOUNCE_EMAIL_HINT_ONE).toContain('“Email me YACquest updates” on and a confirmed email address');
-    expect(ANNOUNCE_EMAIL_HINT_GROUP).toContain('“Email me YACquest updates” on and a confirmed email address');
+    expect(ANNOUNCE_EMAIL_HINT_ONE).toContain('“Announcements” emails on and a confirmed email address');
+    expect(ANNOUNCE_EMAIL_HINT_GROUP).toContain('“Announcements” emails on and a confirmed email address');
   });
   it('screens use the shared wording; the old label is gone from the app', () => {
-    for (const f of ['src/screens/Signup.tsx', 'src/screens/Me.tsx']) {
-      expect(read(f)).toContain('{EMAIL_OPT_IN_LABEL}');
-      expect(read(f)).toContain('{EMAIL_OPT_IN_HINT}');
-    }
-    expect(read('src/screens/Unsubscribe.tsx')).toContain('{UNSUB_DONE}');
+    // Sign-up keeps ONE box; Me → Settings has the three switches (0039)
+    expect(read('src/screens/Signup.tsx')).toContain('{EMAIL_OPT_IN_LABEL}');
+    expect(read('src/screens/Signup.tsx')).toContain('{EMAIL_OPT_IN_HINT}');
+    expect(read('src/screens/Me.tsx')).toContain('EMAIL_PREF_ITEMS.map');
+    expect(read('src/screens/Unsubscribe.tsx')).toContain('unsubView(');
     expect(read('src/screens/admin/Announce.tsx')).toContain('ANNOUNCE_EMAIL_HINT_ONE');
     for (const f of ['src/screens/Signup.tsx', 'src/screens/Me.tsx', 'src/screens/Privacy.tsx', 'src/screens/Unsubscribe.tsx', 'src/screens/admin/Announce.tsx', 'src/api/shared.ts']) {
       expect(read(f)).not.toMatch(/Email me announcements/);
@@ -140,14 +140,15 @@ describe('Privacy page', () => {
     expect(html).toContain('admins and YACquest Chairs see open and click stats and each person’s email history');
   });
   it('prize delivery info and the prize-alert list', () => {
-    expect(html).toContain('YACquest Chairs see it in the app');
-    expect(html).toContain('prize-alert list: the YACquest Chairs, the admins, and any extra addresses a YACquest Chair adds');
+    expect(html).toContain('Only the YACquest Chairs see it, in the app (Admin → Prizes).');
+    expect(html).toContain('prize-alert list (the YACquest Chairs, the admins, and any extra addresses a YACquest Chair adds');
+    expect(html).toContain('but not your name, email, phone, address or notes'); // 0039
   });
   it('retention periods and how to opt out', () => {
     expect(html).toContain(`deleted after ${RETENTION.logMonths} months`);
     expect(html).toContain(`after ${RETENTION.sensitiveBodyDays} days at the latest`);
-    expect(html).toContain('Untick “Email me YACquest updates” in Me → Settings');
-    expect(html).toContain('Unsubscribe in one click');
+    expect(html).toContain('you choose each kind in Me → Settings → Emails: “Announcements”, “Event reminders and thank-yous”, “Yearly Wrapped”');
+    expect(html).toContain('Unsubscribe from these in one click at the bottom of an email, or your email app’s Unsubscribe button, turns off just that kind');
     expect(html).toContain('subject “unsubscribe”');
   });
 });

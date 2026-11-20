@@ -37,7 +37,11 @@ describe('wording', () => {
     expect(audienceLine({ inApp: 262, email: 241 }, 'all', false)).toBe('262 people in the app');
     expect(audienceLine({ inApp: 1, email: 1 }, 'campus', true)).toBe('1 person in the app · 1 by email');
     expect(audienceLine({ inApp: 1, email: 1 }, 'user', true)).toBe('1 person · emailed: yes');
-    expect(audienceLine({ inApp: 1, email: 0, emailReason: 'emails_off' }, 'user', true)).toBe('1 person · emailed: no (emails off)');
+    expect(audienceLine({ inApp: 1, email: 0, emailReason: 'emails_off' }, 'user', true)).toBe('1 person · emailed: no (announcement emails off)');
+    // 0039: their three choices, compactly
+    expect(audienceLine({ inApp: 1, email: 0, emailReason: 'emails_off', emailTypes: { announcements: false, events: true, wrapped: true } }, 'user', true))
+      .toBe('1 person · emailed: no (announcement emails off) · Announcements off · Events on · Wrapped on');
+    expect(audienceLine({ inApp: 1, email: 1, emailTypes: { announcements: true, events: true, wrapped: true } }, 'user', true)).toBe('1 person · emailed: yes · All emails on');
     expect(audienceLine({ inApp: 1, email: 0, emailReason: 'not_confirmed' }, 'user', true)).toBe('1 person · emailed: no (not confirmed)');
     expect(audienceLine({ inApp: 1, email: 0, emailReason: 'bouncing' }, 'user', true)).toBe('1 person · emailed: no (bouncing)');
     expect(audienceLine({ inApp: 1, email: 1 }, 'user', false)).toBe('1 person in the app');
@@ -119,7 +123,7 @@ describe('demo backend', () => {
     expect([rc.recipients, rc.emailed]).toEqual([campus.inApp, campus.email]);
     const off = user('alum020');
     off.emailOptIn = false;
-    expect(await api.announcementAudienceCount('user', undefined, off.id)).toEqual({ inApp: 1, email: 0, emailReason: 'emails_off' });
+    expect(await api.announcementAudienceCount('user', undefined, off.id)).toEqual({ inApp: 1, email: 0, emailReason: 'emails_off', emailTypes: { announcements: false, events: false, wrapped: false } });
     const on = user('alum021');
     on.emailOptIn = true;
     expect(await api.announcementAudienceCount('user', undefined, on.id)).toMatchObject({ inApp: 1, email: 1 });

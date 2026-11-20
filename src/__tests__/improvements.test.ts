@@ -138,7 +138,7 @@ describe('RSVP reminders (mock mirror of queue_event_reminders)', () => {
     expect(load().notifications.some((n) => n.kind === 'event_reminder' && n.userId === c)).toBe(false);
     const mails = load().outbox.slice(outBefore).filter((r) => r.kind === 'event_reminder');
     expect(mails.map((m) => m.toEmails[0]).sort()).toEqual([load().users.find((u) => u.id === a)!.email, 'iesha.landis.yac@ncssm.edu'].sort());
-    expect(mails[0].subject).toBe('Reminder: Pickleball starts at 2:00 PM');
+    expect(mails[0].subject).toBe('Reminder: Pickleball starts at 2:00 PM ET'); // 0039: emails name the time zone
     expect(mails[0].text).toContain(`Check in at the event to earn ${TIER_POINTS[2]} points.`);
     expect(mails[0].text.toLowerCase()).not.toContain('yak');
   });

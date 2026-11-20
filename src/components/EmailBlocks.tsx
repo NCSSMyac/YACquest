@@ -11,6 +11,7 @@ import { axis } from '../lib/adminTools';
 import { bounceCheckOn, budgetPct, pctText, queueLine } from '../lib/emailStats';
 import { fmtDateTime } from '../lib/format';
 import { useAsync } from '../lib/useAsync';
+import { cachedEmailHealth, emailHealthLine } from '../lib/emailHealth';
 import type { EmailStats } from '../types';
 
 /** Width of an element, kept up to date (charts draw in real pixels so text never stretches). */
@@ -39,6 +40,7 @@ export function EmailQueueCard({ id }: { id?: string }) {
     <Card glyph="mail" title="Email sending" id={id} action={<Link to="/admin/stats/email" className="dash-more">Email stats ›</Link>}>
       {q.loading && !d ? <Loading lines={2} /> : q.error ? <ErrorText error={q.error} /> : d && (
         <div className="stack" style={{ gap: 8 }}>
+          <EmailHealthLine />
           <p style={{ margin: 0, fontWeight: 800 }} role="status">{queueLine(d)}</p>
           <div className={`em-meter ${pct >= 85 ? 'high' : ''}`} role="img" aria-label={`${d.sent24h} of ${d.budget} emails used in the last 24 hours`}>
             <span style={{ width: `${pct}%` }} />
@@ -66,6 +68,20 @@ export function EmailQueueCard({ id }: { id?: string }) {
         </div>
       )}
     </Card>
+  );
+}
+
+/** 0039: "Email health: all good · last run 3 min ago" (same cached email_health() as the dashboard banner). */
+export function EmailHealthLine() {
+  const h = useAsync(() => cachedEmailHealth(api.emailHealth), []);
+  if (h.error || (!h.data && !h.loading)) return null;
+  const tone = h.data?.status ?? 'green';
+  return (
+    <p className="health-line">
+      <span className={`health-dot ${tone}`} aria-hidden="true" />
+      <span>{emailHealthLine(h.data)}</span>
+      {h.data && h.data.status !== 'green' && <span className="muted">(details on the Admin dashboard)</span>}
+    </p>
   );
 }
 

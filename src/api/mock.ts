@@ -22,7 +22,7 @@ import { monthName } from '../lib/format';
 import { yakPunOfTheWeek } from '../lib/yakPuns';
 import { fmtEventTime, reminderTitle } from '../lib/todayEvent';
 import { announcementError, claimContactError, cleanSurveyUrl, isEmail, surveyUrlError } from '../lib/validate';
-import { followupDue, checkInClosesAt, missedBody, missedTitle, nextEventFor, thanksBody, thanksTitle } from '../lib/followups';
+import { followupDue, checkInClosesAt, emailEventTime, emailEventWhen, missedBody, missedEmailText, missedTitle, nextEventFor, thanksBody, thanksTitle } from '../lib/followups';
 import type {
   AnnouncementAudience,
   AnnouncementEmailCap,
@@ -93,6 +93,10 @@ import type {
   EmailStats,
   EmailStatus,
   MyEmailStatus,
+  EmailHealth,
+  EmailHealthReason,
+  EmailPrefs,
+  UnsubscribeResult,
   CheckInReward,
   CoffeePass,
   EventPasses,
@@ -110,8 +114,9 @@ import { ANNOUNCE_DEFAULTS, ANNOUNCE_LIMITS, capReachedMessage, countsTowardCap,
 import { questOpen, seriesWindowOpen } from '../lib/promo';
 import { PROMO, VERIFY } from '../config';
 import { SPECIAL_BADGES } from '../lib/badges';
-import { BUDGET, RETENTION, SENSITIVE_BODY_KINDS, emailPriority, planBatch, sendBeforeFor } from '../../supabase/functions/_shared/emailCore';
-import { announcementEmail, emailLayout, isParticipantEmail, renderForRecipient } from '../lib/emailRender';
+import { BUDGET, RETENTION, SENSITIVE_BODY_KINDS, emailPriority, emailTypeOf, isParticipantKind, parseUnsubKind, planBatch, sendBeforeFor } from '../../supabase/functions/_shared/emailCore';
+import { announcementEmail, emailKindOn, emailLayout, emailTypeOffError, isParticipantEmail, prizeInfoEmail, renderForRecipient } from '../lib/emailRender';
+import { emailPrefsOf } from '../lib/emailWording';
 import { fillValues, firstName, renderFillIns } from '../lib/emailFill';
 import { SURVEY_LIMITS, SURVEY_POINTS, cleanSurveyText, surveyClosesAt, surveyError, surveyWindowOpen } from '../lib/eventSurvey';
 
@@ -194,7 +199,7 @@ interface Db {
   /** 0032: one row per recipient (the real one is email_messages). */
   messages?: MessageRow[];
   /** 0032: opens / clicks / bounces / unsubscribes (the real one is email_events). */
-  emailEvents?: { messageId?: string; userId?: string; type: 'open' | 'click' | 'bounce' | 'unsubscribe' | 'complaint'; url?: string; createdAt: string }[];
+  emailEvents?: { messageId?: string; userId?: string; type: 'open' | 'click' | 'bounce' | 'unsubscribe' | 'complaint'; url?: string; detail?: string; createdAt: string }[];
   /** 0032: user id → unsubscribe token (the real one is email_unsub_tokens). */
   unsubTokens?: Record<string, string>;
   /** 0032: user id → when their address started bouncing (profiles.email_bounced / email_bounced_at). */
@@ -496,6 +501,8 @@ export async function signup(input: SignupInput): Promise<SignupResult> {
     referredBy,
     createdAt: now(),
     emailOptIn: input.emailOptIn ?? true,
+    // 0039: the sign-up box sets all three email choices
+    emailPrefs: { announcements: input.emailOptIn ?? true, events: input.emailOptIn ?? true, wrapped: input.emailOptIn ?? true },
     tourDoneAt: null,
     photoWallOptOut: false,
     // 0034 quick start: playing right away, email confirmed later (#/verify?t=…)
@@ -549,7 +556,29 @@ export async function updateProfile(patch: Partial<Pick<User, 'displayName' | 'a
   if (patch.avatar && isLegendaryAvatar(patch.avatar) && !legendaryFor(user.id)) fail('avatar', 'Pick one of the avatars.');
   if (patch.avatar && isLegendaryAvatar(patch.avatar) && !isLegendaryAvatar(user.avatar)) load().normalAvatars[user.id] = user.avatar;
   Object.assign(user, patch, patch.displayName ? { displayName: patch.displayName.trim() } : {});
+  // SERVER RULE (0039 trigger): the single switch sets all three email choices
+  if (patch.emailOptIn !== undefined) setEmailPrefsOf(user, { announcements: patch.emailOptIn, events: patch.emailOptIn, wrapped: patch.emailOptIn });
   for (const c of load().claims) if (c.userId === user.id) c.displayName = user.displayName;
+  save();
+  return user;
+}
+
+/** SERVER RULE (0039 trigger profiles_email_prefs_sync): email_opt_in = any of the three on. */
+function setEmailPrefsOf(u: User, prefs: EmailPrefs) {
+  u.emailPrefs = { ...prefs };
+  u.emailOptIn = prefs.announcements || prefs.events || prefs.wrapped;
+}
+
+/** SERVER RULE (set_my_email_prefs, 0039): the person's own choices; omitted keys stay as they are. */
+export async function setEmailPrefs(patch: Partial<EmailPrefs>): Promise<User> {
+  await delay();
+  const user = me();
+  const cur = emailPrefsOf(user);
+  setEmailPrefsOf(user, {
+    announcements: patch.announcements ?? cur.announcements,
+    events: patch.events ?? cur.events,
+    wrapped: patch.wrapped ?? cur.wrapped,
+  });
   save();
   return user;
 }
@@ -1070,7 +1099,7 @@ export async function searchUsers(query: string, limit = 20): Promise<AdminUserR
   return load()
     .users.filter((u) => canManage(admin, u) && (!q || u.displayName.toLowerCase().includes(q) || u.handle.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)))
     .slice(0, limit)
-    .map((u) => ({ id: u.id, handle: u.handle, displayName: u.displayName, email: u.email, campus: u.campus, role: u.role, points: totals.get(u.id) ?? 0, emailVerified: isVerified(u) }));
+    .map((u) => ({ id: u.id, handle: u.handle, displayName: u.displayName, email: u.email, campus: u.campus, role: u.role, points: totals.get(u.id) ?? 0, emailVerified: isVerified(u), emailPrefs: emailPrefsOf(u) }));
 }
 
 export async function userLedger(userId: string): Promise<LedgerEntry[]> {
@@ -1694,7 +1723,7 @@ export function seed(): Db {
         }
         if (er() < (o.unsub ?? 0) && /^alum2/.test(u.handle)) {
           evs.push({ messageId: id, userId: u.id, type: 'unsubscribe', createdAt: new Date(sentAt + 3 * H).toISOString() });
-          u.emailOptIn = false;
+          setEmailPrefsOf(u, { announcements: false, events: false, wrapped: false });
         }
       });
     };
@@ -1798,7 +1827,7 @@ const PHOTO_IMG = (sky: string, grass: string, variant: number) =>
   );
 
 // Expose for tests
-export const __test = { purgeEmailData, clearSensitiveBodies, queueVerification, grantEventReward, expandOutbox, campaignFor, unsubTokenFor, surveyRowsFor, queueEventReminders, queueEventFollowups, queueWrappedNotifications, claimSeasonalFor, wrappedFor, load, pointsOf, rankedParticipants, setSession, addLedger, deliverOutbox, badgesFor, unlocksFor, shoutoutSync, staffStats, staffUnlocksFor, legendaryFor, streakFor };
+export const __test = { emailHealthSync, setDemoEmailHealth, purgeEmailData, clearSensitiveBodies, queueVerification, grantEventReward, expandOutbox, campaignFor, unsubTokenFor, surveyRowsFor, queueEventReminders, queueEventFollowups, queueWrappedNotifications, claimSeasonalFor, wrappedFor, load, pointsOf, rankedParticipants, setSession, addLedger, deliverOutbox, badgesFor, unlocksFor, shoutoutSync, staffStats, staffUnlocksFor, legendaryFor, streakFor };
 
 // ───────────────────────────── team (chairs only) ─────────────────────────────
 
@@ -2000,12 +2029,13 @@ function expandOutbox(o: OutboxRow) {
       u ? { displayName: u.displayName, campus: u.campus, points: pointsOf(u.id), friendCode: u.friendCode } : null,
       { unsubToken: u && participant ? unsubTokenFor(u.id) : null, events: d.events, now: new Date(o.createdAt), goal: PRIZE.goal },
     );
-    const status: EmailStatus = u && participant && !u.emailOptIn ? 'skipped_opted_out' : u && participant && !isVerified(u) ? 'skipped_unverified' : u && d.emailBounced?.[u.id] ? 'skipped_bouncing' : 'pending';
+    // 0039: each member email checks its own type ("Announcements" / "Event reminders and thank-yous" / "Yearly Wrapped")
+    const status: EmailStatus = u && participant && !emailKindOn(o.kind, emailPrefsOf(u)) ? 'skipped_opted_out' : u && participant && !isVerified(u) ? 'skipped_unverified' : u && d.emailBounced?.[u.id] ? 'skipped_bouncing' : 'pending';
     d.messages.push({
       id: nextId('msg'), outboxId: o.id, kind: o.kind, campaignId: camp.id, campaignLabel: camp.label, userId: u?.id, email,
       subject: r.subject, text: r.text, html: r.html, priority: emailPriority(o.kind), sendBefore: camp.sendBefore,
       status, attempts: 0, createdAt: o.createdAt,
-      error: status === 'skipped_opted_out' ? 'Email updates are off for this person.' : status === 'skipped_unverified' ? 'Email not confirmed yet: in-app only.' : status === 'skipped_bouncing' ? 'Paused: emails to this address bounce.' : undefined,
+      error: status === 'skipped_opted_out' ? emailTypeOffError(o.kind) : status === 'skipped_unverified' ? 'Email not confirmed yet: in-app only.' : status === 'skipped_bouncing' ? 'Paused: emails to this address bounce.' : undefined,
     });
   }
   rollupOutbox(o.id);
@@ -2051,8 +2081,8 @@ function startSending(at?: number) {
   for (const m of open) {
     const u = m.userId ? d.users.find((x) => x.id === m.userId) : undefined;
     if (plan.expired.includes(m.id)) Object.assign(m, { status: 'skipped_expired', error: 'Too late to send (daily email budget was used up).', text: '', html: '' });
-    else if (u && (d.emailBounced?.[u.id] || (isParticipantEmail(m.kind) && !u.emailOptIn)))
-      Object.assign(m, { status: d.emailBounced?.[u.id] ? 'skipped_bouncing' : 'skipped_opted_out', error: d.emailBounced?.[u.id] ? 'Paused: emails to this address bounce.' : 'Email updates are off for this person.', text: '', html: '' });
+    else if (u && (d.emailBounced?.[u.id] || !emailKindOn(m.kind, emailPrefsOf(u))))
+      Object.assign(m, { status: d.emailBounced?.[u.id] ? 'skipped_bouncing' : 'skipped_opted_out', error: d.emailBounced?.[u.id] ? 'Paused: emails to this address bounce.' : emailTypeOffError(m.kind), text: '', html: '' });
     else if (plan.send.includes(m.id)) {
       m.status = 'sending';
       m.attempts++;
@@ -2108,30 +2138,18 @@ function prizeAlert(kind: 'prize_qualified' | 'prize_info', c: PrizeClaim) {
   if (!to.length) return;
   const campus = CAMPUSES.find((x) => x.id === c.campus)?.name ?? c.campus;
   if (kind === 'prize_qualified') {
-    const subject = `🏆 YACquest: ${c.displayName} won spot #${c.spot}`;
+    const subject = `YACquest: ${c.displayName} won prize spot #${c.spot}`;
     const lines = [
-      `${c.displayName} (${campus}) just reached ${PRIZE.goal} points and won spot #${c.spot} of ${PRIZE.count} — a ${PRIZE.name}.`,
+      `${c.displayName} (${campus}) just reached ${PRIZE.goal} points and won prize spot #${c.spot} of ${PRIZE.count} — a ${PRIZE.name}.`,
       'We’re waiting for them to send their delivery info. You’ll get another email when they do.',
     ];
-    enqueueEmail(kind, to, subject, [...lines, yakLineText()].join('\n\n'), emailHtml(subject, lines.map((l) => `<p>${esc(l)}</p>`).join('') + yakLineHtml()), `prize_qualified:${c.userId}:${c.spot}:${c.qualifiedAt}`);
+    enqueueEmail(kind, to, subject, [...lines, yakLineText()].join('\n\n'), emailHtml(`${c.displayName} won prize spot #${c.spot}`, lines.map((l) => `<p>${esc(l)}</p>`).join('') + yakLineHtml()), `prize_qualified:${c.userId}:${c.spot}:${c.qualifiedAt}`);
   } else {
+    // 0039: no delivery details in the email — only who, which spot, where to look (Admin → Prizes) and the reference.
     const k = c.contact!;
-    const subject = `URGENT 🎁 YACquest winner info: ${c.displayName} (spot #${c.spot})`;
-    const rows: [string, string][] = [
-      ['Full name', k.fullName],
-      ['Email', k.email],
-      ['Phone', k.phone],
-      ['Mailing address', k.address],
-      ['Gift card preference', k.preference || 'No preference'],
-      ['Notes', k.notes || '—'],
-      ['Reference', c.reference ?? '—'],
-      ['Campus', campus],
-    ];
-    const text = [`${c.displayName} sent their delivery info for spot #${c.spot} (${PRIZE.name}).`, '', ...rows.map(([a, b]) => `${a}: ${b}`), '', yakLineText()].join('\n');
-    const html = emailHtml(subject, `<p>${esc(c.displayName)} sent their delivery info for spot #${c.spot} (${esc(PRIZE.name)}).</p><table cellpadding="6" style="border-collapse:collapse">${rows
-      .map(([a, b]) => `<tr><td style="font-weight:bold;vertical-align:top">${esc(a)}</td><td style="white-space:pre-wrap">${esc(b)}</td></tr>`)
-      .join('')}</table>${yakLineHtml()}`);
-    enqueueEmail(kind, to, subject, text, html, `prize_info:${c.userId}:${c.spot}:${JSON.stringify(k)}`);
+    const deadline = new Date(`${PRIZE.fulfillBy}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+    const m = prizeInfoEmail({ name: c.displayName, campusName: campus, spot: c.spot, reference: c.reference, valueUsd: PRIZE.valueUsd, deadline }, APP_URL);
+    enqueueEmail(kind, to, m.subject, m.text, m.html, `prize_info:${c.userId}:${c.spot}:${JSON.stringify(k)}`);
   }
 }
 
@@ -2202,7 +2220,7 @@ function buildWeeklyReport(): Omit<WeeklyReport, 'recipients'> {
   const soon = d.events
     .filter((e) => { const st = new Date(e.startsAt).getTime(); return st >= Date.now() && st < Date.now() + 7 * 86_400_000; })
     .sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.id.localeCompare(b.id))
-    .map((e) => ({ title: e.title, when: new Date(e.startsAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'America/New_York' }).replace(',', ''), going: d.rsvps.filter((r) => r.eventId === e.id).length }));
+    .map((e) => ({ title: e.title, when: emailEventWhen(e.startsAt), going: d.rsvps.filter((r) => r.eventId === e.id).length })); // 0039: "Thu, Nov 19 at 7:00 PM ET"
   const soonText = soon.length ? soon.map((x) => `${x.title} (${x.when}) · ${x.going} going`).join('; ') : 'No events scheduled.';
   const soonHtml = soon.length ? soon.map((x) => `<b>${esc(x.title)}</b> (${esc(x.when)}) · ${x.going} going`).join('; ') : 'No events scheduled.';
   // 0030: one line — in-app event survey answers this week + their average rating.
@@ -2238,6 +2256,8 @@ function buildWeeklyReport(): Omit<WeeklyReport, 'recipients'> {
     '',
     `📝 EVENT SURVEYS THIS WEEK: ${survText} (results in Admin → Events → Survey)`, // 0030
     '',
+    `🩺 ${emailHealthReportLine(emailHealthSync())}`, // 0039
+    '',
     'THIS WEEK',
     `- ${active} active participants, ${pts} points awarded, ${signups} new sign-ups`,
     `- ${pending} submissions waiting for review`,
@@ -2267,6 +2287,7 @@ function buildWeeklyReport(): Omit<WeeklyReport, 'recipients'> {
         : '<p style="margin:0;color:#4a5672">No new feedback this week.</p>') +
       `<p style="margin:16px 0 0;font-size:14px">📅 <b>Next 7 days (RSVPs):</b> ${soonHtml}</p>` + // 0022
       `<p style="margin:12px 0 0;font-size:14px">📝 <b>Event surveys this week:</b> ${survHtml} <span style="color:#4a5672">(results in Admin → Events → Survey)</span></p>` + // 0030
+      `<p style="margin:12px 0 0;font-size:14px">🩺 <b>Email health:</b> ${esc(emailHealthReportLine(emailHealthSync()).replace(/^Email health: /, ''))}</p>` + // 0039
       h2('This week') +
       `<ul style="padding-left:18px;margin:0">${li(`${active} active participants · ${pts} points awarded · ${signups} new sign-ups`)}${li(`${pending} submissions waiting for review`)}${li(`${daysLeft} days left in the cycle`)}</ul>` +
       yakLineHtml(),
@@ -2398,7 +2419,7 @@ export async function sendWeeklyReportNow(): Promise<void> {
 export async function sendTestEmail(): Promise<void> {
   await delay();
   const chair = requireRole('chair');
-  const subject = 'YACquest test email ✅';
+  const subject = 'YACquest test email';
   const text = `Hi ${firstName(chair.displayName) ?? 'there'}, this is a test from YACquest. If you're reading this, the weekly report and prize alerts can reach you.`;
   enqueueEmail('test', [chair.email.toLowerCase()], subject, text, emailHtml(subject, `<p>${esc(text)}</p>`), `test:${nextId('t')}`);
   save();
@@ -2563,6 +2584,89 @@ export async function emailQueueStatus(): Promise<EmailQueueStatus> {
   };
 }
 
+/** Demo only: localStorage['yacquest-demo-email-health'] = 'red' | 'amber' shows a pretend problem (for screenshots / training). */
+const HEALTH_DEMO_KEY = 'yacquest-demo-email-health';
+let demoHealthMemory: 'red' | 'amber' | null = null;
+function setDemoEmailHealth(mode: 'red' | 'amber' | null) {
+  demoHealthMemory = mode;
+  try {
+    if (mode) localStorage.setItem(HEALTH_DEMO_KEY, mode);
+    else localStorage.removeItem(HEALTH_DEMO_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+function healthDemoMode(): 'red' | 'amber' | null {
+  try {
+    const v = typeof localStorage === 'undefined' ? demoHealthMemory : localStorage.getItem(HEALTH_DEMO_KEY);
+    return v === 'red' || v === 'amber' ? v : null;
+  } catch {
+    return demoHealthMemory;
+  }
+}
+
+/**
+ * SERVER RULE (email_health_data, 0039), for the demo: the same checks where the demo has the data. The demo "sender"
+ * runs whenever something is queued, so it counts as running every 10 minutes.
+ */
+function emailHealthSync(at = Date.now()): EmailHealth {
+  const d = load();
+  const ms = d.messages ?? [];
+  const reasons: EmailHealthReason[] = [];
+  const tick = Math.floor(at / 600_000) * 600_000;
+  const lastRun = Math.max(tick, d.emailRunAt ? new Date(d.emailRunAt).getTime() : 0);
+  const sent24h = ms.filter((m) => (m.status === 'sent' || m.status === 'bounced') && m.sentAt && at - new Date(m.sentAt).getTime() < 86_400_000).length;
+  const budget = BUDGET.daily;
+  const left = budget - sent24h;
+  const demo = healthDemoMode();
+  if (demo === 'red')
+    reasons.push({ code: 'gmail_login', level: 'red', title: 'Gmail rejected the login — check the app password',
+      todo: 'Make a new app password for the YAC Gmail (Google Account → Security → App passwords) and paste it into the SMTP_PASS secret (Supabase → Edge Functions → Secrets). Then Retry the failed emails in Admin → System.',
+      detail: 'Invalid login: 535-5.7.8 Username and Password not accepted. (demo)' });
+  if (demo === 'amber')
+    reasons.push({ code: 'bounce_check', level: 'amber', title: 'Bounce/unsubscribe check can’t reach Gmail',
+      todo: 'Turn on IMAP in the YAC Gmail (Settings → See all settings → Forwarding and POP/IMAP → Enable IMAP). Sending still works; bad addresses and emailed unsubscribes just aren’t picked up.' });
+  const ready = (m: MessageRow) =>
+    (m.status === 'pending' || (m.status === 'failed' && m.attempts < 5)) &&
+    (!m.notBefore || new Date(m.notBefore).getTime() <= at) && (!m.sendBefore || new Date(m.sendBefore).getTime() > at) &&
+    (m.priority <= 2 ? left > 0 : left > BUDGET.reserve);
+  const stuck = ms.filter((m) => ready(m) && at - new Date(m.notBefore ?? m.createdAt).getTime() > 2 * 3_600_000).length;
+  if (stuck && !reasons.some((x) => x.level === 'red'))
+    reasons.push({ code: 'stuck', level: 'amber', title: `${stuck} email${stuck === 1 ? ' has' : 's have'} been waiting more than 2 hours`,
+      todo: 'The budget has room, so they should have gone. Check Admin → System → Email log for errors and Supabase → Edge Functions → send-emails → Logs.' });
+  const week = ms.filter((m) => m.status === 'sent' && m.sentAt && at - new Date(m.sentAt).getTime() < 7 * 86_400_000 && isParticipantKind(m.kind));
+  const tracked = new Set((d.emailEvents ?? []).filter((e) => e.type === 'open' || e.type === 'click').map((e) => e.messageId));
+  if (demo === 'amber' || (week.length > 20 && !week.some((m) => tracked.has(m.id))))
+    reasons.push({ code: 'tracking', level: 'amber', title: 'Open/click tracking may be down — check the email-track function',
+      todo: `Supabase → Edge Functions → email-track must be deployed with “Verify JWT” turned OFF. ${Math.max(week.length, 21)} member emails went out this week with no opens or clicks recorded.` });
+  if (sent24h > 0.9 * budget)
+    reasons.push({ code: 'budget', level: 'amber', title: `Today’s email budget is ${Math.min(100, Math.round((100 * sent24h) / budget))}% used (${sent24h} of ${budget})`,
+      todo: 'Prize alerts and reminders still go first; announcements and Wrapped wait until older emails leave the 24-hour window. Save big sends for tomorrow.' });
+  const runAt = demo === 'red' ? undefined : new Date(lastRun).toISOString();
+  return {
+    status: reasons.some((x) => x.level === 'red') ? 'red' : reasons.length ? 'amber' : 'green',
+    reasons,
+    lastRunAt: demo === 'red' ? new Date(tick - 20 * 60_000).toISOString() : runAt,
+    minutesSinceRun: Math.floor((at - (demo === 'red' ? tick - 20 * 60_000 : lastRun)) / 60_000),
+    sent24h,
+    budget,
+    checkedAt: new Date(at).toISOString(),
+  };
+}
+
+/** The weekly report's one line (SQL email_health_line()). */
+function emailHealthReportLine(h: EmailHealth): string {
+  if (h.status === 'green') return 'Email health: all good';
+  return `Email health: ${h.status === 'red' ? 'problem' : 'warning'} — ${h.reasons.map((x) => x.title).join('; ')} (see the Admin dashboard)`;
+}
+
+/** SERVER RULE (email_health, 0039): admins + chairs. */
+export async function emailHealth(): Promise<EmailHealth> {
+  await delay(60);
+  requireRole('admin', 'chair');
+  return emailHealthSync();
+}
+
 /** Players → "Bouncing email" chip (staff). */
 export async function emailBouncingUsers(): Promise<string[]> {
   await delay(60);
@@ -2586,7 +2690,7 @@ export async function myEmailStatus(): Promise<MyEmailStatus | null> {
   await delay(40);
   const u = me();
   const at = load().emailBounced?.[u.id];
-  return { optIn: u.emailOptIn, bounced: !!at, bouncedAt: at };
+  return { optIn: u.emailOptIn, bounced: !!at, bouncedAt: at, prefs: emailPrefsOf(u) };
 }
 
 export async function clearMyEmailBounce(): Promise<void> {
@@ -2597,8 +2701,11 @@ export async function clearMyEmailBounce(): Promise<void> {
   save();
 }
 
-/** SERVER RULE (unsubscribe_by_token, 0032): no login; only ever turns that person's emails off. */
-export async function unsubscribeByToken(token: string): Promise<{ alreadyOff: boolean }> {
+/**
+ * SERVER RULE (unsubscribe_by_token, 0032 + 0039): no login; only ever turns that person's emails off. With `kind`
+ * (the link's ?k=) only that type; without it (older emails) everything.
+ */
+export async function unsubscribeByToken(token: string, kind?: string | null): Promise<UnsubscribeResult> {
   await delay();
   const d = load();
   const bad = () => fail('invalid_token', 'This unsubscribe link isn’t valid. You can turn emails off in YACquest under Me → Settings.');
@@ -2606,14 +2713,17 @@ export async function unsubscribeByToken(token: string): Promise<{ alreadyOff: b
   const userId = Object.entries(d.unsubTokens ?? {}).find(([, t]) => t === token)?.[0];
   const u = userId ? d.users.find((x) => x.id === userId) : undefined;
   if (!u) return bad();
-  const was = u.emailOptIn;
-  u.emailOptIn = false;
+  const type = emailTypeOf(parseUnsubKind(kind));
+  const p = emailPrefsOf(u);
+  const key = type === 'announcement' ? 'announcements' : type;
+  const was = key ? p[key] : u.emailOptIn;
+  setEmailPrefsOf(u, key ? { ...p, [key]: false } : { announcements: false, events: false, wrapped: false });
   if (was) {
     const last = (d.messages ?? []).filter((m) => m.userId === u.id && m.sentAt).sort((a, b) => (b.sentAt ?? '').localeCompare(a.sentAt ?? ''))[0];
-    (d.emailEvents ??= []).push({ messageId: last?.id, userId: u.id, type: 'unsubscribe', createdAt: now() });
+    (d.emailEvents ??= []).push({ messageId: last?.id, userId: u.id, type: 'unsubscribe', detail: `one-click${type ? `:${type}` : ''}`, createdAt: now() });
   }
   save();
-  return { alreadyOff: !was };
+  return { alreadyOff: !was, type: type ?? 'all', othersOn: u.emailOptIn };
 }
 
 export async function adminActionLog(opts: { before?: number; limit?: number } = {}): Promise<AdminAction[]> {
@@ -2645,7 +2755,7 @@ function announceCap(at: Date = new Date()): AnnouncementEmailCap {
 
 /** SERVER RULE (0038): who would really be emailed — emails on, confirmed, not bouncing (same as send + expand). */
 function emailReasonFor(u: User): AudienceEmailReason | undefined {
-  if (!u.emailOptIn) return 'emails_off';
+  if (!emailPrefsOf(u).announcements) return 'emails_off'; // 0039: the "Announcements" choice
   if (!isVerified(u)) return 'not_confirmed';
   if (load().emailBounced?.[u.id]) return 'bouncing';
   return undefined;
@@ -2665,7 +2775,7 @@ export async function announcementAudienceCount(audience: AnnouncementAudience, 
   if (audience === 'user') {
     if (!people.length) return { inApp: 0, email: 0 };
     const why = emailReasonFor(people[0]);
-    return { inApp: 1, email: why ? 0 : 1, ...(why ? { emailReason: why } : {}) };
+    return { inApp: 1, email: why ? 0 : 1, ...(why ? { emailReason: why } : {}), emailTypes: emailPrefsOf(people[0]) };
   }
   return { inApp: people.length, email: new Set(people.filter((u) => !emailReasonFor(u)).map((u) => u.email.toLowerCase())).size };
 }
@@ -2736,7 +2846,7 @@ export async function sendAnnouncement(input: AnnouncementInput): Promise<Announ
   });
   if (input.sendEmail) {
     // 0032: only people with emails on (direct messages too); one outbox row, one email per person
-    const emails = [...new Set(targets.filter((u) => u.emailOptIn).map((u) => u.email.toLowerCase()))];
+    const emails = [...new Set(targets.filter((u) => emailPrefsOf(u).announcements).map((u) => u.email.toLowerCase()))];
     const m = announcementEmail(title, body, admin.displayName);
     enqueueEmail('announcement', emails, m.subject, m.text, m.html, `announcement:${id}`);
     const queued = (d.messages ?? []).filter((x) => x.campaignId === `announcement:${id}` && x.status === 'pending');
@@ -3481,10 +3591,12 @@ function queueEventReminders(nowMs: number = Date.now()): number {
       const time = fmtEventTime(e.startsAt);
       const body = `${e.title} starts at ${time} at ${e.location}. Check in at the event to earn ${pts} points.`;
       notify(u.id, 'event_reminder', reminderTitle(e, (start - nowMs) / 60_000), body);
-      if (u.emailOptIn) {
-        const subject = `Reminder: ${e.title} starts at ${time}`;
-        const text = `${e.title} starts at ${time}.\nWhere: ${e.location}\n\nCheck in at the event to earn ${pts} points.\n\nYou get this because you RSVP'd in YACquest and have email updates on.`;
-        const html = emailHtml(`Reminder: ${e.title}`, `<p style="font-size:16px;margin:0 0 8px"><b>${esc(e.title)}</b> starts at <b>${esc(time)}</b>.</p><p style="margin:0 0 8px">📍 ${esc(e.location)}</p><p style="margin:0 0 12px">Check in at the event to earn <b>${pts} points</b>.</p><p style="font-size:12px;color:#4a5672;margin:0">You get this because you RSVP’d in YACquest and have email updates on.</p>`);
+      if (emailPrefsOf(u).events) {
+        // 0039: "Event reminders and thank-yous"; the email names the time zone ("7:00 PM ET")
+        const et = emailEventTime(e.startsAt);
+        const subject = `Reminder: ${e.title} starts at ${et}`;
+        const text = `${e.title} starts at ${et}.\nWhere: ${e.location}\n\nCheck in at the event to earn ${pts} points.\n\nYou get this because you RSVP'd in YACquest and have event emails on (turn them off in Me → Settings).`;
+        const html = emailHtml(`Reminder: ${e.title}`, `<p style="font-size:16px;margin:0 0 8px"><b>${esc(e.title)}</b> starts at <b>${esc(et)}</b>.</p><p style="margin:0 0 8px">📍 ${esc(e.location)}</p><p style="margin:0 0 12px">Check in at the event to earn <b>${pts} points</b>.</p><p style="font-size:12px;color:#4a5672;margin:0">You get this because you RSVP’d in YACquest and have event emails on (turn them off in Me → Settings).</p>`);
         enqueueEmail('event_reminder', [u.email], subject, text, html, `reminder:${key}`);
       }
       n++;
@@ -3764,14 +3876,14 @@ function sendFollowup(e: YacEvent, nowMs: number, by?: User): EventFollowupStatu
   let attended = 0;
   let missed = 0;
   let emailed = 0;
-  const footer = 'You get this because you have email updates on in YACquest (turn them off in Me → Settings).';
+  const footer = 'You get this because you have event emails on in YACquest (turn them off in Me → Settings).';
   const attendees = [...new Set(d.ledger.filter((l) => l.source === 'checkin' && l.refId === e.id).map((l) => l.userId))];
   for (const id of attendees) {
     const u = d.users.find((x) => x.id === id);
     if (!u) continue;
     notify(u.id, 'event_followup', thanksTitle(e.title), thanksBody(e.id, e.surveyUrl, quest.title, pts, SURVEY_POINTS));
     attended++;
-    if (u.emailOptIn) {
+    if (emailPrefsOf(u).events) {
       const external = e.surveyUrl ? `\n\nOr fill out the YAC survey here: ${e.surveyUrl}\nCompleting it counts as the "${quest.title}" digital quest: send a screenshot of the confirmation in YACquest → Quests for ${pts} points.` : '';
       const text = `Thanks for coming to ${e.title}!\n\nHow was it? Rate it in YACquest for +${SURVEY_POINTS} points (takes a minute):\n${link}${external}\n\n${footer}`;
       const button = `<p style="margin:0 0 6px">How was it? Rate it in YACquest for <b>+${SURVEY_POINTS} points</b> (takes a minute):</p><p style="margin:0 0 12px"><a href="${esc(link)}" style="display:inline-block;background:#f2b33d;color:#0b2a5b;font-weight:700;padding:10px 14px;text-decoration:none">⭐ Rate this event</a></p>`;
@@ -3788,9 +3900,10 @@ function sendFollowup(e: YacEvent, nowMs: number, by?: User): EventFollowupStatu
     const body = missedBody(next);
     notify(u.id, 'event_followup', missedTitle(e.title), body);
     missed++;
-    if (u.emailOptIn) {
-      const html = emailHtml(missedTitle(e.title), `<p style="font-size:16px;margin:0 0 10px">We missed you at <b>${esc(e.title)}</b>. Hope to see you next time!</p>${next ? `<p style="margin:0 0 12px">Next up: <b>${esc(next.title)}</b> at ${esc(next.location)}</p>` : ''}<p style="font-size:12px;color:#4a5672;margin:0">${esc(footer)}</p>`);
-      if (enqueueEmail('event_followup', [u.email], missedTitle(e.title), `${body}\n\n${footer}`, html, `followup:${e.id}:${u.id}`)) emailed++;
+    if (emailPrefsOf(u).events) {
+      // 0039: same structure as the SQL email, time with ET
+      const html = emailHtml(missedTitle(e.title), `<p style="font-size:16px;margin:0 0 10px">We missed you at <b>${esc(e.title)}</b>. Hope to see you next time!</p>${next ? `<p style="margin:0 0 12px">Next up: <b>${esc(next.title)}</b><br>🕒 ${esc(emailEventWhen(next.startsAt))}<br>📍 ${esc(next.location)}</p><p style="margin:0 0 12px">RSVP in YACquest → Quests.</p>` : '<p style="margin:0 0 12px">New events show up in YACquest → Quests.</p>'}<p style="font-size:12px;color:#4a5672;margin:0">${esc(footer)}</p>`);
+      if (enqueueEmail('event_followup', [u.email], missedTitle(e.title), `${missedEmailText(e.title, next)}\n\n${footer}`, html, `followup:${e.id}:${u.id}`)) emailed++;
     }
   }
   const sentAt = new Date(nowMs).toISOString();
@@ -4105,11 +4218,12 @@ function queueWrappedNotifications(nowMs: number = Date.now()): number {
     notify(u.id, 'wrapped', 'Your YACquest Wrapped is here! 🎁',
       `Your ${CYCLE.name} in YACquest: ${teaser}. Open Wrapped from Home to see your best month, rarest badge, your YAC personality and a card to share.`);
     n++;
-    if (u.emailOptIn && u.email) {
+    if (emailPrefsOf(u).wrapped && u.email) {
       const link = 'https://ncssmyac.github.io/YACquest/#/wrapped';
-      if (enqueueEmail('wrapped', [u.email], 'Your YACquest Wrapped is here! 🎁',
-        `Your ${CYCLE.name} in a nutshell: ${teaser}.\n\nSee the whole story and a card to share: ${link}`,
-        emailHtml('Your YACquest Wrapped is here! 🎁', `<p>Your ${esc(CYCLE.name)} in a nutshell: <b>${esc(teaser)}</b>.</p><p><a href="${link}">Open my Wrapped 🎁</a></p>`),
+      // 0039: "Yearly Wrapped"; no emoji in the subject (the in-app title above keeps it)
+      if (enqueueEmail('wrapped', [u.email], 'Your YACquest Wrapped is here',
+        `Your YACquest Wrapped is here!\n\nYour ${CYCLE.name} in a nutshell: ${teaser}.\n\nSee the whole story and a card to share: ${link}`,
+        emailHtml('Your YACquest Wrapped is here', `<p>Your ${esc(CYCLE.name)} in a nutshell: <b>${esc(teaser)}</b>.</p><p><a href="${link}">Open my Wrapped 🎁</a></p>`),
         `wrapped:${CYCLE.name}:${u.id}`)) mailed++;
     }
   }
@@ -4261,8 +4375,8 @@ function queueVerification(user: User, reason: 'signup' | 'resend'): string | nu
   d.verifyTokens.push({ token, userId: user.id, email: user.email.toLowerCase(), reason, createdAt: at, expiresAt: new Date(Date.now() + VERIFY.linkDays * 86_400_000).toISOString() });
   const url = `${APP_URL}#/verify?t=${token}`;
   const first = user.displayName.trim().split(/\s+/)[0] || 'there';
-  const text = `Hi ${first},\n\nWelcome to YACquest! You can already check in, earn points and play. Tap the link below to confirm this is your email. It locks in your points and makes you eligible for a prize spot.\n\nConfirm my email: ${url}\n\nThe link works for 7 days. If you didn't sign up for YACquest, you can ignore this email.\n\n—\nYACquest · NCSSM Young Alumni Council`;
-  const html = emailHtml('Confirm your YACquest email', `<p>Hi ${esc(first)},</p><p>Welcome to YACquest! You can already check in, earn points and play. Tap the button to confirm this is your email.</p><p><a href="${esc(url)}">Confirm my email</a></p><p>The link works for 7 days.</p>`);
+  const text = `Hi ${first},\n\nWelcome to YACquest! You can already check in, earn points and play. Tap the link below to confirm this is your email. Confirming lets you hold a prize spot and get YACquest emails.\n\nConfirm my email: ${url}\n\nThe link works for 7 days. If you didn't sign up for YACquest, you can ignore this email.\n\n—\nYACquest · NCSSM Young Alumni Council`;
+  const html = emailHtml('Confirm your YACquest email', `<p>Hi ${esc(first)},</p><p>Welcome to YACquest! You can already check in, earn points and play. Tap the button to confirm this is your email. Confirming lets you hold a prize spot and get YACquest emails.</p><p><a href="${esc(url)}">Confirm my email</a></p><p>The link works for 7 days.</p>`);
   enqueueEmail('verify_email', [user.email.toLowerCase()], 'Confirm your YACquest email', text, html, `verify:${token}`);
   return token;
 }

@@ -33,6 +33,7 @@ export const {
   requestPasswordReset,
   updatePassword,
   updateProfile,
+  setEmailPrefs,
   // participant
   getDashboard,
   listActivities,
@@ -154,6 +155,7 @@ export const {
   emailCampaignRecipients,
   emailHistoryFor,
   emailQueueStatus,
+  emailHealth,
   emailBouncingUsers,
   adminClearEmailBounce,
   myEmailStatus,

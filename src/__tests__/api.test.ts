@@ -255,13 +255,18 @@ describe('winner form validation', () => {
 });
 
 describe('prize alert emails', () => {
-  it('queues a "won" alert and an URGENT info alert to chairs + admins', async () => {
+  it('queues a "won" alert and a winner-info alert (no delivery details, 0039) to chairs + admins', async () => {
     await makeWinner();
     await api.submitClaimInfo(goodContact);
     const out = load().outbox;
     expect(out.map((r) => r.kind)).toEqual(['prize_qualified', 'prize_info']);
-    expect(out[1].subject).toMatch(/^URGENT/);
-    expect(out[1].text).toContain('123 Main St');
+    expect(out[0].subject).toMatch(/^YACquest: .+ won prize spot #\d+$/);
+    expect(out[1].subject).toMatch(/^YACquest winner info received: .+ \(spot #\d+\)$/);
+    expect(out[1].text).toContain('For privacy, delivery details are only shown in the app.');
+    expect(out[1].html).toContain('#/admin/prizes');
+    for (const v of [goodContact.address, goodContact.phone, goodContact.email, goodContact.fullName]) {
+      if (v) expect(out[1].text + out[1].html).not.toContain(v);
+    }
     expect(out[0].toEmails).toEqual(expect.arrayContaining(['iesha.landis.yac@ncssm.edu', 'jacob.rodriguez.yac@ncssm.edu', 'admin@example.edu']));
     api.__test.deliverOutbox();
     expect(load().outbox.every((r) => r.status === 'sent' && r.attempts === 1)).toBe(true);

@@ -5,8 +5,9 @@
  *   GET  /email-track/o/<message id>.gif          → logs an open, returns a 1×1 transparent GIF (no-cache)
  *   GET  /email-track/c/<message id>?u=<url>&s=<sig> → logs a click and redirects (302) ONLY if the
  *                                                     signature matches (no open redirect)
- *   POST /email-track/u/<token>                    → one-click unsubscribe (RFC 8058; Gmail's button)
- *   GET  /email-track/u/<token>                    → sends the browser to the app's unsubscribe page
+ *   POST /email-track/u/<token>[?k=<kind>]         → one-click unsubscribe (RFC 8058; Gmail's button). 0039: with
+ *                                                     k = an email kind only that type is turned off; without, all
+ *   GET  /email-track/u/<token>[?k=<kind>]         → sends the browser to the app's unsubscribe page (same k)
  *
  * The database checks signatures and tokens (track_email_click, unsubscribe_by_token in
  * supabase/migrations/0032_email_personalization_tracking.sql); its signing secret never leaves it.
@@ -40,6 +41,37 @@ export type EmailKind =
 /** Emails to participants: personalized, opt-out respected, unsubscribe footer + List-Unsubscribe headers. */
 export const PARTICIPANT_KINDS: readonly string[] = ['announcement', 'event_reminder', 'event_followup', 'wrapped'];
 export const isParticipantKind = (kind: string) => PARTICIPANT_KINDS.includes(kind);
+
+/**
+ * 0039: each member email kind belongs to one of three per-person choices (SQL public.email_kind_type()):
+ * announcement → "Announcements", event_reminder + event_followup → "Event reminders and thank-yous",
+ * wrapped → "Yearly Wrapped". Staff and account emails have no type (always sent).
+ */
+export type EmailType = 'announcement' | 'events' | 'wrapped';
+export const EMAIL_TYPE_OF_KIND: Readonly<Record<string, EmailType>> = {
+  announcement: 'announcement', event_reminder: 'events', event_followup: 'events', wrapped: 'wrapped',
+};
+/** The type for an email kind (or a type name). null = not a member email type. Same as SQL email_kind_type(). */
+export function emailTypeOf(kind: string | null | undefined): EmailType | null {
+  const k = (kind ?? '').trim().toLowerCase();
+  if (k in EMAIL_TYPE_OF_KIND) return EMAIL_TYPE_OF_KIND[k];
+  if (k === 'announcements') return 'announcement';
+  if (k === 'events' || k === 'event') return 'events';
+  return null;
+}
+/** Me → Settings labels (SQL email_type_label()). */
+export const EMAIL_TYPE_LABEL: Readonly<Record<EmailType, string>> = {
+  announcement: 'Announcements', events: 'Event reminders and thank-yous', wrapped: 'Yearly Wrapped',
+};
+/** In a sentence: "… YACquest {phrase} emails" (SQL email_type_phrase()). */
+export const EMAIL_TYPE_PHRASE: Readonly<Record<EmailType, string>> = {
+  announcement: 'announcement', events: 'event reminder and thank-you', wrapped: 'yearly Wrapped',
+};
+/** A `k` value from an unsubscribe link: a member email kind (lower-case), else null (= "everything", like old links). */
+export function parseUnsubKind(raw: string | null | undefined): string | null {
+  const k = (raw ?? '').trim().toLowerCase();
+  return /^[a-z_]{1,40}$/.test(k) && emailTypeOf(k) ? k : null;
+}
 
 /**
  * Lower number = goes first. Same as SQL public.email_priority().
@@ -178,7 +210,16 @@ export const trackBase = (supabaseUrl: string) => supabaseUrl.replace(/\/+$/, ''
 export const openPixelUrl = (base: string, msgId: string) => `${base}/o/${msgId}.gif`;
 export const clickUrl = (base: string, msgId: string, url: string, sig: string) =>
   `${base}/c/${msgId}?u=${encodeURIComponent(url)}&s=${sig}`;
-export const unsubscribePostUrl = (base: string, token: string) => `${base}/u/${token}`;
+/** One-click endpoint. 0039: with a member email kind, `?k=<kind>` so only that type is turned off. */
+export const unsubscribePostUrl = (base: string, token: string, kind?: string | null) => {
+  const k = parseUnsubKind(kind);
+  return `${base}/u/${token}${k ? `?k=${k}` : ''}`;
+};
+/** The app's unsubscribe page (SQL email_unsub_url_for()): <app>/#/unsubscribe?t=<token>[&k=<kind>]. */
+export const appUnsubscribeUrl = (appUrl: string, token: string, kind?: string | null) => {
+  const k = parseUnsubKind(kind);
+  return `${appUrl.replace(/\/+$/, '')}/#/unsubscribe?t=${token}${k ? `&k=${k}` : ''}`;
+};
 
 /** Unsubscribe links (app page or one-click endpoint) are never rewritten into tracked links. */
 export const isUnsubscribeUrl = (url: string) => /#\/unsubscribe\b|\/email-track\/u\//.test(url);
@@ -218,9 +259,12 @@ export function addOpenPixel(html: string, pixelUrl: string): string {
   return /<\/body>/i.test(html) ? html.replace(/<\/body>/i, img + '</body>') : html + img;
 }
 
-/** RFC 2369 + RFC 8058 one-click unsubscribe headers (Gmail shows its own "Unsubscribe" button). */
-export function listUnsubscribeHeaders(base: string, token: string, mailto?: string): Record<string, string> {
-  const parts = [`<${unsubscribePostUrl(base, token)}>`];
+/**
+ * RFC 2369 + RFC 8058 one-click unsubscribe headers (Gmail shows its own "Unsubscribe" button).
+ * 0039: `kind` (the email's kind) makes Gmail's button turn off only that type. The mailto still turns off everything.
+ */
+export function listUnsubscribeHeaders(base: string, token: string, mailto?: string, kind?: string | null): Record<string, string> {
+  const parts = [`<${unsubscribePostUrl(base, token, kind)}>`];
   if (mailto) parts.push(`<mailto:${mailto}?subject=unsubscribe>`);
   return { 'List-Unsubscribe': parts.join(', '), 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' };
 }
@@ -367,10 +411,16 @@ Deno.serve(async (req) => {
     return new Response(null, { status: 302, headers: { Location: target, ...NO_CACHE } });
   }
 
-  // Unsubscribe
+  // Unsubscribe. 0039: ?k=<kind> → only that email type (unknown or missing k → everything, like links from older emails).
+  const kind = parseUnsubKind(reqUrl.searchParams.get('k'));
   if (req.method === 'POST') {
-    const res = await db.rpc('unsubscribe_by_token', { p_token: hit.id });
-    return res.error ? text('This unsubscribe link isn’t valid.', 400) : text('You’re unsubscribed from YACquest emails.', 200);
+    let res = await db.rpc('unsubscribe_by_token', kind ? { p_token: hit.id, p_kind: kind } : { p_token: hit.id });
+    // A database without 0039 has no p_kind: turn everything off instead (never leave someone subscribed).
+    if (res.error && kind && /p_kind|function|schema cache/i.test(res.error.message)) res = await db.rpc('unsubscribe_by_token', { p_token: hit.id });
+    if (res.error) return text('This unsubscribe link isn’t valid.', 400);
+    const type = (res.data as { type?: string } | null)?.type;
+    const one = kind && type && type !== 'all' ? emailTypeOf(kind) : null;
+    return text(one ? `You’re unsubscribed from YACquest ${EMAIL_TYPE_PHRASE[one]} emails.` : 'You’re unsubscribed from YACquest emails.', 200);
   }
-  return new Response(null, { status: 303, headers: { Location: `${appUrl}/#/unsubscribe?t=${hit.id}`, ...NO_CACHE } });
+  return new Response(null, { status: 303, headers: { Location: appUnsubscribeUrl(appUrl, hit.id, kind), ...NO_CACHE } });
 });

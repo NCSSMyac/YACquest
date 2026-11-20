@@ -14,32 +14,34 @@ import { announcementEmail, emailLayout, linkifyEscaped, renderForRecipient } fr
 import { announcementError } from '../lib/validate';
 
 const SQL = readFileSync(resolve(__dirname, '../../supabase/migrations/0032_email_personalization_tracking.sql'), 'utf8');
+/** 0039 re-created the campus lines, the layout footer and the member footers. */
+const SQL39 = readFileSync(resolve(__dirname, '../../supabase/migrations/0039_email_wording_prefs_health.sql'), 'utf8');
 
-/** The text[] literal for one campus inside public.campus_puns() in 0032, unescaped ('' → '). */
+/** The text[] literal for one campus inside public.campus_puns() in its latest migration (0039), unescaped ('' → '). */
 function sqlPuns(campus: string): string[] {
-  const fn = SQL.slice(SQL.indexOf('create or replace function public.campus_puns(p_campus text)'));
+  const fn = SQL39.slice(SQL39.indexOf('create or replace function public.campus_puns(p_campus text)'));
   const m = fn.match(new RegExp(`when '${campus}' then array\\[([\\s\\S]*?)\\]::text\\[\\]`));
   if (!m) throw new Error(`campus_puns(${campus}) not found`);
   return [...m[1].matchAll(/'((?:[^']|'')*)'/g)].map((x) => x[1].replace(/''/g, "'"));
 }
 
 describe('campus puns', () => {
-  it('TS list and SQL list (0032) are identical, same order, 4 per campus', () => {
+  it('TS list and SQL list (0039) are identical, same order, 4 per campus', () => {
     for (const c of ['duke', 'unc', 'ncsu'] as const) {
       expect(sqlPuns(c)).toEqual([...CAMPUS_PUNS[c]]);
       expect(CAMPUS_PUNS[c]).toHaveLength(4);
       expect(new Set(CAMPUS_PUNS[c]).size).toBe(4);
       for (const p of CAMPUS_PUNS[c]) expect(p.length).toBeLessThanOrEqual(60);
     }
-    expect(CAMPUS_PUNS.duke[0]).toBe("Bet they don't teach you that at Duke 😈");
+    expect(CAMPUS_PUNS.duke[0]).toBe('Go Blue Devils — see you soon!');
     expect(CAMPUS_PUNS.unc).toContain('Heel yeah, see you there!');
     expect(CAMPUS_PUNS.ncsu).toContain('Howl about joining us?');
   });
 
   it('is deterministic per send key, with the same numbers as the database test', () => {
     expect(punSeed('abc')).toBe(294); // SQL: email_seed('abc') = 294
-    expect(campusPun('unc', 'abc')).toBe('Carolina blue skies ahead 💙');
-    expect(campusPun('duke', 0)).toBe("Bet they don't teach you that at Duke 😈");
+    expect(campusPun('unc', 'abc')).toBe('Heel yeah, see you there!');
+    expect(campusPun('duke', 0)).toBe('Go Blue Devils — see you soon!');
     expect(campusPun('ncsu', 5)).toBe('Howl about joining us?');
     expect(campusPun('unc', 'announcement:1')).toBe(campusPun('unc', 'announcement:1'));
     expect(campusPun('mars', 1)).toBe('See you at the next YAC event!');
@@ -109,19 +111,19 @@ describe('per-recipient rendering (mirror of email_expand_outbox)', () => {
     expect(r.subject).toBe('YACquest: Points check, Ali&<b>');
     expect(r.text.startsWith('Hi Ali&<b>,\n\nYou have 120 points. ')).toBe(true);
     expect(r.text).toContain(campusPun('duke', 'announcement:1'));
-    expect(r.text).toContain("You're getting this because you have YACquest emails on.\nUnsubscribe in one click: https://ncssmyac.github.io/YACquest/#/unsubscribe?t=" + 'a'.repeat(32));
+    expect(r.text).toContain("You're getting this because you have YACquest announcement emails on.\nUnsubscribe from these in one click: https://ncssmyac.github.io/YACquest/#/unsubscribe?t=" + 'a'.repeat(32) + '&k=announcement\n');
     expect(r.html).toContain('<p style="margin:0 0 12px;font-size:16px;">Hi Ali&amp;&lt;b&gt;,</p>');
     expect(r.html).not.toContain('Ali&<b>');
     expect(r.html).not.toMatch(/\{[a-z_]+\}/);
-    expect(r.html).toContain(`href="https://ncssmyac.github.io/YACquest/#/unsubscribe?t=${'a'.repeat(32)}" style="color:#0b2a5b;">Unsubscribe in one click</a> · Manage in the app (Me → Settings)<br>YACquest · NCSSM Young Alumni Council`);
+    expect(r.html).toContain(`href="https://ncssmyac.github.io/YACquest/#/unsubscribe?t=${'a'.repeat(32)}&amp;k=announcement" style="color:#0b2a5b;">Unsubscribe from these in one click</a> · Manage all email choices in the app (Me → Settings)<br>YACquest · NCSSM Young Alumni Council`);
     expect(r.html).toContain('<a href="https://example.com/rsvp?x=1&amp;y=2" style="color:#0b2a5b;">https://example.com/rsvp?x=1&amp;y=2</a>.');
     expect(r.html).not.toContain('<!--yac:');
   });
 
   it('staff emails: no greeting, "Manage these in Admin → System", no unsubscribe link', () => {
     const r = renderForRecipient({ kind: 'weekly_report', subject: 'YACquest weekly report', text: 'Report', html: emailLayout('Weekly', '<p>r</p>'), campaignId: 'weekly_report:x' }, null);
-    expect(r.text).toBe('Report\n\n—\nYACquest · NCSSM Young Alumni Council. Manage these in Admin → System.');
-    expect(r.html).toContain('Manage these in Admin → System.');
+    expect(r.text).toBe("Report\n\n—\nYou get this because you're on the YACquest staff email list. Manage these in Admin → System.\nYACquest · NCSSM Young Alumni Council");
+    expect(r.html).toContain("You get this because you're on the YACquest staff email list. Manage these in Admin → System.");
     expect(r.html).not.toContain('Unsubscribe');
     expect(r.html).not.toContain('Hi ');
   });
@@ -146,8 +148,12 @@ describe('per-recipient rendering (mirror of email_expand_outbox)', () => {
       expect(emailLayout('t', 'x')).toContain(m);
       expect(SQL).toContain(m);
     }
-    expect(SQL).toContain("You''re getting this because you have YACquest emails on.");
-    expect(SQL).toContain('Manage in the app (Me → Settings)<br>YACquest · NCSSM Young Alumni Council');
+    // 0039: footers name the type; the staff footer has the same words in HTML (layout) and text
+    expect(SQL39).toContain("'You''re getting this because you have YACquest ' || public.email_type_phrase(p_kind) || ' emails on. '");
+    expect(SQL39).toContain('Manage all email choices in the app (Me → Settings)<br>YACquest · NCSSM Young Alumni Council');
+    expect(SQL39).toContain("You get this because you''re on the YACquest staff email list. Manage these in Admin → System.<br>YACquest · NCSSM Young Alumni Council");
+    expect(SQL39).toContain("You get this because you''re on the YACquest staff email list. Manage these in Admin → System.\\nYACquest · NCSSM Young Alumni Council");
+    expect(emailLayout('t', 'x')).toContain("You get this because you're on the YACquest staff email list. Manage these in Admin → System.<br>YACquest · NCSSM Young Alumni Council");
   });
 });
 

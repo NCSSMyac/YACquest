@@ -26,6 +26,7 @@ import { CheckInQr, Going } from './Events';
 import { PaceCard } from './PaceViews';
 import { EndOfYearCard } from './EndOfYear';
 import { wrappedWindow } from '../../lib/wrapped';
+import { cachedEmailHealth, emailHealthBanner } from '../../lib/emailHealth';
 
 const WIDE_QUERY = '(min-width: 820px)';
 
@@ -80,6 +81,8 @@ export default function AdminHome() {
 
   return (
     <div className="stack dash">
+      {/* 0039: red/amber only when something's wrong with email; nothing when all is well */}
+      <EmailHealthBanner isChair={isChair} />
       <Greeting name={greetingName(user?.displayName)} isChair={isChair} />
       <QuickNav sections={sections} badge={badge} />
       {wide ? (
@@ -92,6 +95,34 @@ export default function AdminHome() {
       )}
       <EmailPreview isChair={isChair} />
     </div>
+  );
+}
+
+/** 0039: email_health() (cached 60 s) → a red or amber banner with "What to do" per problem. Hidden when all is well or unknown. */
+function EmailHealthBanner({ isChair }: { isChair: boolean }) {
+  const h = useAsync(() => cachedEmailHealth(api.emailHealth), []);
+  const b = emailHealthBanner(h.data);
+  if (!b) return null;
+  return (
+    <section className={`health-banner ${b.tone}`} role={b.tone === 'red' ? 'alert' : 'status'} aria-labelledby="health-banner-title">
+      <h2 id="health-banner-title" className="health-title">
+        <span aria-hidden="true">{b.tone === 'red' ? '⛔' : '⚠️'}</span> {b.heading}
+      </h2>
+      <ul className="health-list">
+        {b.items.map((r) => (
+          <li key={r.code} className={r.level}>
+            <b>{r.title}</b>
+            <span className="health-todo"><span className="health-todo-label">What to do:</span> {r.todo}</span>
+            {r.detail && <span className="health-detail wrap-anywhere">{r.detail}</span>}
+          </li>
+        ))}
+      </ul>
+      {isChair ? (
+        <Link to="/admin/system#email" className="btn small navy">Open email sending ›</Link>
+      ) : (
+        <p className="health-foot">A YACquest Chair can fix this in Admin → System.</p>
+      )}
+    </section>
   );
 }
 

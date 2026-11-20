@@ -3,7 +3,7 @@
  * Both must export the same functions — index.ts checks this at compile time.
  */
 import type { CampusId } from '../config';
-import type { Activity, AvatarId, EventRewardInput, LeaderRow, PrizeStatus, Role, Submission, User, YacEvent } from '../types';
+import type { Activity, AvatarId, EmailPrefs, EventRewardInput, LeaderRow, PrizeStatus, Role, Submission, User, YacEvent } from '../types';
 
 export class ApiError extends Error {
   constructor(public code: string, message: string) {
@@ -59,6 +59,8 @@ export interface AdminUserRow {
   points: number;
   /** 0034: false = hasn't confirmed their email yet ("Unverified" chip). Missing on older servers. */
   emailVerified?: boolean;
+  /** 0039: their three email choices (staff read profiles through RLS). Missing before 0039. */
+  emailPrefs?: EmailPrefs;
 }
 
 export interface AdminOverview {

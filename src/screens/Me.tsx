@@ -22,7 +22,8 @@ import { requestTour } from '../lib/tour';
 import { setDeletingAccount } from '../lib/goodbye';
 import { ReportProblemButton } from '../components/ReportProblem';
 import { CONTACT_EMAILS } from '../config';
-import { EMAIL_OPT_IN_HINT, EMAIL_OPT_IN_LABEL } from '../lib/emailWording';
+import { EMAIL_PREFS_EXPLAINER, EMAIL_PREFS_TITLE, EMAIL_PREF_ITEMS, emailPrefsOf } from '../lib/emailWording';
+import type { EmailPrefKey } from '../types';
 
 type Theme = 'light' | 'dark' | 'system';
 const THEME_KEY = 'yacquest-theme';
@@ -64,6 +65,7 @@ export default function Me() {
   const [saving, setSaving] = useState(false);
   const [theme, setTheme] = useState<Theme>(readTheme);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [emailBusy, setEmailBusy] = useState<EmailPrefKey | null>(null);
   const histMore = useShowMore(10, 5);
   // `#/me?section=friends` (Home's friend-code row) scrolls to My friends.
   const [params] = useSearchParams();
@@ -106,12 +108,16 @@ export default function Me() {
     }
   }
 
-  async function toggleEmail(on: boolean) {
+  // 0039: one switch per email type (Me → Settings → Emails)
+  async function toggleEmail(key: EmailPrefKey, on: boolean) {
+    setEmailBusy(key);
     try {
-      await api.updateProfile({ emailOptIn: on });
+      await api.setEmailPrefs({ [key]: on });
       await refresh();
     } catch (err) {
       toast(errorMessage(err), 'error');
+    } finally {
+      setEmailBusy(null);
     }
   }
 
@@ -237,15 +243,32 @@ export default function Me() {
         </form>
       </Accordion>
 
-      <Accordion glyph="gear" title="Settings" summary="Email, photo wall, sound effects and theme">
+      <Accordion glyph="gear" title="Settings" summary="Emails, photo wall, sound effects and theme">
         <div className="stack">
-          <label className="check">
-            <input type="checkbox" checked={user.emailOptIn} onChange={(e) => toggleEmail(e.target.checked)} />
-            <span>
-              {EMAIL_OPT_IN_LABEL}
-              <small className="muted" style={{ display: 'block' }}>{EMAIL_OPT_IN_HINT}</small>
-            </span>
-          </label>
+          <fieldset className="email-prefs" aria-describedby="email-prefs-note">
+            <legend className="field-legend">{EMAIL_PREFS_TITLE}</legend>
+            <p id="email-prefs-note" className="muted email-prefs-note">{EMAIL_PREFS_EXPLAINER}</p>
+            {EMAIL_PREF_ITEMS.map((it) => {
+              const on = emailPrefsOf(user)[it.key];
+              return (
+                <label key={it.key} className="switch-row">
+                  <span className="switch-text">
+                    <span>{it.label}</span>
+                    <small className="muted">{it.hint}</small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    className="switch"
+                    checked={on}
+                    aria-checked={on}
+                    disabled={emailBusy === it.key}
+                    onChange={(e) => void toggleEmail(it.key, e.target.checked)}
+                  />
+                </label>
+              );
+            })}
+          </fieldset>
           <label className="check">
             <input type="checkbox" checked={!user.photoWallOptOut} onChange={(e) => togglePhotoWall(e.target.checked)} />
             <span>

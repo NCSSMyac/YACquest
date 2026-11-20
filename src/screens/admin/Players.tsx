@@ -9,6 +9,7 @@ import { canUndo, undoneIds, UNDO_PREFIX } from '../../lib/adminTools';
 import type { LedgerEntry } from '../../types';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 import { EMAIL_KIND_LABEL, EMAIL_STATUS_CHIP, EMAIL_STATUS_LABEL } from '../../lib/emailStats';
+import { EMAIL_PREF_SHORT } from '../../lib/emailWording';
 
 const gameWin = activityById('game_win')!;
 const PLAYERS_STEP = 20;
@@ -126,6 +127,17 @@ function PlayerModal({ user, onClose, bouncing = false, onBounceCleared }: { use
         <p className="muted wrap-anywhere">@{user.handle} · {campusName(user.campus)} · {user.role === 'chair' ? 'YACquest Chair' : user.role === 'admin' ? 'Admin' : 'Adventurer'} · {user.email}</p>
         {user.emailVerified === false && (
           <p className="verify-note" style={{ margin: 0, fontSize: 14 }}><span className="chip pending">Unverified</span> Hasn’t confirmed their email yet. They can play and earn points, but can’t hold a prize spot or be made staff until they tap the link (they can resend it from Home).</p>
+        )}
+        {/* 0039: their three email choices, compactly */}
+        {user.emailPrefs && (
+          <p className="email-pref-chips" style={{ margin: 0, fontSize: 14 }}>
+            <span className="muted">Emails:</span>{' '}
+            {(Object.keys(EMAIL_PREF_SHORT) as (keyof typeof EMAIL_PREF_SHORT)[]).map((k) => (
+              <span key={k} className={`chip ${user.emailPrefs![k] ? 'approved' : 'neutral'}`}>
+                {EMAIL_PREF_SHORT[k]} {user.emailPrefs![k] ? 'on' : 'off'}
+              </span>
+            ))}
+          </p>
         )}
         <div className="stat panel"><div className="num">{user.points}</div><div className="lbl">points</div></div>
 

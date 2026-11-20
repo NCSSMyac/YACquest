@@ -1,6 +1,6 @@
 # Live test checklist (phone)
 
-A quick pass over everything that changed recently (migrations 0032–0038, the email
+A quick pass over everything that changed recently (migrations 0032–0039, the email
 sender, quick start, Brew & Quest, the winter wardrobe and the Wardrobe shortcuts).
 Use your phone, logged in as yourself unless a step says otherwise.
 
@@ -101,7 +101,7 @@ Delete the test event when you're done.
 ## 5. Email
 
 **5.1 Test email**
-- Tap: Admin → System → **Send test email to me** (weekly email card). Within ~10 minutes: "YACquest test email ✅".
+- Tap: Admin → System → **Send test email to me** (weekly email card). Within ~10 minutes: "YACquest test email" (0039: no emoji in any subject).
 - Also check the 9 **[TEST n/9]** emails from the SQL test pack arrived (look in Spam/Promotions too).
 - If wrong: "Test email never arrived" + paste the STEP B table from the SQL file.
 
@@ -124,14 +124,15 @@ Delete the test event when you're done.
 - If wrong: "Opened/clicked stays 0 after I opened and clicked [TEST 3/9]".
 
 **5.5 Unsubscribe and re-subscribe**
-- In [TEST 3/9], tap **Unsubscribe in one click** at the bottom. Expect the "Email settings" page saying
-  you're unsubscribed, with **Turn emails back on**.
+- In [TEST 3/9], tap **Unsubscribe from these in one click** at the bottom. Expect the "Email settings" page saying
+  **"You're unsubscribed from announcement emails."**, with **Also turn off all YACquest emails** and
+  **Turn announcement emails back on** (0039: only that kind goes off; see 8.2).
 - Gmail may also show its own "Unsubscribe" link next to the sender; that works too.
 - (0037) Emailed unsubscribe: from the address on your account, send an email with the subject **unsubscribe** to the
-  YAC Gmail. Within ~10 minutes Me → Settings shows "Email me YACquest updates" off, and in the YAC Gmail the message is
+  YAC Gmail. Within ~10 minutes Me → Settings → Emails shows all three switches off, and in the YAC Gmail the message is
   read and under the label **YACquest unsubscribes**. From an address with no account it stays unread in the Inbox with
   the label **YACquest unsubscribes/unmatched**.
-- Re-subscribe: tap **Turn emails back on** (or Me → Settings → "Email me YACquest updates" on).
+- Re-subscribe: tap **Turn … emails back on** (or Me → Settings → Emails → switch them on).
 - Expect: Me → Settings shows emails on again. (If you re-run the SQL test pack while you're unsubscribed,
   it stops and tells you to turn emails back on. That's on purpose.)
 - If wrong: "Unsubscribe page showed [message]" / "Couldn't turn emails back on".
@@ -183,6 +184,36 @@ Delete the test event when you're done.
 - Send another one to yourself and don't cancel: the email arrives 10–20 minutes later, and after 10 minutes the Cancel
   button is gone.
 - If wrong: "Cancel button [missing / still there after 10 min]" or "Email arrived after I cancelled" (screenshot).
+
+## 8. Email choices, winner email, email health (0039)
+
+**8.1 Me → Settings → Emails**
+- Tap: Me → **Settings**. Expect a small **Emails** box: "Pick what we email you. Everything still shows up in the app." and three
+  switches: **Announcements**, **Event reminders and thank-yous**, **Yearly Wrapped**.
+- Turn **Event reminders and thank-yous** off, leave the page, come back: it's still off; the other two are on.
+- Admin → Players → yourself: "Emails: Announcements on · Events off · Wrapped on". Turn it back on.
+- If wrong: "Switch [name] didn't stay [on/off]" (screenshot).
+
+**8.2 Unsubscribe from one kind**
+- Re-run the SQL test pack. Open **[TEST 4/9]** (the reminder) and tap **Unsubscribe from these in one click**.
+- Expect: **"You're unsubscribed from event reminder and thank-you emails."**, then **Also turn off all YACquest emails**,
+  **Turn event reminder and thank-you emails back on** and **Manage all email choices in Me → Settings**.
+  Me → Settings → Emails shows only that switch off. Tap **Turn … back on**.
+- An **old** email (from before today) → its unsubscribe link still works and turns **everything** off ("You're unsubscribed."). Turn them back on.
+- After both Edge Functions are re-deployed, Gmail's own **Unsubscribe** button on [TEST 3/9] turns off only announcements.
+- If wrong: "Unsubscribe page said [text]" / "Switches show [state]".
+
+**8.3 Wording**
+- In the test pack emails: no emoji or "URGENT" in any subject; [TEST 4/9] says **"starts at [time] ET"**; [TEST 7/9]
+  "Next 7 days" shows times with **ET** and has an **Email health** line; the campus line in [TEST 5/9]/[TEST 6/9] is friendly
+  ("Go Heels!", "Go Pack!", "Go Blue Devils — see you soon!" …). Staff emails end with "You get this because you're on the YACquest staff email list."
+- **[TEST 9/9]** (winner info): subject "YACquest winner info received: Sample Winner (spot #1)", a button **Open Admin → Prizes**, the
+  reference, and **no** phone, address or email.
+- If wrong: "Email [n] says [text]" (screenshot).
+
+**8.4 Email health**
+- Admin (home): normally **no** email banner. Admin → System → Email sending: "Email health: all good · last run [n] min ago".
+- If a red/amber box shows, read its "What to do" line; if you can't fix it, screenshot it and send it to Claude.
 
 ---
 

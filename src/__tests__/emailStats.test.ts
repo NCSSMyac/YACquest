@@ -64,15 +64,16 @@ describe('unsubscribe link', () => {
   it('works without logging in, only turns emails off, and rejects bad tokens harmlessly', async () => {
     const d = load();
     const u = d.users.find((x) => x.handle === 'alum040')!;
-    const before = { ...u, emailOptIn: undefined };
+    const before = { ...u, emailOptIn: undefined, emailPrefs: undefined };
     setSession(null);
     await expect(api.unsubscribeByToken('nope')).rejects.toMatchObject({ code: 'invalid_token' });
     await expect(api.unsubscribeByToken('a'.repeat(32))).rejects.toMatchObject({ code: 'invalid_token' });
     await expect(api.unsubscribeByToken(u.id)).rejects.toMatchObject({ code: 'invalid_token' });
-    expect(await api.unsubscribeByToken(d.unsubTokens![u.id])).toEqual({ alreadyOff: false });
+    // no kind (links in emails from before 0039) → everything off
+    expect(await api.unsubscribeByToken(d.unsubTokens![u.id])).toEqual({ alreadyOff: false, type: 'all', othersOn: false });
     expect(u.emailOptIn).toBe(false);
-    expect({ ...u, emailOptIn: undefined }).toEqual(before);
-    expect(await api.unsubscribeByToken(d.unsubTokens![u.id])).toEqual({ alreadyOff: true });
+    expect({ ...u, emailOptIn: undefined, emailPrefs: undefined }).toEqual(before);
+    expect(await api.unsubscribeByToken(d.unsubTokens![u.id])).toEqual({ alreadyOff: true, type: 'all', othersOn: false });
     expect(d.emailEvents!.filter((e) => e.type === 'unsubscribe' && e.userId === u.id)).toHaveLength(1);
   });
 });

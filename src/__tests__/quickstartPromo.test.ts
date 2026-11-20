@@ -133,6 +133,7 @@ describe('verification token flow (mock API)', () => {
     const nova = load().users.find((x) => x.handle === 'nova')!;
     expect((load().messages ?? []).find((x) => x.kind === 'verify_email' && x.email === 'nova@example.com')?.status).toBe('pending');
     nova.emailOptIn = true;
+    nova.emailPrefs = { announcements: true, events: true, wrapped: true }; // 0039: the database trigger keeps these in step
     asUser('admin');
     await api.sendAnnouncement({ title: 'Hello there', body: 'Hi!', audience: 'user', userId: nova.id, sendEmail: true });
     expect((load().messages ?? []).find((x) => x.kind === 'announcement' && x.email === 'nova@example.com')?.status).toBe('skipped_unverified');

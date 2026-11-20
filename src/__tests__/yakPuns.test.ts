@@ -3,9 +3,9 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { YAK_PUNS, randomYakPun, yakPun, yakPunOfTheDay, yakPunOfTheWeek } from '../lib/yakPuns';
 
-/** The text[] literal inside public.yak_pun() in 0015, unescaped ('' → '). */
+/** The text[] literal inside public.yak_pun() in its latest migration (0039), unescaped ('' → '). */
 function sqlPuns(): string[] {
-  const sql = readFileSync(resolve(__dirname, '../../supabase/migrations/0015_yak_puns.sql'), 'utf8');
+  const sql = readFileSync(resolve(__dirname, '../../supabase/migrations/0039_email_wording_prefs_health.sql'), 'utf8');
   const fn = sql.slice(sql.indexOf('create or replace function public.yak_pun(p_seed int)'));
   const body = fn.match(/array\[([\s\S]*?)\]::text\[\]/);
   if (!body) throw new Error('yak_pun array literal not found');
@@ -13,8 +13,14 @@ function sqlPuns(): string[] {
 }
 
 describe('yak puns', () => {
-  it('TS list and SQL list (0015) are identical, same order', () => {
+  it('TS list and SQL list (0039) are identical, same order', () => {
     expect(sqlPuns()).toEqual([...YAK_PUNS]);
+  });
+
+  it('0039: the two lines that could read badly are gone', () => {
+    expect(YAK_PUNS).not.toContain('Big yak energy.');
+    expect(YAK_PUNS).not.toContain('Yak in business, baby!');
+    expect(YAK_PUNS).toHaveLength(38);
   });
 
   it('about 40 short, unique puns', () => {
@@ -30,7 +36,7 @@ describe('yak puns', () => {
     expect(yakPun(0)).toBe(YAK_PUNS[0]);
     expect(yakPun(YAK_PUNS.length)).toBe(YAK_PUNS[0]);
     expect(yakPun(-5)).toBe(YAK_PUNS[5]);
-    expect(yakPun(202645)).toBe('That was yak-tually amazing.'); // same as the DB test
+    expect(yakPun(202645)).toBe('Aim high. Yaks live at 15,000 feet.'); // same as the DB test (202645 mod 38 = 29)
   });
 
   it('pun of the day: same all day in New York, changes the next day', () => {

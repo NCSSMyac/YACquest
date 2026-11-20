@@ -776,15 +776,19 @@ begin
                (select count(*) from prize_claims), 'alerts: one prize_qualified email per claim ever created');
   select * into c from prize_claims where user_id = t.u('carol');
   perform t.ok(exists (select 1 from email_outbox where dedupe_key = 'prize_qualified:' || c.id
-                        and subject = '🏆 YACquest: Carol won spot #1' and body_text like '%waiting%'), 'alerts: prize_qualified subject + dedupe key');
+                        and subject = 'YACquest: Carol won prize spot #1' and body_text like '%waiting%'), 'alerts: prize_qualified subject + dedupe key');
   perform t.ok((select to_emails from email_outbox where dedupe_key = 'prize_qualified:' || c.id)
                @> array['iesha.landis.yac@ncssm.edu','jacob.rodriguez.yac@ncssm.edu'], 'alerts: sent to the (lower-cased) chairs');
   select * into c from prize_claims where user_id = t.u('erin') and status <> 'revoked';
   perform t.ok(exists (select 1 from email_outbox where kind = 'prize_info' and dedupe_key = 'prize_info:' || c.id || ':' || md5(c.contact::text)
-                        and subject = 'URGENT 🎁 YACquest winner info: Erin (spot #2)'
-                        and body_text like '%(919) 555-0100%' and body_text like '%12 Oak Ave, Raleigh NC 27601%'
-                        and body_text like '%' || c.reference || '%'
-                        and body_html like '%12 Oak Ave, Raleigh NC 27601%'), 'alerts: prize_info with phone + address + reference');
+                        and subject = 'YACquest winner info received: Erin (spot #2)'
+                        and body_text like 'Erin (%) sent their delivery details for prize spot #2. Open YACquest → Admin → Prizes to see them and send the $% gift card by %. For privacy, delivery details are only shown in the app.%'
+                        and body_text like '%' || c.reference || '%' and body_html like '%' || c.reference || '%'
+                        and body_html like '%/#/admin/prizes%' and body_text like '%A YACquest chair can see them in Admin → Prizes%'),
+               'alerts: prize_info (0039): who, spot, where to look, deadline, reference');
+  perform t.ok(not exists (select 1 from email_outbox where kind = 'prize_info' and dedupe_key = 'prize_info:' || c.id || ':' || md5(c.contact::text)
+                            and (subject || body_text || body_html) ~* '555-0100|12 Oak Ave|Raleigh|@example|preference|Phone|Mailing address'),
+               'alerts: prize_info (0039): no phone, address, email, gift card preference or notes');
 end $$;
 
 -- =============================================================================
@@ -977,7 +981,7 @@ begin
   select * into c from prize_claims where user_id = t.u('carol') and cycle_id = active_cycle_id();
   perform t.eq(c.spot, 1, 'new cycle: carol wins spot 1');
   perform t.eq((select count(*) from email_outbox where dedupe_key = 'prize_qualified:' || c.id), 1::bigint, 'alert: prize_qualified queued once');
-  perform t.eq((select count(*) from email_outbox where kind = 'prize_qualified' and subject = '🏆 YACquest: Carol won spot #1'), 2::bigint, 'alert: (old + new cycle) carol alerts');
+  perform t.eq((select count(*) from email_outbox where kind = 'prize_qualified' and subject = 'YACquest: Carol won prize spot #1'), 2::bigint, 'alert: (old + new cycle) carol alerts');
   perform t.eq((prize_status()->>'total')::int, 4, 'prize_status total = 4');
   perform t.eq((prize_status()->>'remaining')::int, 3, 'prize_status remaining = 3');
   update report_settings set prize_alerts_enabled = false;
@@ -1009,9 +1013,10 @@ begin
   select * into c from prize_claims where user_id = t.u('carol') and cycle_id = active_cycle_id();
   perform t.eq((select count(*) from email_outbox where kind = 'prize_info' and dedupe_key like 'prize_info:' || c.id || ':%'), 1::bigint, 'alert: resubmitting the same info sends no second email');
   perform t.ok(exists (select 1 from email_outbox where kind = 'prize_info' and dedupe_key = 'prize_info:' || c.id || ':' || md5(c.contact::text)
-                        and subject = 'URGENT 🎁 YACquest winner info: Carol (spot #1)'
-                        and body_text like '%Phone: 919 555 0100%' and body_text like '%Mailing address: 1 Main St, Durham NC 27701%'
-                        and body_text like '%Campus: Duke%'), 'alert: prize_info body has phone + address + campus');
+                        and subject = 'YACquest winner info received: Carol (spot #1)'
+                        and body_text like 'Carol (Duke) sent their delivery details for prize spot #1.%'
+                        and body_text not like '%919 555 0100%' and body_text not like '%1 Main St%'
+                        and body_html not like '%1 Main St%' and body_html not like '%carol@example.edu%'), 'alert: prize_info names the campus, not the phone or address');
 end $$;
 :as_carol
 select submit_claim_info('Carol C', 'carol@example.edu', '919 555 0100', '2 Elm St, Durham NC 27701', 'Target', 'moved!') \g /dev/null
@@ -1871,21 +1876,21 @@ rollback;
 :as_super
 do $$ declare rep json := public.build_weekly_report(); v_pun text := public.yak_pun_of_the_week();
 begin
-  perform t.eq((select count(distinct public.yak_pun(i)) from generate_series(0, 39) i), 40::bigint, 'yak: 40 distinct puns');
+  perform t.eq((select count(distinct public.yak_pun(i)) from generate_series(0, 37) i), 38::bigint, 'yak: 38 distinct puns (0039 removed two)');
   perform t.eq(public.yak_pun(0), 'Yak to the future!', 'yak: seed 0 is the first pun');
-  perform t.eq(public.yak_pun(40), public.yak_pun(0), 'yak: seed wraps around');
+  perform t.eq(public.yak_pun(38), public.yak_pun(0), 'yak: seed wraps around');
   perform t.eq(public.yak_pun(-5), public.yak_pun(5), 'yak: negative seed uses |seed|');
   perform t.eq(public.yak_pun(null), public.yak_pun(0), 'yak: null seed is seed 0');
-  perform t.eq(public.yak_pun(202645), 'That was yak-tually amazing.', 'yak: 202645 mod 40 = 5 (same as yakPun() in the app)');
+  perform t.eq(public.yak_pun(202645), 'Aim high. Yaks live at 15,000 feet.', 'yak: 202645 mod 38 = 29 (same as yakPun() in the app)');
   perform t.eq(v_pun, public.yak_pun(to_char(now() at time zone 'America/New_York', 'IYYYIW')::int), 'yak: pun of the week seeded by ISO week');
-  perform t.ok(exists (select 1 from generate_series(0, 39) i where public.yak_pun(i) = v_pun), 'yak: pun of the week is from the list');
+  perform t.ok(exists (select 1 from generate_series(0, 37) i where public.yak_pun(i) = v_pun), 'yak: pun of the week is from the list');
   perform t.ok(rep->>'text' like '%' || E'\n\n🐂 Yak of the week: ' || v_pun || E'\n', 'yak: weekly text ends with the pun line');
   perform t.ok(rep->>'html' like '%🐂 Yak of the week: ' || public.html_escape(v_pun) || '</p>%', 'yak: weekly html has the pun line');
   perform t.ok(rep->>'text' like '%PENDING REVIEWS:%', 'yak: weekly text otherwise unchanged (pending reviews still there)');
-  perform t.ok(not exists (select 1 from email_outbox where kind in ('prize_qualified', 'prize_info')
+  perform t.ok(not exists (select 1 from email_outbox where kind = 'prize_qualified'
                             and (body_text not like '%🐂 Yak of the week: %' or body_html not like '%🐂 Yak of the week: %'))
-               and exists (select 1 from email_outbox where kind in ('prize_qualified', 'prize_info')),
-               'yak: every admin prize alert has the pun line');
+               and exists (select 1 from email_outbox where kind = 'prize_qualified'),
+               'yak: every "won a prize spot" alert has the pun line (0039: the winner-info email is kept short)');
   perform t.ok(not exists (select 1 from email_outbox where kind = 'announcement' and body_text like '%Yak of the week%'),
                'yak: announcement emails unchanged');
 end $$;
@@ -1911,9 +1916,9 @@ do $$ begin
   perform t.ok(exists (select 1 from email_outbox where kind = 'announcement'), '0017: announcement emails exist to check');
   -- 0032 replaced the 0017 footer: every participant email now ends with the unsubscribe footer (added per recipient).
   perform t.ok(not exists (select 1 from email_messages where kind = 'announcement' and status = 'queued'
-                            and (body_text not like '%You''re getting this because you have YACquest emails on.%Manage in the app: Me → Settings%'
-                                 or body_html not like '%You''re getting this because you have YACquest emails on.%Unsubscribe in one click</a> · Manage in the app (Me → Settings)%')),
-               '0032: announcement emails end with “you have YACquest emails on” + unsubscribe + Me → Settings');
+                            and (body_text not like '%You''re getting this because you have YACquest announcement emails on.%Unsubscribe from these in one click: %&k=announcement%Manage all email choices in the app: Me → Settings%'
+                                 or body_html not like '%You''re getting this because you have YACquest announcement emails on.%Unsubscribe from these in one click</a> · Manage all email choices in the app (Me → Settings)%')),
+               '0032/0039: announcement emails end with “you have YACquest announcement emails on” + one-click unsubscribe (this type) + Me → Settings');
   perform t.ok(not exists (select 1 from email_outbox where kind = 'announcement' and body_text like '%Change email updates%'),
                '0017: old “Change email updates” footer is gone');
 end $$;
@@ -2490,7 +2495,7 @@ do $$ begin
   perform t.eq((select count(*) from notifications where kind = 'event_reminder' and user_id = t.u('carol')), 0::bigint, '0024: carol checked in → no reminder');
   perform t.eq((select count(*) from notifications where kind = 'event_reminder' and user_id = t.u('chair1')), 1::bigint, '0024: staff who RSVP''d get one too');
   perform t.eq((select count(*) from email_outbox where kind = 'event_reminder'), 2::bigint, '0024: emails only for alice + chair (erin has email updates off)');
-  perform t.ok((select to_emails = array['alice@example.edu'] and subject = 'Reminder: Pickleball starts at 2:00 PM'
+  perform t.ok((select to_emails = array['alice@example.edu'] and subject = 'Reminder: Pickleball starts at 2:00 PM ET' and body_text like 'Pickleball starts at 2:00 PM ET.%'
                        and body_text like '%Where: Wilson Courts%' and body_text like '%Check in at the event to earn 20 points.%'
                        and body_text not ilike '%yak%' and body_html like '%Wilson Courts%' and status = 'pending'
                   from email_outbox where kind = 'event_reminder' and dedupe_key = 'reminder:00000000-0000-0000-0000-0000000024e1:' || t.u('alice')),
@@ -3928,8 +3933,8 @@ do $$ declare v jsonb; begin
   perform t.eq(email_first_name('   '), null::text, '0032 fill: no name → null (greeting falls back to "Hi there,")');
   perform t.ok(cardinality(campus_puns('duke')) = 4 and cardinality(campus_puns('unc')) = 4 and cardinality(campus_puns('ncsu')) = 4, '0032 pun: 4 lines per campus');
   perform t.eq(email_seed('abc'), 294, '0032 pun: seed = sum of character codes');
-  perform t.eq(campus_pun('unc', email_seed('abc')), 'Carolina blue skies ahead 💙', '0032 pun: deterministic per send (same as campusPun(''unc'', ''abc'') in TS)');
-  perform t.eq(campus_pun('duke', 0), 'Bet they don''t teach you that at Duke 😈', '0032 pun: seed 0 → first Duke line');
+  perform t.eq(campus_pun('unc', email_seed('abc')), 'Heel yeah, see you there!', '0032 pun: deterministic per send (same as campusPun(''unc'', ''abc'') in TS)');
+  perform t.eq(campus_pun('duke', 0), 'Go Blue Devils — see you soon!', '0032/0039 pun: seed 0 → first Duke line');
   perform t.eq(campus_pun('ncsu', 5), 'Howl about joining us?', '0032 pun: seed 5 → second NC State line');
   perform t.eq(campus_pun('mars', 1), 'See you at the next YAC event!', '0032 pun: unknown campus → neutral line');
   perform t.eq(email_next_stop(0, 350), 'Trailhead (50 pts)', '0032 next stop: Trailhead');
@@ -3976,9 +3981,9 @@ begin
   perform t.ok(m.body_html like '%<p style="margin:0 0 12px;font-size:16px;">Hi Ali&amp;&lt;b&gt;,</p>%' and position('Ali&<b>' in m.body_html) = 0, '0032: HTML greeting escaped; the raw name never reaches the HTML');
   perform t.ok(position('{' in m.body_text) = 0 and m.body_html !~ '\{[a-z_]+\}', '0032: no fill-in tokens left');
   perform t.ok(m.body_text like '%' || campus_pun('duke', email_seed('announcement:' || current_setting('t.ann'))) || '%', '0032: {campus_pun} → this send''s Duke line');
-  perform t.ok(m.body_html like '%href="https://ncssmyac.github.io/YACquest/#/unsubscribe?t=' || (select token from email_unsub_tokens where user_id = t.u('alice')) || '" style="color:#0b2a5b;">Unsubscribe in one click</a> · Manage in the app (Me → Settings)<br>YACquest · NCSSM Young Alumni Council%',
-               '0032: footer with the person''s one-click unsubscribe link + Me → Settings + identity line');
-  perform t.ok(m.body_text like E'%\nUnsubscribe in one click: https://ncssmyac.github.io/YACquest/#/unsubscribe?t=%', '0032: text footer has the unsubscribe link');
+  perform t.ok(m.body_html like '%href="https://ncssmyac.github.io/YACquest/#/unsubscribe?t=' || (select token from email_unsub_tokens where user_id = t.u('alice')) || '&amp;k=announcement" style="color:#0b2a5b;">Unsubscribe from these in one click</a> · Manage all email choices in the app (Me → Settings)<br>YACquest · NCSSM Young Alumni Council%',
+               '0032/0039: footer with the person''s one-click unsubscribe link (this type) + Me → Settings + identity line');
+  perform t.ok(m.body_text like E'%\nUnsubscribe from these in one click: https://ncssmyac.github.io/YACquest/#/unsubscribe?t=%&k=announcement\n%', '0032/0039: text footer has the unsubscribe link for this type');
   perform t.ok((select token ~ '^[0-9a-f]{32}$' and token <> replace(t.u('alice')::text, '-', '') from email_unsub_tokens where user_id = t.u('alice')), '0032: token is random hex, not the user id');
   perform t.ok(position(t.u('alice')::text in m.body_html) = 0, '0032: the user id is never in the email');
   perform t.ok(m.body_html like '%<a href="https://example.com/rsvp?x=1&amp;y=2" style="color:#0b2a5b;">https://example.com/rsvp?x=1&amp;y=2</a>.%', '0032: links in the message become real links (trailing period left out)');
@@ -5219,6 +5224,446 @@ rollback;
 -- A cancelled row stays in the DB so the final "all migrations once more" proves 0034/0038 re-run with it present.
 :as_super
 insert into email_messages (kind, campaign_id, email, status, error) values ('announcement', 'announcement:rerun-check', 'rerun@example.edu', 'skipped_cancelled', 'Cancelled by test.');
+
+-- =============================================================================
+-- 0039. EMAILS: no winner details in the prize email, wording, per-type choices,
+--       one-click unsubscribe per type, email health
+-- =============================================================================
+begin;
+:as_super
+update profiles set role = 'participant' where id in (t.u('alice'), t.u('carol'), t.u('dave'), t.u('erin'), t.u('frank'), t.u('ref3'));
+update profiles set role = 'admin' where id = t.u('bob');
+update profiles set role = 'chair' where id = t.u('chair1');
+update profiles set email_opt_in = true, email_bounced = false, email_verified_at = coalesce(email_verified_at, now())
+ where id in (t.u('alice'), t.u('carol'), t.u('dave'), t.u('erin'), t.u('frank'), t.u('ref3'), t.u('chair1'));
+update app_config set email_daily_budget = 450, email_reserve = 50, announce_all_email_weekly_cap = 20, announce_email_hold_minutes = 0;
+
+-- ---- columns, back-fill, email_opt_in kept in sync ----
+do $$ begin
+  perform t.ok((select bool_and(column_default = 'true' and is_nullable = 'NO') from information_schema.columns
+                  where table_schema = 'public' and table_name = 'profiles' and column_name in ('email_announcements', 'email_events', 'email_wrapped'))
+               and (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'profiles'
+                     and column_name in ('email_announcements', 'email_events', 'email_wrapped')) = 3, '0039: three per-type columns, not null, default true');
+  perform t.ok(not exists (select 1 from profiles where email_opt_in <> (email_announcements or email_events or email_wrapped)),
+               '0039: every profile: email_opt_in = any of the three on');
+  update profiles set email_opt_in = false where id = t.u('alice');
+  perform t.ok((select not (email_announcements or email_events or email_wrapped) from profiles where id = t.u('alice')),
+               '0039 sync: email_opt_in off (old app, mailto, old links) → all three off');
+  update profiles set email_opt_in = true where id = t.u('alice');
+  perform t.ok((select email_announcements and email_events and email_wrapped from profiles where id = t.u('alice')),
+               '0039 sync: email_opt_in on (old app) → all three on');
+  update profiles set email_events = false where id = t.u('alice');
+  perform t.ok((select email_opt_in and email_announcements and not email_events and email_wrapped from profiles where id = t.u('alice')),
+               '0039 sync: one type off → email_opt_in stays on');
+  update profiles set email_announcements = false, email_wrapped = false where id = t.u('alice');
+  perform t.ok((select not email_opt_in from profiles where id = t.u('alice')), '0039 sync: all three off → email_opt_in off');
+  update profiles set email_wrapped = true where id = t.u('alice');
+  perform t.ok((select email_opt_in and not email_announcements and not email_events from profiles where id = t.u('alice')),
+               '0039 sync: one type back on → email_opt_in on, the others stay off');
+  update profiles set email_announcements = true, email_events = true where id = t.u('alice');
+end $$;
+-- back-fill: an account whose master switch was off before 0039 (trigger bypassed to recreate that state)
+alter table profiles disable trigger profiles_email_prefs_sync;
+update profiles set email_opt_in = false, email_announcements = true, email_events = true, email_wrapped = true where id = t.u('frank');
+alter table profiles enable trigger profiles_email_prefs_sync;
+do $$ begin
+  perform t.eq(email_prefs_backfill(), 1, '0039 back-fill: one account had emails off');
+  perform t.ok((select not (email_opt_in or email_announcements or email_events or email_wrapped) from profiles where id = t.u('frank')),
+               '0039 back-fill: emails off before → all three off');
+  perform t.eq(email_prefs_backfill(), 0, '0039 back-fill: re-run changes nothing');
+  update profiles set email_opt_in = true where id = t.u('frank');
+end $$;
+-- sign-up with the box unticked → all three off; ticked (default) → all three on
+insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data) values
+  ('00000000-0000-0000-0000-000000003901', 'optout39@example.edu', now(), '{"handle":"optout39","display_name":"Opt Out","campus":"unc","avatar":"yak","email_opt_in":"false"}'),
+  ('00000000-0000-0000-0000-000000003902', 'optin39@example.edu', now(), '{"handle":"optin39","display_name":"Opt In","campus":"unc","avatar":"yak"}');
+do $$ begin
+  perform t.ok((select not (email_opt_in or email_announcements or email_events or email_wrapped) from profiles where id = '00000000-0000-0000-0000-000000003901'),
+               '0039 sign-up: "Email me YACquest updates" unticked → all three off');
+  perform t.ok((select email_opt_in and email_announcements and email_events and email_wrapped from profiles where id = '00000000-0000-0000-0000-000000003902'),
+               '0039 sign-up: ticked → all three on');
+end $$;
+
+-- ---- campus lines + yak puns ----
+do $$ begin
+  perform t.ok(not exists (select 1 from unnest(campus_puns('duke') || campus_puns('unc') || campus_puns('ncsu')) x
+                            where x like '%😈%' or x ilike '%bet they%' or x ilike '%devilish%'), '0039 puns: no 😈, no "Bet they", no devil lines');
+  perform t.eq(campus_puns('duke'), array['Go Blue Devils — see you soon!', 'From the Gothic Wonderland to YAC: welcome back!',
+                                         'Duke''s got spirit — bring it to the next event!', 'Forever Duke, forever NCSSM.'], '0039 puns: Duke');
+  perform t.eq(campus_puns('unc'), array['Go Heels!', 'Carolina blue skies ahead 💙', 'Heel yeah, see you there!', 'Ram-arkable things happen when Tar Heels show up.'], '0039 puns: UNC');
+  perform t.eq(campus_puns('ncsu'), array['Go Pack!', 'Howl about joining us?', 'Wolfpack, roll call! 🐾', 'Think and Do — and come hang with YAC!'], '0039 puns: NC State');
+  perform t.ok(email_fill('{campus_pun}', email_fill_values(t.u('alice'), 'k')) = any (campus_puns('duke')), '0039 puns: {campus_pun} still fills in');
+  perform t.ok(not exists (select 1 from generate_series(0, 37) i where yak_pun(i) in ('Big yak energy.', 'Yak in business, baby!')), '0039: two yak lines removed');
+end $$;
+
+-- ---- every generated subject: no emoji, no URGENT (one email of every kind, made by the real functions) ----
+update report_settings set prize_alerts_enabled = true, include_chairs = true;
+insert into events (id, cycle_id, title, campus, kind, location, starts_at, ends_at, activity_id) values
+  ('00000000-0000-0000-0000-000000003911', active_cycle_id(), 'Board Game Night', 'duke', 'active', 'Bryan Center', now() + interval '50 minutes', now() + interval '3 hours', 'home_event'),
+  ('00000000-0000-0000-0000-000000003912', active_cycle_id(), 'Past Picnic', 'all', 'active', 'Duke Gardens', now() - interval '5 hours', now() - interval '3 hours', 'home_event'),
+  ('00000000-0000-0000-0000-000000003913', active_cycle_id(), 'Trivia Night', 'all', 'active', 'Top of the Hill', '2030-11-21 19:00-05', '2030-11-21 21:00-05', 'home_event');
+insert into event_rsvps (event_id, user_id) values
+  ('00000000-0000-0000-0000-000000003911', t.u('alice')), ('00000000-0000-0000-0000-000000003911', t.u('carol')),
+  ('00000000-0000-0000-0000-000000003912', t.u('alice')), ('00000000-0000-0000-0000-000000003912', t.u('carol')),
+  ('00000000-0000-0000-0000-000000003912', t.u('dave'));
+insert into ledger (cycle_id, user_id, amount, source, activity_id, ref_id, reason)
+values (active_cycle_id(), t.u('dave'), 20, 'checkin', 'home_event', '00000000-0000-0000-0000-000000003912', 'Checked in: Past Picnic');
+-- per-type: alice has event emails OFF (in-app only), carol has them on
+update profiles set email_events = false where id = t.u('alice');
+delete from wrapped_sends;
+update profiles set email_wrapped = false where id = t.u('carol');
+update profiles set email_verified_at = null where id = t.u('ref3');
+:as_chair1
+do $$ declare r json; begin
+  perform send_test_email();
+  r := send_announcement('Subjects check', 'Hello {first_name}', 'campus', 'duke', null, true);
+  perform set_config('t.ann39', r->>'id', false);
+end $$;
+:as_service
+do $$ begin
+  perform queue_event_reminders(now());
+  perform queue_wrapped_notifications(wrapped_opens_at((select ends_at from cycles where id = active_cycle_id())) + interval '1 hour');
+end $$;
+:as_super
+do $$ declare c prize_claims; rep json; begin
+  perform send_followup_for_event('00000000-0000-0000-0000-000000003912', now(), null);
+  perform queue_verification_email(t.u('ref3'), 'signup', now());
+  rep := build_weekly_report();
+  perform enqueue_email('weekly_report', array['board39@example.edu'], rep->>'subject', rep->>'text', rep->>'html', 'weekly:t39');
+  insert into prize_claims (cycle_id, spot, user_id, display_name, campus, reference)
+  values (active_cycle_id(), 97, t.u('ref3'), 'Ref Three', 'ncsu', 'YQ-T39') returning * into c;
+  update prize_claims set status = 'info_submitted',
+         contact = '{"fullName":"Rhea Three","email":"rhea@example.com","phone":"(919) 555-0139","address":"39 Elm St, Raleigh NC","preference":"Target","notes":"leave at door"}'
+   where id = c.id;
+  perform set_config('t.claim39', c.id::text, false);
+
+  perform t.eq((select array_agg(distinct kind order by kind) from email_outbox where created_at = now()),
+               array['announcement', 'event_followup', 'event_reminder', 'prize_info', 'prize_qualified', 'test', 'verify_email', 'weekly_report', 'wrapped'],
+               '0039 subjects: one email of every kind was generated');
+  perform t.ok(not exists (select 1 from email_outbox where created_at = now() and (subject ~ '[^\x20-\x7E’—·…–]' or subject ~* 'urgent')),
+               '0039 subjects: no emoji and no URGENT in any generated subject: '
+               || coalesce((select string_agg(kind || '=' || subject, ' | ') from email_outbox where created_at = now() and (subject ~ '[^\x20-\x7E’—·…–]' or subject ~* 'urgent')), 'none'));
+  perform t.ok(not exists (select 1 from email_messages where created_at = now() and subject ~ '[^\x20-\x7E’—·…–]'), '0039 subjects: per-person copies too');
+  perform t.eq((select subject from email_outbox where created_at = now() and kind = 'test'), 'YACquest test email', '0039 subject: test');
+  perform t.eq((select subject from email_outbox where created_at = now() and kind = 'prize_qualified'), 'YACquest: Ref Three won prize spot #97', '0039 subject: prize_qualified');
+  perform t.eq((select subject from email_outbox where created_at = now() and kind = 'prize_info'), 'YACquest winner info received: Ref Three (spot #97)', '0039 subject: prize_info');
+  perform t.ok((select bool_and(subject = 'Your YACquest Wrapped is here') from email_outbox where created_at = now() and kind = 'wrapped'), '0039 subject: Wrapped');
+  perform t.ok((select title = 'Your YACquest Wrapped is here! 🎁' from notifications where kind = 'wrapped' and user_id = t.u('alice') order by created_at desc limit 1),
+               '0039: the in-app Wrapped title is unchanged');
+end $$;
+
+-- ---- ET in reminders, follow-ups, the weekly report ----
+do $$ declare m email_outbox; v_t text := to_char((now() + interval '50 minutes') at time zone 'America/New_York', 'FMHH12:MI AM'); begin
+  select * into m from email_outbox where created_at = now() and kind = 'event_reminder';
+  perform t.eq(m.subject, 'Reminder: Board Game Night starts at ' || v_t || ' ET', '0039 ET: reminder subject "starts at 7:00 PM ET"');
+  perform t.ok(m.body_text like 'Board Game Night starts at ' || v_t || ' ET.%' and m.body_html like '%starts at <b>' || v_t || ' ET</b>%',
+               '0039 ET: reminder text + HTML');
+  perform t.ok((select body = 'Board Game Night starts at ' || v_t || ' at Bryan Center. Check in at the event to earn ' || tier_points(2) || ' points.'
+                  from notifications where kind = 'event_reminder' and user_id = t.u('alice') order by created_at desc limit 1),
+               '0039: the in-app reminder is unchanged');
+  select * into m from email_outbox where created_at = now() and kind = 'event_followup' and to_emails = array['carol@example.edu'];
+  perform t.ok(m.body_text ~ E'\nNext up: [^\n]+\nWhen: [A-Z][a-z]{2}, [A-Z][a-z]{2} \\d{1,2} at \\d{1,2}:\\d{2} [AP]M ET\nWhere: '
+               and m.body_html ~ '🕒 [A-Z][a-z]{2}, [A-Z][a-z]{2} \d{1,2} at \d{1,2}:\d{2} [AP]M ET<br>',
+               '0039 ET: missed-you follow-up "Thu, Nov 19 at 7:00 PM ET" (text + HTML)');
+  perform t.ok(m.body_text like 'We missed you at Past Picnic. Hope to see you next time!%' and m.body_html like '%We missed you at <b>Past Picnic</b>. Hope to see you next time!%',
+               '0039: follow-up plain text opens with the same words as the HTML');
+  perform t.ok((select body_text like '%(' || followup_when(now() + interval '50 minutes') || ' ET) · 2 going%' from email_outbox where dedupe_key = 'weekly:t39'),
+               '0039 ET: weekly report "Next 7 days" has the time + ET');
+  perform t.eq(email_event_when('2030-11-21 19:00-05'), 'Thu, Nov 21 at 7:00 PM ET', '0039: email_event_when');
+  perform t.eq(email_event_time('2030-07-04 19:00-04'), '7:00 PM ET', '0039: email_event_time (summer too)');
+  perform t.ok((select body_text like '%🩺 Email health: %' and body_html like '%Email health:%' from email_outbox where dedupe_key = 'weekly:t39'),
+               '0039: weekly report has an "Email health" line');
+end $$;
+
+-- ---- per-type opt-out enforced for every kind ----
+do $$ begin
+  perform t.ok(not exists (select 1 from email_outbox where created_at = now() and kind = 'event_reminder' and 'alice@example.edu' = any (to_emails))
+               and exists (select 1 from email_outbox where created_at = now() and kind = 'event_reminder' and to_emails = array['carol@example.edu'])
+               and exists (select 1 from notifications where kind = 'event_reminder' and user_id = t.u('alice') and created_at = now()),
+               '0039 events off: no reminder email for alice (in-app still), carol gets one');
+  perform t.ok(not exists (select 1 from email_outbox where created_at = now() and kind = 'event_followup' and 'alice@example.edu' = any (to_emails))
+               and exists (select 1 from notifications where kind = 'event_followup' and user_id = t.u('alice') and created_at = now()),
+               '0039 events off: no follow-up email for alice (in-app still)');
+  perform t.ok(not exists (select 1 from email_outbox where created_at = now() and kind = 'wrapped' and 'carol@example.edu' = any (to_emails))
+               and exists (select 1 from email_outbox where created_at = now() and kind = 'wrapped' and 'alice@example.edu' = any (to_emails)),
+               '0039 Wrapped off: carol gets no Wrapped email; alice (events off, Wrapped on) does');
+  perform t.ok(exists (select 1 from email_messages where campaign_id = 'announcement:' || current_setting('t.ann39') and user_id = t.u('alice') and status = 'queued'),
+               '0039: alice (events off, announcements on) still gets announcements');
+end $$;
+-- the expand step and the sender check each kind's own setting
+do $$
+declare
+  k text;
+  v_types text[] := array['announcement', 'event_reminder', 'event_followup', 'wrapped'];
+  v_ref text;
+  v_n int := 0;
+begin
+  foreach k in array v_types loop
+    v_n := v_n + 1;
+    -- everything on except this kind's type
+    update profiles set email_announcements = (email_kind_type(k) <> 'announcement'), email_events = (email_kind_type(k) <> 'events'),
+                        email_wrapped = (email_kind_type(k) <> 'wrapped') where id = t.u('dave');
+    v_ref := case when k = 'announcement' then gen_random_uuid()::text when k = 'wrapped' then active_cycle_id()::text
+                  else '00000000-0000-0000-0000-000000003913' end;
+    perform enqueue_email(k, array['dave@example.edu'], 'Hello ' || k, 'Hi', email_layout('Hi', '<p>Hi</p>'), k || ':' || v_ref || ':t39off' || v_n);
+    perform t.ok((select m.status = 'skipped_opted_out' and m.error = email_type_off_error(k) from email_messages m join email_outbox o on o.id = m.outbox_id
+                   where o.dedupe_key = k || ':' || v_ref || ':t39off' || v_n),
+                 '0039 per type: ' || k || ' with its type off → skipped (' || email_type_off_error(k) || ')');
+    -- another type is still on → that kind is queued
+    perform enqueue_email(case when email_kind_type(k) = 'wrapped' then 'announcement' else 'wrapped' end, array['dave@example.edu'], 'Other', 'Hi',
+                          email_layout('Hi', '<p>Hi</p>'), case when email_kind_type(k) = 'wrapped' then 'announcement:' || gen_random_uuid() else 'wrapped:' || active_cycle_id() end || ':t39on' || v_n);
+    perform t.ok((select m.status = 'queued' from email_messages m join email_outbox o on o.id = m.outbox_id where o.dedupe_key like '%:t39on' || v_n),
+                 '0039 per type: with ' || k || ' off, the other types still go');
+  end loop;
+  update profiles set email_announcements = true, email_events = true, email_wrapped = true where id = t.u('dave');
+  -- queued while on, turned off before the sender picked it up → skipped by claim_email_messages
+  perform enqueue_email('event_followup', array['dave@example.edu'], 'Thanks for coming to Past Picnic!', 'x', email_layout('x', '<p>x</p>'),
+                        'followup:00000000-0000-0000-0000-000000003913:t39late');
+  perform enqueue_email('announcement', array['dave@example.edu'], 'YACquest: late', 'x', email_layout('x', '<p>x</p>'), 'announcement:' || gen_random_uuid() || ':t39late');
+  update profiles set email_events = false where id = t.u('dave');
+end $$;
+update email_messages set status = 'sent', sent_at = now() - interval '30 days' where status in ('queued', 'sending', 'failed') and email <> 'dave@example.edu';
+:as_service
+do $$ begin
+  perform t.ok(not exists (select 1 from claim_email_messages(50) c where c.kind = 'event_followup'), '0039 claim: a follow-up whose type was turned off after queuing is not sent');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok((select m.status = 'skipped_opted_out' and m.error = 'Event reminder and thank-you emails are off for this person.' from email_messages m join email_outbox o on o.id = m.outbox_id
+                 where o.dedupe_key like '%:t39late' and o.kind = 'event_followup'), '0039 claim: … it is skipped with the type in the reason');
+  perform t.ok((select m.status = 'sending' from email_messages m join email_outbox o on o.id = m.outbox_id where o.dedupe_key like 'announcement:%:t39late'),
+               '0039 claim: the announcement (type still on) is sent');
+  update profiles set email_events = true where id = t.u('dave');
+end $$;
+
+-- ---- announcements + the recipient count use the "Announcements" choice ----
+update profiles set email_announcements = false where id = t.u('carol');
+:as_bob
+do $$ declare c json; r json; v_n int; begin
+  c := announcement_audience_count('user', null, t.u('carol'));
+  perform t.ok(c->>'emailReason' = 'emails_off' and (c->>'email')::int = 0, '0039 count: one person with Announcements off → emails_off');
+  perform t.ok((c->'emailTypes'->>'announcements')::boolean = false and (c->'emailTypes'->>'events')::boolean and not (c->'emailTypes'->>'wrapped')::boolean,
+               '0039 count: one person → per-type status for the Announce screen');
+  c := announcement_audience_count('user', null, t.u('alice'));
+  perform t.ok(c->>'emailReason' is null and (c->>'email')::int = 1, '0039 count: events off but Announcements on → emailed');
+  c := announcement_audience_count('campus', 'duke');
+  r := send_announcement('Count check', 'Hi Duke', 'campus', 'duke', null, true);
+  perform t.eq((r->>'emailed')::int, (c->>'email')::int, '0039 count: campus count = emails really queued');
+  perform set_config('t.cc39', r->>'id', false);
+end $$;
+:as_super
+do $$ begin
+  perform t.ok(not exists (select 1 from email_messages where campaign_id = 'announcement:' || current_setting('t.cc39') and user_id = t.u('carol')),
+               '0039: carol (Announcements off) isn''t even queued');
+end $$;
+update profiles set email_announcements = true where id = t.u('carol');
+
+-- ---- one-click unsubscribe: one type, or everything ----
+do $$ declare v_tok text := email_unsub_token(t.u('carol')); m email_messages; begin
+  perform set_config('t.tok39', v_tok, false);
+  select * into m from email_messages where user_id = t.u('carol') and kind = 'event_reminder' and created_at = now();
+  perform t.ok(m.body_html like '%/#/unsubscribe?t=' || v_tok || '&amp;k=event_reminder"%' and m.body_text like '%/#/unsubscribe?t=' || v_tok || '&k=event_reminder' || E'\n%',
+               '0039: the reminder''s one-click link carries ?k=event_reminder');
+  perform t.ok(m.body_text like '%You''re getting this because you have YACquest event reminder and thank-you emails on.%', '0039: the footer names the type');
+  perform t.eq(email_unsub_url_for(v_tok, 'test'), email_unsub_url(v_tok), '0039: no k for non-member kinds');
+  perform t.eq((select count(*) from pg_proc where proname = 'unsubscribe_by_token' and pronamespace = 'public'::regnamespace), 1::bigint,
+               '0039: one unsubscribe_by_token (the one-argument version was replaced)');
+end $$;
+:as_anon
+do $$ declare r json; begin
+  r := unsubscribe_by_token(current_setting('t.tok39'), 'event_followup');
+  perform t.ok(r->>'type' = 'events' and r->>'label' = 'Event reminders and thank-yous' and not (r->>'alreadyOff')::boolean and (r->>'othersOn')::boolean,
+               '0039 unsubscribe (anon) with a kind → only that type: {type, label, othersOn}');
+  r := unsubscribe_by_token(current_setting('t.tok39'), 'event_reminder');
+  perform t.ok((r->>'alreadyOff')::boolean, '0039 unsubscribe: same type again → alreadyOff');
+  perform t.throws($q$select unsubscribe_by_token('nope', 'wrapped')$q$, 'invalid_token', '0039 unsubscribe: bad token still refused');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok((select email_announcements and not email_events and not email_wrapped and email_opt_in from profiles where id = t.u('carol')),
+               '0039 unsubscribe with a kind: only events turned off; the others stay as they were (announcements on, Wrapped off), email_opt_in on');
+  perform t.eq((select count(*) from email_events where user_id = t.u('carol') and type = 'unsubscribe' and detail = 'one-click:events' and created_at = now()), 1::bigint,
+               '0039 unsubscribe: one event, detail records the type');
+end $$;
+:as_anon
+do $$ declare r json; begin
+  r := unsubscribe_by_token(current_setting('t.tok39'));
+  perform t.ok(r->>'type' = 'all' and not (r->>'alreadyOff')::boolean and not (r->>'othersOn')::boolean, '0039 unsubscribe without a kind (old links) → everything off');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok((select not (email_opt_in or email_announcements or email_events or email_wrapped) from profiles where id = t.u('carol')), '0039 unsubscribe without a kind: all off');
+  perform t.ok(exists (select 1 from email_events where user_id = t.u('carol') and type = 'unsubscribe' and detail = 'one-click' and created_at = now()),
+               '0039 unsubscribe without a kind: detail one-click');
+  update profiles set email_wrapped = true where id = t.u('carol');
+end $$;
+:as_anon
+do $$ declare r json; begin
+  r := unsubscribe_by_token(current_setting('t.tok39'), 'nonsense');
+  perform t.ok(r->>'type' = 'all', '0039 unsubscribe: an unknown kind counts as "everything"');
+end $$;
+:as_service
+do $$ begin
+  perform t.ok(unsubscribe_by_email('carol@example.edu'), '0039 mailto: still works');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok((select not (email_opt_in or email_announcements or email_events or email_wrapped) from profiles where id = t.u('carol')), '0039 mailto unsubscribe: still all off');
+end $$;
+
+-- ---- the person's own choices ----
+:as_carol
+do $$ declare r json; begin
+  r := set_my_email_prefs(true, null, null);
+  perform t.ok((r->>'announcements')::boolean and not (r->>'events')::boolean and not (r->>'wrapped')::boolean and (r->>'optIn')::boolean,
+               '0039 set_my_email_prefs: one on, nulls leave the others');
+  r := set_my_email_prefs(null, true, true);
+  perform t.ok((r->>'events')::boolean and (r->>'wrapped')::boolean and (r->>'announcements')::boolean, '0039 set_my_email_prefs: the rest on');
+  r := my_email_status();
+  perform t.ok((r->>'optIn')::boolean and (r->>'announcements')::boolean and (r->>'events')::boolean and (r->>'wrapped')::boolean, '0039 my_email_status: per-type');
+  r := (select row_to_json(x) from update_profile(null, null, false) x);
+  perform t.ok((select not (email_announcements or email_events or email_wrapped) from profiles where id = t.u('carol')), '0039: the old app''s single switch (update_profile) still turns all off');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied('select set_my_email_prefs(true, true, true)', '0039: anon can''t call set_my_email_prefs');
+end $$;
+
+-- ---- winner email: no delivery details; old rows scrubbed ----
+:as_super
+do $$ declare o email_outbox; n int; begin
+  select * into o from email_outbox where kind = 'prize_info' and dedupe_key like 'prize_info:' || current_setting('t.claim39') || ':%';
+  perform t.ok(o.body_text like 'Ref Three (NC State) sent their delivery details for prize spot #97. Open YACquest → Admin → Prizes to see them and send the $% gift card by %. For privacy, delivery details are only shown in the app.%',
+               '0039 prize_info: the agreed sentence');
+  perform t.ok(o.body_text like '%A YACquest chair can see them in Admin → Prizes%' and o.body_html like '%(only chairs can open it). If you%re not a chair, please pass this on to one.%'
+               and o.body_html like '%href="https://ncssmyac.github.io/YACquest/#/admin/prizes"%>Open Admin → Prizes</a>%', '0039 prize_info: chairs only + button to Admin → Prizes');
+  perform t.ok(o.body_text like '%Reference: YQ-T39%' and o.body_html like '%YQ-T39%', '0039 prize_info: reference kept');
+  perform t.ok((o.subject || o.body_text || o.body_html) !~* 'Rhea|555-0139|39 Elm|Raleigh|rhea@example|Target|leave at door|preference|phone|mailing',
+               '0039 prize_info: no name, phone, address, email, preference or notes');
+  -- an old-style alert (before 0039) still waiting, and its outbox copy → rewritten
+  insert into email_outbox (kind, to_emails, subject, body_text, body_html, dedupe_key, status)
+  values ('prize_info', array['old39@example.edu'], 'URGENT 🎁 YACquest winner info: Ref Three (spot #97)',
+          E'Full name: Rhea Three\nPhone: (919) 555-0139\nMailing address: 39 Elm St, Raleigh NC', '<p>39 Elm St, Raleigh NC · (919) 555-0139</p>',
+          'prize_info:' || current_setting('t.claim39') || ':old39', 'pending') returning * into o;
+  update email_messages set subject = o.subject, body_text = o.body_text, body_html = o.body_html where outbox_id = o.id;
+  insert into email_outbox (kind, to_emails, subject, body_text, body_html, dedupe_key, status, body_purged_at)
+  values ('prize_info', array['old39@example.edu'], 'URGENT purged', '', '', 'prize_info:' || current_setting('t.claim39') || ':purged39', 'sent', now());
+  update email_messages set body_text = '', body_html = '', body_purged_at = now()
+   where outbox_id = (select id from email_outbox where dedupe_key like '%:purged39');
+  n := email_scrub_prize_info();
+  perform t.eq(n, 2, '0039 scrub: the old outbox row + its unsent per-person copy were rewritten');
+  perform t.ok((select subject = 'YACquest winner info received: Ref Three (spot #97)' and body_text not like '%555-0139%' and body_html not like '%39 Elm%'
+                  from email_outbox where id = o.id), '0039 scrub: outbox copy has no details, new subject');
+  perform t.ok((select status = 'queued' and body_text like '%For privacy, delivery details are only shown in the app.%' and body_text like '%staff email list%'
+                       and body_text not like '%555-0139%' and body_html not like '%39 Elm%' and body_html not like '%yac:greeting%'
+                  from email_messages where outbox_id = o.id), '0039 scrub: unsent copy has no details and still goes out');
+  perform t.ok((select subject = 'URGENT purged' and body_text = '' from email_outbox where dedupe_key like '%:purged39'), '0039 scrub: emptied rows are left alone');
+  perform t.ok(not exists (select 1 from email_outbox where kind = 'prize_info' and body_text ~* 'Phone:|Mailing address:|Full name:'), '0039 scrub: no prize_info row anywhere has delivery details');
+  perform t.eq(email_scrub_prize_info(), 0, '0039 scrub: re-run changes nothing');
+end $$;
+
+-- ---- staff footer wording (HTML + plain text), confirmation email line ----
+do $$ begin
+  perform t.ok((select body_html like '%You get this because you''re on the YACquest staff email list. Manage these in Admin → System.%'
+                       and body_text like '%You get this because you''re on the YACquest staff email list. Manage these in Admin → System.%'
+                  from email_messages where email = 'board39@example.edu'), '0039 staff footer: same words in HTML and plain text');
+  perform t.ok(not exists (select 1 from email_messages where created_at = now() and (body_html || body_text) like '%committee list%'), '0039: no "committee list" anywhere');
+  perform t.ok((select body_text like '%Confirming lets you hold a prize spot and get YACquest emails.%' and body_html like '%Confirming lets you hold a prize spot and get YACquest emails.%'
+                       and (body_text || body_html) not like '%locks in your points%'
+                  from email_messages where kind = 'verify_email' and created_at = now()), '0039: confirmation email says what confirming does');
+end $$;
+
+-- ---- email health ----
+delete from email_runs;
+delete from email_events;
+update email_messages set status = 'sent', sent_at = now() - interval '40 days', claimed_at = null where status not like 'skipped%';
+update app_config set email_daily_budget = 450, email_reserve = 50;
+insert into email_runs (ran_at, sent, failed, imap_status) values (now() - interval '25 minutes', 2, 0, 'ok'), (now() - interval '15 minutes', 1, 0, 'ok'), (now() - interval '5 minutes', 3, 0, 'ok');
+:as_alice
+do $$ begin
+  perform t.throws('select email_health()', 'forbidden', '0039 health: participants can''t see it');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied('select email_health()', '0039 health: anon can''t call it');
+  perform t.denied('select email_health_data(now())', '0039 health: the internal function isn''t callable');
+end $$;
+:as_bob
+do $$ declare h json; begin
+  h := email_health();
+  perform t.ok(h->>'status' = 'green' and json_array_length(h->'reasons') = 0 and (h->>'minutesSinceRun')::int = 5, '0039 health: all good → green, no reasons (admins can see it)');
+  h := email_health(now() + interval '3 hours');
+  perform t.ok(h->>'status' = 'red' and h->'reasons'->0->>'code' = 'not_running'
+               and h->'reasons'->0->>'title' = 'Email sender hasn’t run in 3 hours — check Supabase → Integrations → Cron'
+               and h->'reasons'->0->>'todo' like '%Integrations → Cron%', '0039 health: no run in 60 minutes → red, with what to do');
+end $$;
+:as_chair1
+do $$ declare h json; begin
+  perform t.eq(email_health()->>'status', 'green', '0039 health: chairs can see it');
+end $$;
+:as_super
+-- Gmail login rejected
+insert into email_messages (kind, campaign_id, email, status, attempts, claimed_at, error)
+values ('test', 'test', 'x39@example.edu', 'failed', 1, now() - interval '20 minutes', 'Invalid login: 535-5.7.8 Username and Password not accepted.');
+do $$ declare h json; begin
+  h := email_health_data(now());
+  perform t.ok(h->>'status' = 'red' and exists (select 1 from json_array_elements(h->'reasons') e where e->>'code' = 'gmail_login'
+               and e->>'title' = 'Gmail rejected the login — check the app password' and e->>'todo' like '%SMTP_PASS%'), '0039 health: SMTP auth error → red "Gmail rejected the login"');
+end $$;
+delete from email_messages where email = 'x39@example.edu';
+-- last 3 runs sent nothing while emails were waiting
+update email_runs set sent = 0;
+insert into email_messages (kind, campaign_id, email, status, priority, created_at) values ('test', 'test', 'wait39@example.edu', 'queued', 1, now() - interval '40 minutes');
+do $$ declare h json; begin
+  h := email_health_data(now());
+  perform t.ok(h->>'status' = 'red' and exists (select 1 from json_array_elements(h->'reasons') e where e->>'code' = 'not_sending'
+               and e->>'title' = 'Emails aren’t going out: the last 3 runs sent nothing while 1 was waiting'), '0039 health: 3 runs sent nothing while emails waited → red');
+  perform t.ok(not exists (select 1 from json_array_elements(h->'reasons') e where e->>'code' = 'stuck'), '0039 health: (no extra "stuck" warning when a red reason explains it)');
+end $$;
+update email_runs set sent = 1;
+do $$ begin
+  perform t.eq(email_health_data(now())->>'status', 'green', '0039 health: runs that send → no alarm (a 40-minute wait is fine)');
+end $$;
+-- stuck more than 2 hours while the budget has room
+update email_messages set created_at = now() - interval '3 hours' where email = 'wait39@example.edu';
+do $$ declare h json; begin
+  h := email_health_data(now());
+  perform t.ok(h->>'status' = 'amber' and h->'reasons'->0->>'code' = 'stuck' and h->'reasons'->0->>'title' = '1 email has been waiting more than 2 hours', '0039 health: stuck > 2 h → amber');
+  update app_config set email_daily_budget = 0;
+  perform t.ok(not exists (select 1 from json_array_elements(email_health_data(now())->'reasons') e where e->>'code' = 'stuck'), '0039 health: not "stuck" when the budget is used up');
+  update app_config set email_daily_budget = 450;
+end $$;
+delete from email_messages where email = 'wait39@example.edu';
+-- bounce check can't reach Gmail
+update email_runs set imap_status = 'error', imap_error = 'connect ETIMEDOUT' where ran_at = (select max(ran_at) from email_runs);
+do $$ declare h json; begin
+  h := email_health_data(now());
+  perform t.ok(h->>'status' = 'amber' and h->'reasons'->0->>'code' = 'bounce_check' and h->'reasons'->0->>'title' = 'Bounce/unsubscribe check can’t reach Gmail'
+               and h->'reasons'->0->>'detail' = 'connect ETIMEDOUT', '0039 health: imap error in the last 3 runs → amber');
+  perform t.eq(email_health_line(h), 'Email health: warning — Bounce/unsubscribe check can’t reach Gmail (see the Admin dashboard)', '0039 health: the weekly report line');
+  perform t.eq(email_health_line(json_build_object('status', 'green', 'reasons', '[]'::json)), 'Email health: all good', '0039 health: line when all good');
+end $$;
+update email_runs set imap_status = 'ok', imap_error = null;
+-- tracking down: > 20 member emails this week, no opens, no clicks
+insert into email_messages (kind, campaign_id, email, status, sent_at)
+select 'announcement', 'announcement:t39track', 'track' || i || '@example.edu', 'sent', now() - interval '2 days' from generate_series(1, 21) i;
+do $$ declare h json; v_id uuid; begin
+  h := email_health_data(now());
+  perform t.ok(h->>'status' = 'amber' and h->'reasons'->0->>'code' = 'tracking'
+               and h->'reasons'->0->>'title' = 'Open/click tracking may be down — check the email-track function', '0039 health: 21 member emails, 0 opens/clicks → amber');
+  select id into v_id from email_messages where campaign_id = 'announcement:t39track' limit 1;
+  insert into email_events (message_id, type) values (v_id, 'open');
+  perform t.eq(email_health_data(now())->>'status', 'green', '0039 health: one open → tracking works');
+end $$;
+-- daily budget more than 90% used
+update app_config set email_daily_budget = 20, email_reserve = 2;
+update email_messages set sent_at = now() - interval '1 hour' where campaign_id = 'announcement:t39track';
+do $$ declare h json; begin
+  h := email_health_data(now());
+  perform t.ok(h->>'status' = 'amber' and exists (select 1 from json_array_elements(h->'reasons') e where e->>'code' = 'budget'
+               and e->>'title' = 'Today’s email budget is 100% used (21 of 20)'), '0039 health: budget > 90% → amber');
+end $$;
+rollback;
 
 -- =============================================================================
 :as_super

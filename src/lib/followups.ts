@@ -61,3 +61,18 @@ export function nextEventFor<E extends Pick<FollowupEvent, 'id' | 'campus' | 'st
     .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
   return upcoming.find((e) => e.campus === campus || e.campus === 'all') ?? upcoming[0] ?? null;
 }
+
+// ───────────── 0039: emails name the time zone (in-app texts above stay as they are) ─────────────
+
+/** "7:00 PM ET" (SQL email_event_time()). */
+export const emailEventTime = (iso: string) => `${fmtEventTime(iso)} ET`;
+/** "Thu, Nov 19 at 7:00 PM ET" (SQL email_event_when()). */
+export const emailEventWhen = (iso: string) => `${followupWhen(iso)} ET`;
+
+/** Plain text of the "Sorry we missed you" email: the same words as its HTML (SQL send_followup_for_event, 0039). */
+export function missedEmailText(title: string, next: Pick<FollowupEvent, 'title' | 'startsAt' | 'location'> | null | undefined): string {
+  return `We missed you at ${title}. Hope to see you next time!\n\n` +
+    (next
+      ? `Next up: ${next.title}\nWhen: ${emailEventWhen(next.startsAt)}\nWhere: ${next.location}\n\nRSVP in YACquest → Quests.`
+      : 'New events show up in YACquest → Quests.');
+}

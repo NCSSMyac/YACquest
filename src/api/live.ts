@@ -30,6 +30,10 @@ import type {
   EmailRecipientRow,
   EmailStats,
   MyEmailStatus,
+  EmailHealth,
+  EmailHealthReason,
+  EmailPrefs,
+  UnsubscribeResult,
   LeaderRow,
   LedgerEntry,
   LedgerSource,
@@ -97,6 +101,7 @@ import type {
   EventRecap,
 } from '../types';
 import { cleanSurveyText, surveyError } from '../lib/eventSurvey';
+import { parseUnsubKind } from '../../supabase/functions/_shared/emailCore';
 import { ApiError, emitChange } from './shared';
 import { isNetworkErrorMessage, OFFLINE_MESSAGE, reportNetworkFailure, reportNetworkSuccess } from '../lib/online';
 import type { BugContext } from '../lib/bugContext';
@@ -203,6 +208,15 @@ function toLook(r: AnyRow): Look | undefined {
   return hat || accessory || background ? look : undefined;
 }
 
+/** 0039: profiles.email_announcements / email_events / email_wrapped (or the same keys in camelCase). */
+function toPrefs(r: AnyRow): EmailPrefs {
+  return {
+    announcements: pick(r, 'email_announcements') !== false && r.announcements !== false,
+    events: pick(r, 'email_events') !== false && r.events !== false,
+    wrapped: pick(r, 'email_wrapped') !== false && r.wrapped !== false,
+  };
+}
+
 function toUser(r: AnyRow, authConfirmed?: boolean): User {
   // 0034: the app's own confirmation (profiles.email_verified_at); older servers: Supabase's flag.
   const has0034 = 'email_verified_at' in r;
@@ -220,6 +234,8 @@ function toUser(r: AnyRow, authConfirmed?: boolean): User {
     referredBy: opt(pick(r, 'referred_by')),
     createdAt: str(pick(r, 'created_at')),
     emailOptIn: pick(r, 'email_opt_in') !== false,
+    // 0039: the three email choices (only when the row has the columns)
+    ...('email_announcements' in r ? { emailPrefs: toPrefs(r) } : {}),
     emailVerified,
     ...(has0034 ? { emailVerifiedAt } : {}),
     look: toLook(r),
@@ -374,13 +390,21 @@ async function uid(): Promise<string> {
 const PROFILE_COLS_0026: string = `${PROFILE_COLS}, tour_done_at, photo_wall_opt_out`;
 /** 0034: + email_verified_at (the app's own email confirmation). */
 const PROFILE_COLS_0034: string = `${PROFILE_COLS_0026}, email_verified_at`;
+/** 0039: + the three email choices. */
+const PROFILE_COLS_0039: string = `${PROFILE_COLS_0034}, email_announcements, email_events, email_wrapped`;
 let has0026Cols = true;
 let has0034Cols = true;
+let has0039Cols = true;
 
 async function loadProfile(authUser: AuthUser): Promise<User | null> {
-  const missing = (e: { code?: string; message: string }) => /tour_done_at|photo_wall_opt_out|email_verified_at|42703/.test(`${e.code} ${e.message}`);
-  const colsNow = () => (has0034Cols && has0026Cols ? PROFILE_COLS_0034 : has0026Cols ? PROFILE_COLS_0026 : PROFILE_COLS);
+  const missing = (e: { code?: string; message: string }) => /tour_done_at|photo_wall_opt_out|email_verified_at|email_announcements|email_events|email_wrapped|42703/.test(`${e.code} ${e.message}`);
+  const colsNow = () =>
+    has0039Cols && has0034Cols && has0026Cols ? PROFILE_COLS_0039 : has0034Cols && has0026Cols ? PROFILE_COLS_0034 : has0026Cols ? PROFILE_COLS_0026 : PROFILE_COLS;
   let res = await sb().from('profiles').select(colsNow()).eq('id', authUser.id).maybeSingle();
+  if (res.error && has0039Cols && missing(res.error as { code?: string; message: string })) {
+    has0039Cols = false;
+    res = await sb().from('profiles').select(colsNow()).eq('id', authUser.id).maybeSingle();
+  }
   if (res.error && has0034Cols && missing(res.error as { code?: string; message: string })) {
     has0034Cols = false;
     res = await sb().from('profiles').select(colsNow()).eq('id', authUser.id).maybeSingle();
@@ -598,6 +622,24 @@ export async function updateProfile(patch: Partial<Pick<User, 'displayName' | 'a
   if (row && !('hat' in row) && !('accessory' in row) && !('background' in row)) me = { ...me, look: prev?.look };
   // update_profile doesn't return the 0026 columns: keep what we had.
   if (prev && prev.id === me.id) me = { ...me, tourDoneAt: me.tourDoneAt === undefined ? prev.tourDoneAt : me.tourDoneAt, photoWallOptOut: me.photoWallOptOut ?? prev.photoWallOptOut };
+  // 0039: the single switch sets all three choices (the database keeps them in step); other edits keep them.
+  if (prev && prev.id === me.id && !me.emailPrefs && prev.emailPrefs)
+    me = { ...me, emailPrefs: patch.emailOptIn !== undefined ? { announcements: me.emailOptIn, events: me.emailOptIn, wrapped: me.emailOptIn } : prev.emailPrefs };
+  notifyAuth(me);
+  emitChange();
+  return me;
+}
+
+/** 0039 set_my_email_prefs: the person's own email choices (Me → Settings). Omitted keys stay as they are. */
+export async function setEmailPrefs(patch: Partial<EmailPrefs>): Promise<User> {
+  const r = (one(await rpc<AnyRow | AnyRow[]>('set_my_email_prefs', {
+    p_announcements: patch.announcements ?? null,
+    p_events: patch.events ?? null,
+    p_wrapped: patch.wrapped ?? null,
+  })) ?? {}) as AnyRow;
+  const cur = await requireMe();
+  const prefs = toPrefs(r);
+  me = { ...cur, emailPrefs: prefs, emailOptIn: pick(r, 'optIn') !== false };
   notifyAuth(me);
   emitChange();
   return me;
@@ -1058,7 +1100,7 @@ export async function submitClaimInfo(contact: ClaimContact): Promise<PrizeClaim
     }),
   );
   emitChange();
-  sendQueuedEmailsNow(); // the "URGENT winner info" alert goes out immediately
+  sendQueuedEmailsNow(); // the "winner info received" alert goes out immediately
   return toClaim(row ?? {});
 }
 
@@ -1153,9 +1195,17 @@ export async function searchUsers(query: string, limit = 20): Promise<AdminUserR
   }));
   // 0034: "Unverified" chip (staff read profiles through RLS). Nothing on a server without 0034.
   if (!list.length) return list;
-  const v = await sb().from('profiles').select('id, email_verified_at').in('id', list.map((u) => u.id))
-    .then((r) => (r.error ? null : new Map(((r.data as AnyRow[] | null) ?? []).map((x) => [str(x.id), x.email_verified_at != null]))), () => null);
-  return v ? list.map((u) => ({ ...u, emailVerified: v.get(u.id) ?? true })) : list;
+  const ids = list.map((u) => u.id);
+  const read = (cols: string) => sb().from('profiles').select(cols).in('id', ids)
+    .then((r) => (r.error ? null : new Map(((r.data as unknown as AnyRow[] | null) ?? []).map((x) => [str(x.id), x]))), () => null);
+  // 0039: + the three email choices (falls back when the columns aren't there yet)
+  const v = (await read('id, email_verified_at, email_opt_in, email_announcements, email_events, email_wrapped')) ?? (await read('id, email_verified_at'));
+  return v
+    ? list.map((u) => {
+        const x = v.get(u.id);
+        return { ...u, emailVerified: x ? x.email_verified_at != null : true, ...(x && 'email_announcements' in x ? { emailPrefs: toPrefs(x) } : {}) };
+      })
+    : list;
 }
 
 export async function userLedger(userId: string): Promise<LedgerEntry[]> {
@@ -1555,6 +1605,24 @@ export async function emailQueueStatus(): Promise<EmailQueueStatus> {
   };
 }
 
+/** email_health (0039): admins + chairs. The dashboard banner and the Admin → System line (cached 60 s by the caller). */
+export async function emailHealth(): Promise<EmailHealth> {
+  const r = ((await rpc<AnyRow>('email_health')) ?? {}) as AnyRow;
+  const reasons = (Array.isArray(r.reasons) ? (r.reasons as AnyRow[]) : []).map((x): EmailHealthReason => ({
+    code: str(x.code), level: str(x.level) === 'red' ? 'red' : 'amber', title: str(x.title), todo: str(x.todo), ...(opt(x.detail) ? { detail: str(x.detail) } : {}),
+  }));
+  const status = str(r.status);
+  return {
+    status: status === 'red' || status === 'amber' ? status : 'green',
+    reasons,
+    lastRunAt: opt(pick(r, 'lastRunAt')),
+    minutesSinceRun: pick(r, 'minutesSinceRun') == null ? undefined : num(pick(r, 'minutesSinceRun')),
+    sent24h: num(pick(r, 'sent24h')),
+    budget: num(r.budget),
+    checkedAt: str(pick(r, 'checkedAt')) || new Date().toISOString(),
+  };
+}
+
 /** email_bouncing_users (0032): staff only → user ids. Empty before 0032 is run. */
 export async function emailBouncingUsers(): Promise<string[]> {
   try {
@@ -1574,7 +1642,10 @@ export async function adminClearEmailBounce(userId: string): Promise<void> {
 export async function myEmailStatus(): Promise<MyEmailStatus | null> {
   try {
     const r = ((await rpc<AnyRow>('my_email_status')) ?? {}) as AnyRow;
-    return { optIn: pick(r, 'optIn') !== false, bounced: bool(r.bounced), bouncedAt: opt(pick(r, 'bouncedAt')) };
+    return {
+      optIn: pick(r, 'optIn') !== false, bounced: bool(r.bounced), bouncedAt: opt(pick(r, 'bouncedAt')),
+      ...('announcements' in r ? { prefs: toPrefs(r) } : {}),
+    };
   } catch {
     return null;
   }
@@ -1585,12 +1656,29 @@ export async function clearMyEmailBounce(): Promise<void> {
   emitChange();
 }
 
-/** unsubscribe_by_token (0032): works without logging in. */
-export async function unsubscribeByToken(token: string): Promise<{ alreadyOff: boolean }> {
-  const r = ((await rpc<AnyRow>('unsubscribe_by_token', { p_token: token.trim() })) ?? {}) as AnyRow;
-  if (me) me = { ...me, emailOptIn: false };
+/**
+ * unsubscribe_by_token (0032): works without logging in. 0039: with `kind` (the email's kind from the link's ?k=)
+ * only that type is turned off; without it everything is (links in older emails).
+ */
+export async function unsubscribeByToken(token: string, kind?: string | null): Promise<UnsubscribeResult> {
+  const k = parseUnsubKind(kind);
+  let r: AnyRow;
+  try {
+    r = ((await rpc<AnyRow>('unsubscribe_by_token', k ? { p_token: token.trim(), p_kind: k } : { p_token: token.trim() })) ?? {}) as AnyRow;
+  } catch (e) {
+    // a database without 0039 doesn't know p_kind: turn everything off (never leave someone subscribed)
+    if (!k || (e instanceof ApiError && e.code === 'invalid_token')) throw e;
+    r = ((await rpc<AnyRow>('unsubscribe_by_token', { p_token: token.trim() })) ?? {}) as AnyRow;
+  }
+  const type = (opt(pick(r, 'type')) ?? 'all') as NonNullable<UnsubscribeResult['type']>;
+  if (me) {
+    const p = me.emailPrefs ?? { announcements: me.emailOptIn, events: me.emailOptIn, wrapped: me.emailOptIn };
+    const next = type === 'all' ? { announcements: false, events: false, wrapped: false }
+      : { ...p, [type === 'announcement' ? 'announcements' : type]: false };
+    me = { ...me, emailPrefs: next, emailOptIn: next.announcements || next.events || next.wrapped };
+  }
   emitChange();
-  return { alreadyOff: bool(pick(r, 'alreadyOff')) };
+  return { alreadyOff: bool(pick(r, 'alreadyOff')), type, ...('othersOn' in r ? { othersOn: bool(pick(r, 'othersOn')) } : {}) };
 }
 
 export async function adminActionLog(opts: { before?: number; limit?: number } = {}): Promise<AdminAction[]> {
@@ -1670,7 +1758,8 @@ export async function announcementAudienceCount(audience: AnnouncementAudience, 
     p_user: audience === 'user' ? userId ?? null : null,
   })) ?? {}) as AnyRow;
   const why = opt(pick(r, 'emailReason')) as AudienceEmailReason | undefined;
-  return { inApp: num(pick(r, 'inApp')), email: num(r.email), ...(why ? { emailReason: why } : {}) };
+  const types = pick<AnyRow | undefined>(r, 'emailTypes');
+  return { inApp: num(pick(r, 'inApp')), email: num(r.email), ...(why ? { emailReason: why } : {}), ...(types ? { emailTypes: toPrefs(types) } : {}) };
 }
 
 function toCap(r: AnyRow): AnnouncementEmailCap {

@@ -120,8 +120,8 @@ Email + password; **Confirm email ON**; min password length 8; PKCE flow. Redire
 - `send_test_email() → void` — YACquest Chair; to the caller's email, kind 'test', dedupe `test:<uuid>`.
 
 ### Prize alerts (triggers on `prize_claims`, only if prize_alerts_enabled and recipients exist)
-- After insert (a new winner): kind 'prize_qualified', dedupe `prize_qualified:<claim id>`, subject `🏆 YACquest: <name> won spot #N`, body says they're waiting for delivery info.
-- After update when `contact` changes and is not null: kind 'prize_info', dedupe `prize_info:<claim id>:<md5(contact::text)>`, subject `URGENT 🎁 YACquest winner info: <name> (spot #N)`, body lists full name, email, phone, mailing address, gift card preference, notes, reference, campus.
+- After insert (a new winner): kind 'prize_qualified', dedupe `prize_qualified:<claim id>`, subject `YACquest: <name> won prize spot #N` (0039; was `🏆 YACquest: <name> won spot #N`), body says they're waiting for delivery info.
+- After update when `contact` changes and is not null: kind 'prize_info', dedupe `prize_info:<claim id>:<md5(contact::text)>`. **Since 0039** subject `YACquest winner info received: <name> (spot #N)` and the body only says they sent their details, where to see them (Admin → Prizes, chairs), the deadline and the reference — no delivery details (before 0039: `URGENT 🎁 …` with the full contact). See "0039".
 
 ### Sending (Edge Function `send-emails`, run every 10 min by Supabase Cron)
 - `claim_email_batch(p_limit int default 20) → setof email_outbox` — service_role only. Picks rows with status 'pending', or 'failed' with attempts < 5, or 'sending' older than 15 min; sets status 'sending', attempts+1; returns them (`for update skip locked`).
@@ -737,3 +737,57 @@ Internal (nobody): `announce_week_start`, `announce_week_end`, `announce_all_ema
 - Admin → Stats → Email: campaigns show "N cancelled" (and a "Cancelled" chip when nothing was sent).
 - Wording + helpers: `src/lib/announceSafeguards.ts`. Mock API mirrors the server (`announcementAudienceCount`, `announcementEmailCap`, `setAnnouncementEmailSettings`, `cancelAnnouncement`, hold in the demo sender).
 - Tests: `src/__tests__/announceSafeguards.test.ts`; DB section "0038" in `supabase/tests/tests.sql`; the email test pack check asserts its rows are not held.
+
+## 0039 — Emails: no winner details in email, cleaner wording, per-type email choices, email health
+
+Additive (no downtime): three new boolean columns with defaults, one new trigger, new functions, re-created functions with the same names and inputs. One signature grows an optional argument: `unsubscribe_by_token(p_token, p_kind default null)` replaces `unsubscribe_by_token(p_token)` (drop + create inside one `begin … commit`, so a call with only `p_token` works before, during and after). Run AFTER 0038; safe to re-run. **Backward compatible:** the deployed `send-emails` and `email-track` keep working unchanged after 0039 runs (same RPCs, same arguments, `email_opt_in` still kept). Re-deploying both (either order) adds typed one-click unsubscribes from Gmail's button; see SETUP.md.
+
+### Winner email without personal details
+- **`prize_info_email(p_name, p_campus, p_spot, p_reference) → {subject, text, html}`** (internal). Subject **"YACquest winner info received: {display name} (spot #{n})"**. Body: *"{Name} ({campus}) sent their delivery details for prize spot #{n}. Open YACquest → Admin → Prizes to see them and send the $75 gift card by {deadline}. For privacy, delivery details are only shown in the app."* + *"A YACquest chair can see them in Admin → Prizes (only chairs can open it). If you're not a chair, please pass this on to one."* (`list_claims()` is chair-only) + a button to `<app_url>/#/admin/prizes` + **Reference**. Never the full name, email, phone, address, gift card preference or notes.
+- `on_prize_claim_alert()` (copy of 0015) uses it; the dedupe key is unchanged (`prize_info:<claim>:<md5(contact)>`). The "won" alert's subject is **"YACquest: {name} won prize spot #{n}"** (body + Yak of the week unchanged).
+- **`email_scrub_prize_info() → int`** (internal, run once by the migration, re-run safe): every `prize_info` outbox row and per-person copy that still has contents (not emptied by 0037) and isn't in the new format is rewritten to the new version (subject too); unsent copies stay queued and go out without details. Emptied rows stay empty.
+- The 0037 clearing (30 days / when delivered) is unchanged.
+
+### Wording
+- **Subjects:** no emoji, no "URGENT": `test` **"YACquest test email"**, `wrapped` **"Your YACquest Wrapped is here"** (the in-app title keeps "! 🎁"), the two prize alerts above. Others were already plain (`Confirm your YACquest email`, `YACquest: {title}`, `Reminder: {event} starts at 7:00 PM ET`, `Thanks for coming to {event}!`, `Sorry we missed you at {event}`, `YACquest weekly report · …`).
+- **Times in emails say ET:** `email_event_time(ts)` → "7:00 PM ET", `email_event_when(ts)` → "Thu, Nov 19 at 7:00 PM ET". Reminders (subject + body), the "missed you" follow-up (its plain text now has the same words as the HTML: "We missed you at … / Next up / When / Where / RSVP in YACquest → Quests.") and the weekly report's "Next 7 days" line. In-app notifications are unchanged.
+- **Campus lines** (`campus_puns()`, same as `src/lib/campusPuns.ts`): Duke "Go Blue Devils — see you soon!", "From the Gothic Wonderland to YAC: welcome back!", "Duke's got spirit — bring it to the next event!", "Forever Duke, forever NCSSM."; UNC "Go Heels!", "Carolina blue skies ahead 💙", "Heel yeah, see you there!", "Ram-arkable things happen when Tar Heels show up."; NC State "Go Pack!", "Howl about joining us?", "Wolfpack, roll call! 🐾", "Think and Do — and come hang with YAC!". `{campus_pun}` works as before.
+- **Confirmation email:** "Confirming lets you hold a prize spot and get YACquest emails." (`queue_verification_email()` copy of 0034.)
+- **Staff footer:** "You get this because you're on the YACquest staff email list. Manage these in Admin → System." in the HTML (`email_layout()`) and the plain text (`email_staff_footer_text()`).
+- **Member footer** names the type: "You're getting this because you have YACquest {announcement | event reminder and thank-you | yearly Wrapped} emails on. Unsubscribe from these in one click · Manage all email choices in the app (Me → Settings)" (`email_footer_html_for()` / `email_footer_text_for()`).
+- **Yak of the week:** `yak_pun()` (copy of 0015) without "Big yak energy." and "Yak in business, baby!" (38 lines; same as `src/lib/yakPuns.ts`).
+
+### Per-type email choices
+- `profiles.email_announcements`, `email_events` (event reminders + follow-ups), `email_wrapped`: `boolean not null default true`. **Back-fill:** `email_prefs_backfill()` turns all three off for anyone with `email_opt_in = false` (re-run safe).
+- **`profiles.email_opt_in` stays** and means "any of the three on". Trigger `profiles_email_prefs_sync` (before insert/update of those four columns): changing a type sets `email_opt_in`; changing only `email_opt_in` (old app, sign-up metadata, `unsubscribe_by_email` mailto, old `update_profile`) sets all three to match.
+- Kind → type: `email_kind_type(kind)` (`announcement` → `announcement`; `event_reminder`, `event_followup` → `events`; `wrapped` → `wrapped`; staff/account kinds → null). `email_type_on(kind, a, e, w)`, labels `email_type_label()` ("Announcements", "Event reminders and thank-yous", "Yearly Wrapped"), `email_type_phrase()`, `email_type_off_error()` ("Announcement emails are off for this person.").
+- Checked everywhere `email_opt_in` was: `send_announcement()` + `announcement_audience_count()` (Announcements; one person also returns **`emailTypes {announcements, events, wrapped}`**), `queue_event_reminders()` + `send_followup_for_event()` (events), `queue_wrapped_notifications()` (Wrapped), `email_expand_outbox()` and `claim_email_messages()` (`skipped_opted_out` by the email's own type). Copies of 0024 / 0030 / 0028 / 0034 / 0038.
+- **`set_my_email_prefs(p_announcements default null, p_events default null, p_wrapped default null) → {announcements, events, wrapped, optIn}`** — the signed-in person; null leaves that one as it is. **`my_email_status()`** adds `announcements`, `events`, `wrapped`.
+- **`unsubscribe_by_token(p_token, p_kind default null) → {unsubscribed, alreadyOff, type, label, othersOn}`** (anon OK): with a member kind (or type name) only that type goes off, `email_events.detail = 'one-click:<type>'`; without one (links in older emails, Gmail's button before the re-deploy) or with an unknown kind, everything goes off (`'one-click'`), as before. One event per actual change. `unsubscribe_by_email()` (mailto) still turns everything off.
+- One-click links in member emails: `email_unsub_url_for(token, kind)` → `<app>/#/unsubscribe?t=<token>&k=<kind>`. `claim_email_messages()` already returns `kind`, so the new `send-emails` puts `?k=<kind>` on the List-Unsubscribe URL (`unsubscribePostUrl(base, token, kind)` in emailCore.ts) and the new `email-track` passes it on (falls back to "everything" on a database without 0039).
+- Staff see per-type status: Players (profile columns through RLS) and Announce → one person (`emailTypes`). Email stats' "unsubscribed" stays one count.
+
+### Email health
+- **`email_health(p_now default null) → {status: 'green'|'amber'|'red', reasons[{code, level, title, todo, detail?}], lastRunAt, minutesSinceRun, sent24h, budget, checkedAt}`** — admins + chairs (`forbidden` otherwise; anon denied). Internal twin `email_health_data(p_now)`.
+
+| code | level | when | title (short) |
+|---|---|---|---|
+| `not_running` | red | no `email_runs` row in the last 60 minutes | "Email sender hasn't run in {X} — check Supabase → Integrations → Cron" |
+| `gmail_login` | red | a failed email (last 3 h) or one of the last 3 runs' Gmail errors looks like a login error (535, "Invalid login", "Username and Password not accepted", AUTHENTICATIONFAILED, missing SMTP_USER/SMTP_PASS) | "Gmail rejected the login — check the app password" |
+| `not_sending` | red | the last 3 runs all sent 0 and failed some, or ready emails were waiting from before them (budget allowing) | "Emails aren't going out: the last 3 runs sent nothing while N were waiting" |
+| `bounce_check` | amber | `imap_status = 'error'` in the last 3 runs (unless it's the login problem) | "Bounce/unsubscribe check can't reach Gmail" |
+| `stuck` | amber | emails ready to go for more than 2 hours while the budget has room (only when no red reason explains it) | "N emails have been waiting more than 2 hours" |
+| `tracking` | amber | more than 20 member emails sent in 7 days and not one open or click | "Open/click tracking may be down — check the email-track function" |
+| `budget` | amber | more than 90 % of the rolling 24 h budget used | "Today's email budget is N% used (X of Y)" |
+
+Each reason has a one-line `todo` ("What to do"). `email_health_line(json)` → "Email health: all good" / "Email health: warning — … (see the Admin dashboard)": one line in the weekly report (`build_weekly_report()` copy of 0030, which also adds ET to "Next 7 days").
+
+### Grants
+Internal (nobody): `profiles_email_prefs_sync`, `email_kind_type`, `email_type_on`, `email_type_label`, `email_type_phrase`, `email_type_off_error`, `email_unsub_url_for`, `email_footer_html_for`, `email_footer_text_for`, `email_staff_footer_text`, `email_event_time`, `email_event_when`, `prize_info_email`, `email_prefs_json`, `email_prefs_backfill`, `email_scrub_prize_info`, `email_ago`, `email_health_data`, `email_health_line` and the re-created internals. Authenticated: `set_my_email_prefs`, `my_email_status`, `email_health` (staff checked inside), `send_announcement`, `announcement_audience_count`, `send_test_email`. Anon + authenticated + service role: `unsubscribe_by_token(text, text)`. Service role (unchanged): `claim_email_messages`, `queue_event_reminders`, `queue_wrapped_notifications`.
+
+### App
+- Me → Settings → **Emails**: "Pick what we email you. Everything still shows up in the app." + three switches (Announcements · Event reminders and thank-yous · Yearly Wrapped) → `setEmailPrefs()`. Sign-up keeps one box, "Email me YACquest updates" (sets all three).
+- `#/unsubscribe?t=…&k=<kind>`: "You're unsubscribed from {announcement} emails." + "Also turn off all YACquest emails" + (logged in) "Turn {announcement} emails back on" + "Manage all email choices in Me → Settings". Without `k`: everything, as before. Logic: `unsubView()` in `src/lib/emailWording.ts`.
+- Admin dashboard: red/amber **email health banner** (hidden when green); Admin → System → Email sending: "Email health: all good · last run 3 min ago". One `email_health()` call, cached 60 s (`src/lib/emailHealth.ts`). Demo: `localStorage['yacquest-demo-email-health'] = 'red' | 'amber'` simulates a problem.
+- Players: "Emails: Announcements on · Events off · Wrapped on" chips. Announce → One person: "1 person · emailed: no (announcement emails off) · Announcements off · Events on · Wrapped on".
+- Tests: `src/__tests__/email0039.test.ts`; DB section "0039" in `supabase/tests/tests.sql`; the email test pack (subjects, ET, prize_info without details, typed unsubscribe links).

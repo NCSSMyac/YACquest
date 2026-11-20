@@ -4,6 +4,7 @@
  * (src/api/mock.ts). The server (supabase/migrations/0038_announcement_safeguards.sql) uses the same words.
  * Unit tested in src/__tests__/announceSafeguards.test.ts.
  */
+import { emailPrefsSummary } from './emailWording';
 import type { Announcement, AnnouncementAudience, AnnouncementEmailCap, AnnouncementSendResult, AudienceCount, AudienceEmailReason } from '../types';
 
 /** Defaults of app_config.announce_all_email_weekly_cap / announce_email_hold_minutes. */
@@ -28,19 +29,21 @@ export function capLine(c: Pick<AnnouncementEmailCap, 'cap' | 'left'>): string {
 export const capReached = (c: Pick<AnnouncementEmailCap, 'left'> | null | undefined) => !!c && c.left <= 0;
 
 export const EMAIL_REASON_TEXT: Record<AudienceEmailReason, string> = {
-  emails_off: 'emails off',
+  emails_off: 'announcement emails off', // 0039: the person's "Announcements" choice
   not_confirmed: 'not confirmed',
   bouncing: 'bouncing',
 };
 
 /**
  * Who it reaches: "262 people in the app · 241 by email" (email ticked) or "262 people in the app";
- * one person: "1 person · emailed: yes" / "1 person · emailed: no (emails off)".
+ * one person: "1 person · emailed: yes" / "1 person · emailed: no (announcement emails off)", plus (0039) their three
+ * email choices: " · All emails on" / " · Announcements off · Events on · Wrapped on".
  */
 export function audienceLine(c: AudienceCount, audience: AnnouncementAudience, sendEmail: boolean): string {
   if (audience === 'user') {
     if (!sendEmail) return '1 person in the app';
-    return `1 person · emailed: ${c.email > 0 ? 'yes' : `no${c.emailReason ? ` (${EMAIL_REASON_TEXT[c.emailReason]})` : ''}`}`;
+    const types = c.emailTypes ? ` · ${emailPrefsSummary(c.emailTypes)}` : '';
+    return `1 person · emailed: ${c.email > 0 ? 'yes' : `no${c.emailReason ? ` (${EMAIL_REASON_TEXT[c.emailReason]})` : ''}`}${types}`;
   }
   const inApp = `${plural(c.inApp, 'person', 'people')} in the app`;
   return sendEmail ? `${inApp} · ${c.email} by email` : inApp;
