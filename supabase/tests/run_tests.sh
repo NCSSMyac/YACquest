@@ -6,7 +6,7 @@
 #
 # Steps: start cluster → fresh DB → stubs.sql (fake Supabase auth/storage) →
 # all migrations → all migrations again (re-run safety) → tests.sql →
-# all migrations on the populated DB → stop cluster. Exits non-zero on any failure.
+# email_test_pack.sql checks → all migrations on the populated DB → stop cluster. Exits non-zero on any failure.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -60,6 +60,26 @@ env PGOPTIONS= psql -X -q -v ON_ERROR_STOP=1 -h "$SOCK" -p "$PGPORT" -U postgres
   echo "---- last notices ----"; tail -n 15 "$PGWORK/notices.log"; exit 1;
 }
 grep -c 'NOTICE:  ok - ' "$PGWORK/notices.log" | xargs -I{} echo "   ({} 'ok' notices)"
+
+echo "== email_test_pack.sql on the populated DB (queue, checks, re-run, STEP B, STEP C)"
+PACK_SRC="$HERE/email_test_pack.sql"
+PACK_EMAIL="'iesha.landis.yac@ncssm.edu'"
+grep -q "$PACK_EMAIL" "$PACK_SRC" || { echo "email_test_pack.sql: target email line not found"; exit 1; }
+sed "s/$PACK_EMAIL/'Helper@Example.EDU'/" "$PACK_SRC" > "$PGWORK/pack_local.sql"
+sed "s/$PACK_EMAIL/'nobody@example.edu'/" "$PACK_SRC" > "$PGWORK/pack_nobody.sql"
+awk '/^-- STEP B BEGIN/{f=1;next} /^-- STEP B END/{f=0} f' "$PACK_SRC" > "$PGWORK/pack_stepb.sql"
+awk '/^-- STEP C BEGIN/{f=1;next} /^-- STEP C END/{f=0} f' "$PACK_SRC" > "$PGWORK/pack_stepc.sql"
+[ -s "$PGWORK/pack_stepb.sql" ] && [ -s "$PGWORK/pack_stepc.sql" ] || { echo "email_test_pack.sql: STEP B / STEP C markers missing"; exit 1; }
+if "${PSQL[@]}" -d yac_test -f "$PGWORK/pack_nobody.sql" >/dev/null 2>"$PGWORK/pack_nobody.err"; then
+  echo "email_test_pack.sql: an unknown email should stop with an error"; exit 1
+fi
+grep -q 'no YACquest account uses "nobody@example.edu"' "$PGWORK/pack_nobody.err" || { cat "$PGWORK/pack_nobody.err"; exit 1; }
+env PGOPTIONS= psql -X -q -v ON_ERROR_STOP=1 -h "$SOCK" -p "$PGPORT" -U postgres -d yac_test \
+  -v pack="$PGWORK/pack_local.sql" -v stepb="$PGWORK/pack_stepb.sql" -v stepc="$PGWORK/pack_stepc.sql" \
+  -f "$HERE/email_test_pack_check.sql" >"$PGWORK/pack_result.log" 2>"$PGWORK/pack_notices.log" || {
+  echo "---- last notices ----"; tail -n 15 "$PGWORK/pack_notices.log"; exit 1;
+}
+grep -c 'NOTICE:  ok - email test pack' "$PGWORK/pack_notices.log" | xargs -I{} echo "   ({} 'ok' notices)"
 
 echo "== all migrations once more on the populated DB"
 migrate
