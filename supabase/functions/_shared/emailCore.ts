@@ -64,12 +64,15 @@ export interface QueuedMessage {
   priority: number;
   createdAt: string;
   sendBefore?: string | null;
+  /** 0038: held until then (an announcement's cancel window); not sent before. */
+  notBefore?: string | null;
 }
 
 /**
  * Which queued emails go out now. Mirrors SQL public.claim_email_messages():
- * expired rows are skipped; the rolling 24 h budget counts sent + in-flight; priority 1–2 may use the
- * whole budget, priority 3+ only what's left above the reserve (so reminders can always go).
+ * expired rows are skipped; rows still in their cancel window (notBefore in the future, 0038) wait; the rolling
+ * 24 h budget counts sent + in-flight; priority 1–2 may use the whole budget, priority 3+ only what's left above
+ * the reserve (so reminders can always go).
  */
 export function planBatch(
   queue: readonly QueuedMessage[],
@@ -81,7 +84,7 @@ export function planBatch(
   const limit = o.limit ?? THROTTLE.claimChunk;
   const expired = queue.filter((m) => m.sendBefore && new Date(m.sendBefore).getTime() <= now).map((m) => m.id);
   const live = queue
-    .filter((m) => !expired.includes(m.id))
+    .filter((m) => !expired.includes(m.id) && !(m.notBefore && new Date(m.notBefore).getTime() > now))
     .slice()
     .sort((a, b) => a.priority - b.priority || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
   const left = budget - o.sentLast24h - (o.inFlight ?? 0);

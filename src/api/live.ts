@@ -46,7 +46,11 @@ import type {
   YacEvent,
   Announcement,
   AnnouncementAudience,
+  AnnouncementEmailCap,
   AnnouncementInput,
+  AnnouncementSendResult,
+  AudienceCount,
+  AudienceEmailReason,
   FeedbackCategory,
   FeedbackItem,
   BadgeProgress,
@@ -1491,6 +1495,7 @@ function toCampaign(r: AnyRow): EmailCampaignStat {
     id: str(r.id), label: str(r.label), kind: str(r.kind), firstAt: str(pick(r, 'firstAt')),
     recipients: num(r.recipients), sent: num(r.sent), opened: num(r.opened), clicked: num(r.clicked), bounced: num(r.bounced),
     unsubscribed: num(r.unsubscribed), skipped: num(r.skipped), waiting: num(r.waiting), failed: num(r.failed),
+    cancelled: num(r.cancelled),
   };
 }
 
@@ -1503,7 +1508,7 @@ export async function emailStats(days = 30): Promise<EmailStats> {
     totals: {
       sent: num(t.sent), delivered: num(t.delivered), opened: num(t.opened), clicked: num(t.clicked),
       openRate: num(pick(t, 'openRate')), ctr: num(t.ctr), bounced: num(t.bounced), unsubscribed: num(t.unsubscribed),
-      skipped: num(t.skipped), expired: num(t.expired), failed: num(t.failed),
+      skipped: num(t.skipped), expired: num(t.expired), failed: num(t.failed), cancelled: num(t.cancelled),
     },
     daily: ((r.daily as AnyRow[] | null) ?? []).map((x) => ({ day: str(x.day), sent: num(x.sent), opened: num(x.opened), clicked: num(x.clicked) })),
     campaigns: ((r.campaigns as AnyRow[] | null) ?? []).map(toCampaign),
@@ -1608,7 +1613,7 @@ export async function resetDemoData(): Promise<void> {
 
 // ───────────────────────────── announcements (admins) ─────────────────────────────
 
-export async function sendAnnouncement(input: AnnouncementInput): Promise<{ recipients: number; emailed: number }> {
+export async function sendAnnouncement(input: AnnouncementInput): Promise<AnnouncementSendResult> {
   const problem = announcementError(input);
   if (problem) fail(problem.code, problem.message);
   const r = one(
@@ -1623,24 +1628,73 @@ export async function sendAnnouncement(input: AnnouncementInput): Promise<{ reci
   ) ?? {};
   emitChange();
   void refreshUnread().catch(() => {});
-  if (num(r.emailed) > 0) sendQueuedEmailsNow();
-  return { recipients: num(r.recipients), emailed: num(r.emailed) };
+  // 0038: emails held for the cancel window wait for the 10-minute cron; with no window, send now
+  const hold = opt(pick(r, 'emailHoldUntil'));
+  if (num(r.emailed) > 0 && !hold) sendQueuedEmailsNow();
+  return {
+    recipients: num(r.recipients),
+    emailed: num(r.emailed),
+    ...(hold ? { emailHoldUntil: hold } : {}),
+    ...(r.holdMinutes != null ? { holdMinutes: num(r.holdMinutes) } : {}),
+  };
 }
 
+/** recent_announcements (0038): list_announcements + the cancel window state for the caller. */
 export async function listAnnouncements(limit = 20): Promise<Announcement[]> {
-  return ((await rpc<AnyRow[]>('list_announcements', { p_limit: limit })) ?? []).map((r) => ({
+  const rows = ((await rpc<AnyRow[] | null>('recent_announcements', { p_limit: limit })) ?? []) as AnyRow[];
+  return rows.map((r) => ({
     id: str(r.id),
     title: str(r.title),
     body: str(r.body),
     audience: str(r.audience) as AnnouncementAudience,
     campus: (opt(r.campus) as CampusId | undefined) ?? undefined,
-    targetName: opt(pick(r, 'target_name')),
-    sendEmail: Boolean(pick(r, 'send_email')),
-    recipientCount: num(pick(r, 'recipient_count')),
-    emailCount: num(pick(r, 'email_count')),
-    senderName: str(pick(r, 'sender_name')),
-    createdAt: str(pick(r, 'created_at')),
+    targetName: opt(pick(r, 'targetName')),
+    sendEmail: Boolean(pick(r, 'sendEmail')),
+    recipientCount: num(pick(r, 'recipientCount')),
+    emailCount: num(pick(r, 'emailCount')),
+    senderName: str(pick(r, 'senderName')),
+    createdAt: str(pick(r, 'createdAt')),
+    emailHoldUntil: opt(pick(r, 'emailHoldUntil')),
+    cancelledAt: opt(pick(r, 'cancelledAt')),
+    cancelledByName: opt(pick(r, 'cancelledByName')),
+    emailsStarted: bool(pick(r, 'emailsStarted')),
+    canCancel: bool(pick(r, 'canCancel')),
   }));
+}
+
+/** announcement_audience_count (0038): admins + chairs. */
+export async function announcementAudienceCount(audience: AnnouncementAudience, campus?: CampusId, userId?: string): Promise<AudienceCount> {
+  const r = (one(await rpc<AnyRow | AnyRow[]>('announcement_audience_count', {
+    p_audience: audience,
+    p_campus: audience === 'campus' ? campus ?? null : null,
+    p_user: audience === 'user' ? userId ?? null : null,
+  })) ?? {}) as AnyRow;
+  const why = opt(pick(r, 'emailReason')) as AudienceEmailReason | undefined;
+  return { inApp: num(pick(r, 'inApp')), email: num(r.email), ...(why ? { emailReason: why } : {}) };
+}
+
+function toCap(r: AnyRow): AnnouncementEmailCap {
+  return { cap: num(r.cap), used: num(r.used), left: num(r.left), resetsAt: str(pick(r, 'resetsAt')), holdMinutes: num(pick(r, 'holdMinutes')) };
+}
+
+/** announcement_email_cap (0038): admins + chairs. */
+export async function announcementEmailCap(): Promise<AnnouncementEmailCap> {
+  return toCap((one(await rpc<AnyRow | AnyRow[]>('announcement_email_cap')) ?? {}) as AnyRow);
+}
+
+/** set_announcement_email_settings (0038): YACquest Chairs only. */
+export async function setAnnouncementEmailSettings(s: { weeklyCap: number; holdMinutes: number }): Promise<AnnouncementEmailCap> {
+  const r = toCap((one(await rpc<AnyRow | AnyRow[]>('set_announcement_email_settings', { p_weekly_cap: s.weeklyCap, p_hold_minutes: s.holdMinutes })) ?? {}) as AnyRow);
+  emitChange();
+  return r;
+}
+
+/** cancel_announcement (0038): the sender or a YACquest Chair, inside the window. */
+export async function cancelAnnouncement(id: string): Promise<{ emailsCancelled: number; notificationsRemoved: number }> {
+  const r = (one(await rpc<AnyRow | AnyRow[]>('cancel_announcement', { p_id: id })) ?? {}) as AnyRow;
+  emitChange();
+  void refreshUnread().catch(() => {});
+  return { emailsCancelled: num(pick(r, 'emailsCancelled')), notificationsRemoved: num(pick(r, 'notificationsRemoved')) };
 }
 
 // ───────────────────────────── feedback ─────────────────────────────

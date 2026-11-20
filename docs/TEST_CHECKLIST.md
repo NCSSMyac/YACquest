@@ -1,6 +1,6 @@
 # Live test checklist (phone)
 
-A quick pass over everything that changed recently (migrations 0032–0036, the email
+A quick pass over everything that changed recently (migrations 0032–0038, the email
 sender, quick start, Brew & Quest, the winter wardrobe and the Wardrobe shortcuts).
 Use your phone, logged in as yourself unless a step says otherwise.
 
@@ -152,6 +152,37 @@ Delete the test event when you're done.
 - Admin → Stats: the KPI row includes "Email confirmed (x/y)", and the **Email (7 days)** card shows
   sent / opened / clicked / bounced + unsub.
 - If wrong: "Admin card [name] shows an error / looks empty" (screenshot).
+
+## 7. Announcement safeguards (0038)
+
+⚠️ Don't email **Everyone** to test this: every step below uses **One person → yourself**, or a setting you put back.
+
+**7.1 Who gets it**
+- Tap: Admin → Announce. Under the email box: **"Goes to [N] people in the app"**; tick "Also send as an email" →
+  **"… · [M] by email"** (M is smaller: only people with emails on, a confirmed address and no bounces).
+- Pick **One person** → yourself. Expect **"Goes to 1 person · emailed: yes"**. Pick someone with emails off (Players shows
+  it) → **"emailed: no (emails off)"**.
+- If wrong: "Count says [text] for [audience]".
+
+**7.2 Weekly limit line**
+- With **Everyone** + email ticked, expect **"[n] of 3 all-member emails left this week (resets Monday)"**.
+- To see the "used up" state without emailing anyone: SQL Editor →
+  `update public.app_config set announce_all_email_weekly_cap = 0 where id = 1;` → reload Announce → Everyone.
+  Expect the email box **greyed out** and the orange note "… You can still post it in the app, or send the email to one
+  campus." **One campus** and **One person** can still tick email. Then put it back:
+  `update public.app_config set announce_all_email_weekly_cap = 3 where id = 1;`
+  (or Admin → System → **Announcement emails**: 3 per week, 10 minutes → Save).
+- If wrong: "Email box still on / message says [text]".
+
+**7.3 Cancel window**
+- Send a message to **One person → yourself** with email ticked. The confirm box says the emails wait 10 minutes and can be
+  cancelled; after Send the toast says **"Sent to the app. Emails go out in 10 minutes — you can cancel until then."**
+- In **Recently sent** it shows a red **Cancel · 10 min left** (counts down). Tap it → **Cancel announcement**.
+  Expect: the item shows **Cancelled** + "Cancelled by [you]", the message is gone from your bell / Home, and no email
+  arrives. Admin → System → delivery log shows it as **Cancelled**.
+- Send another one to yourself and don't cancel: the email arrives 10–20 minutes later, and after 10 minutes the Cancel
+  button is gone.
+- If wrong: "Cancel button [missing / still there after 10 min]" or "Email arrived after I cancelled" (screenshot).
 
 ---
 

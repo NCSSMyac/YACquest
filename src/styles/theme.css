@@ -1236,6 +1236,15 @@ a.friend-text:hover .dash-eyebrow { color: var(--link); }
 .email-preview-foot { padding: 8px 12px; font-size: 11px; line-height: 1.4; color: #4a5672; }
 .email-preview-foot u { color: #0b2a5b; }
 .fill-warn { margin: 0; padding: 8px 10px; border: 3px solid var(--orange); background: var(--cream); font-size: 14px; font-weight: 700; }
+/* 0038: Announce — weekly all-member email cap, who it reaches, cancel window */
+.ann-cap { display: block; margin-top: -4px; padding-left: 34px; font-size: 13px; font-weight: 800; color: var(--text); }
+.ann-reach { margin: 0; padding: 8px 10px; border: 3px dashed var(--rule); font-size: 14px; color: var(--text); }
+.ann-reach b { font-family: var(--font-num); }
+.ann-window { padding: 8px 10px; border-left: 6px solid var(--link); background: var(--cream); font-size: 14px; font-weight: 700; }
+.ann-status { font-weight: 800; }
+.ann-cancel { align-self: flex-start; min-height: 44px; }
+.ann-cancelled > strong, .ann-cancelled > p { opacity: 0.7; }
+.ann-cancelled > div strong { text-decoration: line-through; text-decoration-thickness: 2px; }
 .bounce-banner { border-color: var(--orange); }
 .em-kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
 @media (min-width: 560px) { .em-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }

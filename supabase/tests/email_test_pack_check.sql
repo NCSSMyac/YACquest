@@ -206,6 +206,9 @@ declare
 begin
   -- other mail waiting in the test DB is not part of this check
   update public.email_messages set status = 'skipped_expired' where campaign_id <> v_camp and status in ('queued', 'sending', 'failed');
+  -- 0038: the pack is queued directly (not through send_announcement), so it has no 10-minute cancel window
+  perform tp.ok(not exists (select 1 from public.email_messages where campaign_id = v_camp and not_before is not null),
+                'test pack emails are not held by the announcement cancel window (0038)');
   for r in select * from public.claim_email_messages(50) loop
     v_ids := v_ids || r.id;
     if r.unsub_token is not null then v_tok := v_tok || r.kind; end if;

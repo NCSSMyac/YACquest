@@ -8,13 +8,14 @@ import { useAuth } from '../../lib/auth';
 import { fmtDateTime } from '../../lib/format';
 import { errorMessage, useAsync } from '../../lib/useAsync';
 import { ANNOUNCEMENT_LIMITS, announcementError } from '../../lib/validate';
-import type { AnnouncementAudience, AnnouncementInput, AnnouncementTemplate, YacEvent } from '../../types';
+import type { Announcement, AnnouncementAudience, AnnouncementInput, AnnouncementTemplate, AudienceCount, YacEvent } from '../../types';
 import { BUILTIN_TEMPLATES, applyTemplate, eventDateText, type TemplateDef, type TemplateVars } from '../../lib/announceTemplates';
 import { eventPhase } from '../../lib/adminDashboard';
 import { monthName } from '../../lib/format';
 import { FILL_INS, SAMPLE_PERSON, fillValues, greetingLine, renderFillIns, unknownFillIns, type FillInToken, type FillPerson } from '../../lib/emailFill';
 import { startedEventsMentioned } from '../../lib/emailStats';
 import { ANNOUNCE_EMAIL_HINT_GROUP, ANNOUNCE_EMAIL_HINT_ONE } from '../../lib/emailWording';
+import { audienceLine, cancelLabel, cancelOpen, capLine, minutesLeft, capReached, capReachedMessage, confirmWindowNote, recentStatus, sentMessage } from '../../lib/announceSafeguards';
 
 /** Admins send a custom message to everyone, one campus, or one person (in-app + optional email). */
 export default function Announce() {
@@ -42,6 +43,16 @@ export default function Announce() {
     [audience, search],
   );
   const sent = useAsync(() => api.listAnnouncements(15), [], { live: true });
+  // 0038: the weekly cap on all-member emails, the cancel window, and who it reaches
+  const cap = useAsync(() => api.announcementEmailCap(), [], { live: true });
+  const count = useAsync<AudienceCount | null>(
+    () => (audience === 'user' && !person ? Promise.resolve(null) : api.announcementAudienceCount(audience, campus, person?.id)),
+    [audience, campus, person?.id],
+    { live: true },
+  );
+  const allCapped = audience === 'all' && capReached(cap.data);
+  const emailOn = sendEmail && !allCapped;
+  const holdMinutes = cap.data?.holdMinutes ?? 0;
   const [tplOpen, setTplOpen] = useState(false);
   // 0032: anything in {braces} that isn't a fill-in (template leftovers like {event}, typos) blocks sending
   const left = unknownFillIns(`${title} ${body}`);
@@ -85,8 +96,48 @@ export default function Announce() {
     toast(r.missing.length ? `Template added. Fill in: ${r.missing.map((m) => `{${m}}`).join(', ')}` : 'Template added. Check it, then send.', 'info');
   }
   const sentMore = useShowMore(5);
+  // 0038: the cancel countdown ticks; when a window closes the list reloads (Cancel disappears)
+  const [now, setNow] = useState(() => new Date());
+  const [cancelling, setCancelling] = useState<Announcement | null>(null);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const openWindows = (sent.data ?? []).filter((a) => a.sendEmail && !a.cancelledAt && a.emailHoldUntil && new Date(a.emailHoldUntil) > now).length;
+  useEffect(() => {
+    if (!openWindows) return;
+    const t = setInterval(() => setNow(new Date()), 15_000);
+    return () => clearInterval(t);
+  }, [openWindows]);
+  useEffect(() => setNow(new Date()), [sent.data]);
+  const reloadSent = sent.reload;
+  useEffect(() => {
+    const next = (sent.data ?? [])
+      .map((a) => (a.emailHoldUntil && !a.cancelledAt ? new Date(a.emailHoldUntil).getTime() : 0))
+      .filter((t) => t > Date.now())
+      .sort((x, y) => x - y)[0];
+    if (!next) return;
+    const t = setTimeout(() => { setNow(new Date()); void reloadSent(); }, next - Date.now() + 500);
+    return () => clearTimeout(t);
+  }, [sent.data, reloadSent]);
 
-  const input: AnnouncementInput = { title, body, audience, campus: audience === 'campus' ? campus : undefined, userId: person?.id, sendEmail };
+  async function cancelIt() {
+    if (!cancelling) return;
+    setCancelBusy(true);
+    try {
+      await api.cancelAnnouncement(cancelling.id);
+      toast('Cancelled. The emails won’t go out, and it’s gone from everyone’s app.', 'success');
+      setCancelling(null);
+      void sent.reload();
+      void cap.reload();
+    } catch (e) {
+      toast(errorMessage(e), 'error');
+      setCancelling(null);
+      void sent.reload();
+    } finally {
+      setCancelBusy(false);
+    }
+  }
+
+  const input: AnnouncementInput = { title, body, audience, campus: audience === 'campus' ? campus : undefined, userId: person?.id, sendEmail: emailOn };
+  const reach = count.data ? audienceLine(count.data, audience, emailOn) : null;
   const audienceText =
     audience === 'all' ? 'everyone' : audience === 'campus' ? `everyone at ${campusName(campus)}` : person ? person.displayName : 'one person';
 
@@ -102,7 +153,7 @@ export default function Announce() {
     setBusy(true);
     try {
       const r = await api.sendAnnouncement(input);
-      toast(`Sent to ${r.recipients} ${r.recipients === 1 ? 'person' : 'people'}${r.emailed ? ` · emailed ${r.emailed}` : ''}`, 'success');
+      toast(sentMessage(r), 'success');
       setTitle('');
       setBody('');
       setPerson(null);
@@ -112,6 +163,7 @@ export default function Announce() {
     } catch (e) {
       setErr(errorMessage(e));
       setConfirm(false);
+      void cap.reload();
     } finally {
       setBusy(false);
     }
@@ -192,7 +244,13 @@ export default function Announce() {
           )}
 
           <label className="check">
-            <input type="checkbox" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={emailOn}
+              disabled={allCapped}
+              aria-describedby={audience === 'all' && cap.data ? 'email-cap' : undefined}
+              onChange={(e) => setSendEmail(e.target.checked)}
+            />
             <span>
               Also send as an email
               <br />
@@ -201,6 +259,16 @@ export default function Announce() {
               </small>
             </span>
           </label>
+          {/* 0038: at most N all-member emails a week (all senders); campus and one-person emails aren't limited */}
+          {audience === 'all' && cap.data && allCapped && (
+            <p id="email-cap" className="fill-warn" role="status">{capReachedMessage(cap.data.cap)}</p>
+          )}
+          {audience === 'all' && cap.data && !allCapped && emailOn && (
+            <small id="email-cap" className="ann-cap" role="status">{capLine(cap.data)}</small>
+          )}
+          <p className="ann-reach" role="status" aria-live="polite">
+            {reach ? <>Goes to <b>{reach}</b></> : audience === 'user' && !person ? 'Pick the person to see who gets it.' : count.error ? 'Couldn’t count the recipients.' : 'Counting recipients…'}
+          </p>
 
           {started.length > 0 && (
             <p className="fill-warn" role="status">
@@ -208,7 +276,7 @@ export default function Announce() {
             </p>
           )}
 
-          <FillPreview title={title} body={body} sendEmail={sendEmail} person={audience === 'user' ? person : null} events={allEvents.data ?? []} />
+          <FillPreview title={title} body={body} sendEmail={emailOn} person={audience === 'user' ? person : null} events={allEvents.data ?? []} />
 
           <ErrorText error={err} />
           <button className="btn" disabled={busy}>Review and send</button>
@@ -220,18 +288,31 @@ export default function Announce() {
           <Empty>No messages yet.</Empty>
         ) : (
           <ul className="list">
-            {sent.data.slice(0, sentMore.limit).map((a) => (
-              <li key={a.id} className="stack" style={{ gap: 4 }}>
-                <div className="spread">
-                  <strong>{a.title}</strong>
-                  <span className="chip neutral">{a.audience === 'all' ? 'Everyone' : a.audience === 'campus' ? campusName(a.campus!) : a.targetName ?? 'One person'}</span>
-                </div>
-                <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{a.body}</p>
-                <small className="muted">
-                  {a.senderName} · {fmtDateTime(a.createdAt)} · {a.recipientCount} in app{a.sendEmail ? ` · ${a.emailCount} emailed` : ''}
-                </small>
-              </li>
-            ))}
+            {sent.data.slice(0, sentMore.limit).map((a) => {
+              const status = recentStatus(a, now);
+              return (
+                <li key={a.id} className={`stack${a.cancelledAt ? ' ann-cancelled' : ''}`} style={{ gap: 4 }}>
+                  <div className="spread">
+                    <strong>{a.title}</strong>
+                    <span className="row" style={{ gap: 6 }}>
+                      {a.cancelledAt && <span className="chip rejected">Cancelled</span>}
+                      <span className="chip neutral">{a.audience === 'all' ? 'Everyone' : a.audience === 'campus' ? campusName(a.campus!) : a.targetName ?? 'One person'}</span>
+                    </span>
+                  </div>
+                  <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{a.body}</p>
+                  <small className="muted">
+                    {a.senderName} · {fmtDateTime(a.createdAt)} · {a.cancelledAt ? 'removed from the app' : `${a.recipientCount} in app`}
+                    {a.sendEmail ? (a.cancelledAt ? ' · emails cancelled' : ` · ${a.emailCount} ${minutesLeft(a.emailHoldUntil, now) > 0 ? 'by email' : 'emailed'}`) : ''}
+                  </small>
+                  {status && <small className={a.cancelledAt ? 'ann-status' : 'ann-status muted'}>{status}</small>}
+                  {cancelOpen(a, now) && (
+                    <button type="button" className="btn small red ann-cancel" onClick={() => setCancelling(a)}>
+                      {cancelLabel(a.emailHoldUntil, now)}
+                    </button>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
         {sent.data && <ShowMore shown={Math.min(sentMore.limit, sent.data.length)} total={sent.data.length} step={5} onMore={() => sentMore.more(sent.data?.length ?? 0)} />}
@@ -239,7 +320,9 @@ export default function Announce() {
 
       <Modal open={confirm} onClose={() => setConfirm(false)} title="Send this message?">
         <div className="stack">
-          <p style={{ margin: 0 }}>To <strong>{audienceText}</strong>{sendEmail ? ' (in the app and by email)' : ' (in the app)'}:</p>
+          <p style={{ margin: 0 }}>
+            To <strong>{audienceText}</strong>{emailOn ? ' (in the app and by email)' : ' (in the app)'}{reach ? <>: <b>{reach}</b></> : ':'}
+          </p>
           <div className="panel flat" style={{ padding: 10 }}>
             <strong>{title}</strong>
             <p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap' }}>{body}</p>
@@ -249,11 +332,29 @@ export default function Announce() {
               It mentions {started.map((e) => `“${e.title}”`).join(', ')}, which already started. Send anyway?
             </p>
           )}
-          {sendEmail && <p className="muted" style={{ margin: 0, fontSize: 14 }}>Each person gets their own email (“Hi {'{first_name}'},” and fill-ins filled in for them).</p>}
-          <p className="muted" style={{ margin: 0 }}>Messages can’t be unsent.</p>
+          {emailOn && <p className="muted" style={{ margin: 0, fontSize: 14 }}>Each person gets their own email (“Hi {'{first_name}'},” and fill-ins filled in for them).</p>}
+          {emailOn && holdMinutes > 0 ? (
+            <p className="ann-window" style={{ margin: 0 }}>⏱ {confirmWindowNote(holdMinutes)}</p>
+          ) : (
+            <p className="muted" style={{ margin: 0 }}>Messages can’t be unsent.</p>
+          )}
           <div className="btn-row">
             <button className="btn ghost" onClick={() => setConfirm(false)}>Cancel</button>
             <button className="btn" onClick={send} disabled={busy}>{busy ? 'Sending…' : 'Send'}</button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={!!cancelling} onClose={() => setCancelling(null)} title="Cancel this announcement?">
+        <div className="stack">
+          <p style={{ margin: 0 }}>
+            <strong>{cancelling?.title}</strong>
+          </p>
+          <p style={{ margin: 0 }}>The emails won’t go out, and the message is removed from everyone’s app. It frees this week’s all-member email slot if it used one.</p>
+          <p className="muted" style={{ margin: 0, fontSize: 14 }}>{cancelling ? `${cancelLabel(cancelling.emailHoldUntil, now).replace('Cancel · ', '')} to cancel.` : ''}</p>
+          <div className="btn-row">
+            <button className="btn ghost" onClick={() => setCancelling(null)}>Keep it</button>
+            <button className="btn red" onClick={() => void cancelIt()} disabled={cancelBusy}>{cancelBusy ? 'Cancelling…' : 'Cancel announcement'}</button>
           </div>
         </div>
       </Modal>

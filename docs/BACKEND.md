@@ -690,3 +690,50 @@ Internal (nobody): `email_keep_log`, `email_keep_sensitive_body`, `email_keep_ve
 - Privacy page rewritten (email tracking, who sees email stats, prize-alert list, retention, how to opt out); `PRIVACY_UPDATED` = November 19, 2026.
 - Mock API mirrors the server: `purgeEmailData()` (from `maybeEnqueueWeekly()`, once a day), `clearSensitiveBodies()` (also on `markFulfilled`), `retryEmail` → `purged`, test email first name.
 - Tests: `src/__tests__/emailRetention0037.test.tsx`; DB section "0037" in `supabase/tests/tests.sql`.
+
+## 0038 — Announcement safeguards: weekly all-member email cap, recipient count, cancel window
+
+Additive (no downtime): new nullable/defaulted columns, one wider status check (added `NOT VALID`, then validated without blocking writes), two indexes, new functions, re-created functions with unchanged signatures; nothing dropped. Run AFTER 0037; safe to re-run (0034's status check now lists `skipped_cancelled` too, so re-running 0034 after 0038 stays safe). **No Edge Function re-deploy needed:** the hold is enforced in `claim_email_messages()` (SQL). The `emailCore.ts` copies in `send-emails` / `email-track` only gained the `notBefore` field of `planBatch()` (used by the demo), so re-deploying them is optional.
+
+### Settings (`app_config`, YACquest Chairs change them in Admin → System → Announcement emails)
+| Column | Default | Range | Meaning |
+|---|---|---|---|
+| `announce_all_email_weekly_cap` | 3 | 0–20 | All-member (`audience = 'all'`) announcements that may be sent **with email** per New York week, all senders combined |
+| `announce_email_hold_minutes` | 10 | 0–60 | How long an emailed announcement's emails wait (the cancel window); 0 = no window |
+
+SQL alternative: `update public.app_config set announce_all_email_weekly_cap = 4, announce_email_hold_minutes = 10 where id = 1;`
+
+### Weekly cap
+- The week is **Monday 00:00 → Sunday 23:59:59 America/New_York**: `announce_week_start(p_now)`, `announce_week_end(p_now)` (computed in New York time, so DST weeks are right).
+- `announce_all_emails_used(p_now)` counts announcements with `audience = 'all'`, `send_email`, `email_count > 0`, `cancelled_at is null`, created in that week. **Not counted:** campus and one-person announcements, in-app-only ones, cancelled ones, and ones that emailed nobody.
+- `send_announcement()` (copy of 0032): when `p_send_email` and `p_audience = 'all'`, it takes `pg_advisory_xact_lock(hashtext('yacquest_announce_all_email'))`, then counts; at the cap it raises **`email_cap`** with `announce_cap_message(cap)`: *"3 all-member announcement emails have already gone out this week (resets Monday). You can still post it in the app, or send the email to one campus."* Nothing is posted (the app disables the email box first, so this only happens in a race); the in-app message is never capped. The lock is held until commit, so two staff sending at once can't both get the last slot (tested with two real sessions via dblink).
+- **`announcement_email_cap(p_now default null) → {cap, used, left, resetsAt, holdMinutes}`** — admins + chairs.
+- **`set_announcement_email_settings(p_weekly_cap, p_hold_minutes) → same JSON`** — chairs only; `weekly_cap` / `hold_minutes` errors out of range; logs `announcement_settings_changed` (with the old values) when something changed.
+
+### Recipient count
+- **`announcement_audience_count(p_audience, p_campus default null, p_user default null) → {inApp, email, emailReason}`** — admins + chairs; `audience` / `campus` errors like `send_announcement`.
+  - `inApp`: everyone in the audience (all profiles, a campus, or 1).
+  - `email`: distinct addresses that would really be **queued**: `email_opt_in`, Supabase `email_confirmed_at` set, the app's `email_verified_at` set (0034), not `email_bounced` — the same rules as `send_announcement()` + `email_expand_outbox()`.
+  - One person: `emailReason` = `'emails_off'` | `'not_confirmed'` | `'bouncing'` (null when they'd be emailed; `inApp` 0 for an unknown id). Staff already see email status and "Bouncing email" in Players, so this reveals nothing new.
+- `send_announcement()`'s `emailed` and `announcements.email_count` are now the number of emails **queued** (status `queued`), i.e. the same number as the count (before: addresses, including ones skipped as unconfirmed or bouncing).
+
+### Cancel window
+- `send_announcement()` with email: `announcements.email_hold_until = now() + hold`, and every queued `email_messages` row of `announcement:<id>` gets **`not_before`** = that time (same transaction). The response adds `emailHoldUntil` (null with a 0-minute window) and `holdMinutes`. `send_before` is unchanged (3 days from sending, or the start of an event it names).
+- **`claim_email_messages()`** (copy of 0032): rows with `not_before > p_now` are not claimed (both priority groups). Expiry and opt-out/bounce skipping apply as before. Same rule in TS: `planBatch()` skips `notBefore` in the future. Rows queued any other way (reminders, reports, the email test pack) have `not_before` null and are not held.
+- **`cancel_announcement(p_id) → {cancelled, emailsCancelled, notificationsRemoved}`** — admins + chairs, but only **the sender or a YACquest Chair** (`forbidden` otherwise). Errors: `not_found`, `already_cancelled`, `not_cancellable` (sent without email: in-app-only announcements have no cancel, and there is no announcement delete), `already_sending` (*"Already sending — can't cancel."*: any of its emails is sending/sent/bounced/failed or was tried; checked after locking its rows, so a sender run that claimed first wins), `window_closed` (`now() >= email_hold_until`). Effects:
+  - still-`queued` emails → **`skipped_cancelled`** (new status; label "Cancelled"), `error = 'Cancelled by {name}.'`, contents emptied; its outbox row rolls up (`failed`, nothing left to send);
+  - its in-app notifications are **deleted** (`notifications.announcement_id`, new nullable column set by `send_announcement()`; older notifications have none and can't be cancelled anyway);
+  - `announcements.cancelled_at`, `cancelled_by` (new columns); the weekly-cap slot is free again;
+  - admin log `announcement_cancelled` (target = the person for one-person sends; details: title, audience, campus, announcementId, sentBy, emailsCancelled, notificationsRemoved).
+- **`recent_announcements(p_limit default 20) → json[]`** — admins + chairs; replaces `list_announcements` in the app (which stays unchanged for older builds): `id, title, body, audience, campus, targetName, sendEmail, recipientCount, emailCount, senderName, createdAt, emailHoldUntil, cancelledAt, cancelledByName, emailsStarted, canCancel` (`canCancel` = emailed, not cancelled, window open, nothing started, and the caller is the sender or a chair).
+- **Stats:** `email_stats()` (copy of 0032) adds `cancelled` to `totals` and to each campaign. Cancelled rows stay inside `skipped` and never count as sent, failed or waiting. `email_log`, `email_campaign_recipients` and `email_history_for` show the status as **Cancelled**.
+
+### Grants
+Internal (nobody): `announce_week_start`, `announce_week_end`, `announce_all_emails_used`, `announce_cap_json`, `announce_cap_message`. Authenticated (admin/chair checked inside): `announcement_email_cap`, `set_announcement_email_settings` (chairs), `announcement_audience_count`, `cancel_announcement`, `recent_announcements`, `send_announcement`, `email_stats`. Service role only (unchanged): `claim_email_messages`.
+
+### App
+- Admin → Announce: live **"Goes to 262 people in the app · 241 by email"** (one person: "1 person · emailed: yes" / "no (emails off | not confirmed | bouncing)"); with Everyone + email ticked, **"2 of 3 all-member emails left this week (resets Monday)"**; at 0 left the email box is disabled for Everyone with the cap message (campus and one-person stay available). The confirm dialog repeats the count and the window; the toast says *"Sent to the app. Emails go out in 10 minutes — you can cancel until then."* Recently sent shows **"Cancel · 8 min left"** (sender + chairs; ticks every 15 s), "Emails go out in N min" for other staff, "Already sending — can't cancel", and **"Cancelled by {name}"**.
+- Admin → System → **Announcement emails** (chairs): the two settings.
+- Admin → Stats → Email: campaigns show "N cancelled" (and a "Cancelled" chip when nothing was sent).
+- Wording + helpers: `src/lib/announceSafeguards.ts`. Mock API mirrors the server (`announcementAudienceCount`, `announcementEmailCap`, `setAnnouncementEmailSettings`, `cancelAnnouncement`, hold in the demo sender).
+- Tests: `src/__tests__/announceSafeguards.test.ts`; DB section "0038" in `supabase/tests/tests.sql`; the email test pack check asserts its rows are not held.

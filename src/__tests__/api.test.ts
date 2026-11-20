@@ -413,7 +413,8 @@ describe('announcements', () => {
     // 0032: one outbox row per announcement, split into one email per person (never BCC)
     const bigNews = load().outbox.filter((o) => o.kind === 'announcement' && o.subject === 'YACquest: Big news');
     expect(bigNews).toHaveLength(1);
-    expect((load().messages ?? []).filter((m) => m.outboxId === bigNews[0].id)).toHaveLength(r.emailed);
+    // 0038: "emailed" = emails really queued (unconfirmed / bouncing addresses get a skipped row, not an email)
+    expect((load().messages ?? []).filter((m) => m.outboxId === bigNews[0].id && m.status === 'pending')).toHaveLength(r.emailed);
   });
   it('validates title and target', async () => {
     asUser('admin');

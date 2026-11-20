@@ -114,6 +114,11 @@ export const {
   listFeedback,
   markFeedbackReviewed,
   listAnnouncements,
+  // 0038: weekly all-member email cap, recipient count, cancel window
+  announcementAudienceCount,
+  announcementEmailCap,
+  setAnnouncementEmailSettings,
+  cancelAnnouncement,
   // 0028: pace tracker (staff), Wrapped, end-of-year checklist (staff), seasonal wardrobe
   adminPace,
   myWrapped,

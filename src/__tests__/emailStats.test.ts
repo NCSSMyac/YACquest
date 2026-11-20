@@ -24,7 +24,7 @@ describe('one email per person', () => {
     const outbox = d.outbox.filter((o) => o.kind === 'announcement');
     expect(outbox).toHaveLength(1);
     const msgs = (d.messages ?? []).filter((m) => m.outboxId === outbox[0].id);
-    expect(msgs).toHaveLength(r.emailed);
+    expect(msgs.filter((m) => m.status === 'pending')).toHaveLength(r.emailed); // 0038: emailed = really queued
     expect(msgs.every((m) => !m.email.includes(','))).toBe(true);
     expect(msgs.some((m) => m.email === off.email)).toBe(false);
     const demo = d.users.find((u) => u.handle === 'yak001')!;
@@ -93,7 +93,7 @@ describe('stats (staff only)', () => {
     const people = ['alum050', 'alum051', 'alum052', 'alum053'].map((h) => d.users.find((u) => u.handle === h)!);
     people.forEach((p) => (p.emailOptIn = true));
     for (const p of people) await api.sendAnnouncement({ title: 'Stats test', body: 'Hello {first_name}', audience: 'user', userId: p.id, sendEmail: true });
-    deliverOutbox();
+    deliverOutbox(Date.now() + 11 * 60_000); // 0038: after the 10-minute cancel window
     const ms = d.messages!.filter((m) => m.subject === 'YACquest: Stats test');
     expect(ms.map((m) => m.status)).toEqual(['sent', 'sent', 'sent', 'sent']);
     const [a, b, c, e] = ms;

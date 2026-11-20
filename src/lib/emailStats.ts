@@ -27,6 +27,7 @@ export const EMAIL_STATUS_LABEL: Record<EmailStatus | 'queued', string> = {
   skipped_opted_out: 'Skipped — emails off',
   skipped_bouncing: 'Skipped — address bouncing',
   skipped_unverified: 'Skipped — email not confirmed',
+  skipped_cancelled: 'Cancelled',
 };
 
 /** Chip colour class for each status (theme.css chips). */
@@ -41,6 +42,7 @@ export const EMAIL_STATUS_CHIP: Record<EmailStatus | 'queued', string> = {
   skipped_opted_out: 'neutral',
   skipped_bouncing: 'neutral',
   skipped_unverified: 'neutral',
+  skipped_cancelled: 'neutral',
 };
 
 /** "Today: 132 / 450 sent · 40 waiting · next batch in ~6 min". */

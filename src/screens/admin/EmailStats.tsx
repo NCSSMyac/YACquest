@@ -76,7 +76,7 @@ export default function EmailStats() {
                 <button type="button" className="em-camp" onClick={() => setOpen(c)}>
                   <span className="em-camp-top">
                     <b>{c.label}<span className="sr-only"> — see who got it</span></b>
-                    <span className="chip neutral">{EMAIL_KIND_LABEL[c.kind] ?? c.kind}</span>
+                    <span className="chip neutral">{(c.cancelled ?? 0) > 0 && c.sent === 0 ? 'Cancelled' : EMAIL_KIND_LABEL[c.kind] ?? c.kind}</span>
                   </span>
                   <span className="em-camp-nums">
                     <span>{fmtDateTime(c.firstAt)}</span>
@@ -85,7 +85,8 @@ export default function EmailStats() {
                     <span><b>{c.clicked}</b> clicked</span>
                     {c.bounced > 0 && <span><b>{c.bounced}</b> bounced</span>}
                     {c.unsubscribed > 0 && <span><b>{c.unsubscribed}</b> unsubscribed</span>}
-                    {c.skipped > 0 && <span><b>{c.skipped}</b> skipped</span>}
+                    {c.skipped - (c.cancelled ?? 0) > 0 && <span><b>{c.skipped - (c.cancelled ?? 0)}</b> skipped</span>}
+                    {(c.cancelled ?? 0) > 0 && <span><b>{c.cancelled}</b> cancelled</span>}
                     {c.waiting > 0 && <span><b>{c.waiting}</b> waiting</span>}
                   </span>
                 </button>

@@ -406,7 +406,7 @@ export interface WeeklyReport {
 
 export type EmailKind = 'weekly_report' | 'prize_qualified' | 'prize_info' | 'test' | 'announcement' | 'event_reminder' | 'event_followup' | 'wrapped' | 'verify_email';
 /** 0032: one row per recipient. 'pending' = queued; skipped_* rows were never sent (see EMAIL_STATUS_LABEL). */
-export type EmailStatus = 'pending' | 'sending' | 'sent' | 'failed' | 'bounced' | 'skipped_expired' | 'skipped_opted_out' | 'skipped_bouncing' | 'skipped_unverified';
+export type EmailStatus = 'pending' | 'sending' | 'sent' | 'failed' | 'bounced' | 'skipped_expired' | 'skipped_opted_out' | 'skipped_bouncing' | 'skipped_unverified' | 'skipped_cancelled';
 
 export interface EmailLogRow {
   id: string;
@@ -478,6 +478,44 @@ export interface Announcement {
   emailCount: number;
   senderName: string;
   createdAt: string;
+  /** 0038: its emails are held until then (the cancel window). Unset = no email. */
+  emailHoldUntil?: string;
+  /** 0038: cancelled (emails stopped, in-app notices removed). */
+  cancelledAt?: string;
+  cancelledByName?: string;
+  /** 0038: at least one of its emails was already picked up by the sender. */
+  emailsStarted?: boolean;
+  /** 0038: the caller may cancel it right now (the sender or a YACquest Chair, window open, nothing sent yet). */
+  canCancel?: boolean;
+}
+
+/** 0038: why one person wouldn't get the email (same rules as the server). */
+export type AudienceEmailReason = 'emails_off' | 'not_confirmed' | 'bouncing';
+
+/** 0038: announcement_audience_count — who gets it in the app, and who would really be emailed. */
+export interface AudienceCount {
+  inApp: number;
+  email: number;
+  /** One person only: why they wouldn't be emailed. */
+  emailReason?: AudienceEmailReason;
+}
+
+/** 0038: the weekly cap on all-member announcement emails + the cancel window. */
+export interface AnnouncementEmailCap {
+  cap: number;
+  used: number;
+  left: number;
+  /** Next Monday 00:00 New York. */
+  resetsAt: string;
+  holdMinutes: number;
+}
+
+export interface AnnouncementSendResult {
+  recipients: number;
+  emailed: number;
+  /** 0038: when the emails go out (unset: no email, or no cancel window). */
+  emailHoldUntil?: string;
+  holdMinutes?: number;
 }
 
 /** General feedback categories a participant can pick (prize ideas use the separate prize-suggestion form). */
@@ -945,6 +983,8 @@ export interface EmailTotals {
   skipped: number;
   expired: number;
   failed: number;
+  /** 0038: cancelled in the announcement's cancel window (part of skipped). */
+  cancelled?: number;
 }
 
 /** One announcement or automatic email (a reminder for one event, the weekly report of one day, …). */
@@ -962,6 +1002,8 @@ export interface EmailCampaignStat {
   skipped: number;
   waiting: number;
   failed: number;
+  /** 0038: cancelled in the announcement's cancel window (part of skipped). */
+  cancelled?: number;
 }
 
 export interface EmailStats {

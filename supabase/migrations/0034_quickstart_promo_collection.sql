@@ -114,7 +114,8 @@ begin
   end loop;
 end $$;
 alter table public.email_messages add constraint email_messages_status_check
-  check (status in ('queued', 'sending', 'sent', 'failed', 'bounced', 'skipped_expired', 'skipped_opted_out', 'skipped_bouncing', 'skipped_unverified'));
+  check (status in ('queued', 'sending', 'sent', 'failed', 'bounced', 'skipped_expired', 'skipped_opted_out', 'skipped_bouncing', 'skipped_unverified',
+                    'skipped_cancelled'));  -- 0038's status is listed too, so re-running 0034 after 0038 stays safe
 
 -- Finals Study Break quest (Tier 3, screenshot) + its windows (New York dates; keep in sync with QUEST_WINDOWS in src/config.ts)
 insert into public.activities (id, tier, title, method) values ('finals_study_break', 3, 'Finals Study Break', 'screenshot')

@@ -4915,5 +4915,311 @@ end $$;
 rollback;
 
 -- =============================================================================
+-- 0038. ANNOUNCEMENT SAFEGUARDS: weekly all-member email cap, recipient count,
+--       10-minute cancel window
+-- =============================================================================
+
+-- ---- concurrency: two staff race for the last slot (two real sessions via dblink; cleaned up after) ----
+:as_super
+create extension if not exists dblink schema t;
+update profiles set role = 'admin' where id = t.u('bob');
+update app_config set announce_all_email_weekly_cap = announce_all_emails_used(now()) + 1, announce_email_hold_minutes = 10;
+do $$
+declare
+  v_conn text := format('host=%s port=%s dbname=%s user=postgres', split_part(current_setting('unix_socket_directories'), ',', 1),
+                        current_setting('port'), current_database());
+  v_as   text := 'set request.jwt.claim.role = ''authenticated''; set request.jwt.claim.sub = ''00000000-0000-0000-0000-0000000000b0''; set role authenticated';
+  v_err  text;
+  v_n    int;
+begin
+  perform t.dblink_connect('race_a', v_conn);
+  perform t.dblink_connect('race_b', v_conn);
+  perform t.dblink_exec('race_a', v_as);
+  perform t.dblink_exec('race_b', v_as);
+  perform t.dblink_exec('race_a', 'begin');
+  perform * from t.dblink('race_a', $q$select send_announcement('Race A', 'First!', 'all', null, null, true)::text$q$) as x(r text);
+  -- B asks for the same last slot while A hasn't committed yet: it must wait for A's lock
+  perform t.dblink_send_query('race_b', $q$select send_announcement('Race B', 'Second!', 'all', null, null, true)::text$q$);
+  perform pg_sleep(0.3);
+  perform t.ok(t.dblink_is_busy('race_b') = 1, '0038 cap race: the second sender waits on the advisory lock');
+  perform t.dblink_exec('race_a', 'commit');
+  perform * from t.dblink_get_result('race_b', false) as x(r text);
+  v_err := t.dblink_error_message('race_b');
+  perform t.ok(v_err like '%email_cap: 1 all-member announcement email has already gone out this week (resets Monday).%' or v_err like '%email_cap: % all-member announcement emails have already gone out this week (resets Monday).%',
+               '0038 cap race: … and once the first commits, the second is refused (email_cap)');
+  perform t.dblink_disconnect('race_a');
+  perform t.dblink_disconnect('race_b');
+  select count(*) into v_n from announcements where title in ('Race A', 'Race B');
+  perform t.eq(v_n, 1, '0038 cap race: exactly one of the two was posted');
+end $$;
+-- clean up the committed race send
+delete from notifications where announcement_id in (select id from announcements where title = 'Race A');
+delete from email_outbox where dedupe_key in (select 'announcement:' || id from announcements where title = 'Race A');
+-- (its admin_actions row stays: the log is append-only)
+delete from announcements where title = 'Race A';
+update app_config set announce_all_email_weekly_cap = 3;
+drop extension dblink;
+
+begin;
+:as_super
+-- a clean week: older sends move back a month, the queue is empty, ref2 is a second (plain) admin
+update announcements set created_at = created_at - interval '30 days';
+update email_messages set status = 'sent', sent_at = now() - interval '3 days', claimed_at = null where status in ('queued', 'sending', 'failed');
+update app_config set email_daily_budget = 450, email_reserve = 50, announce_all_email_weekly_cap = 3, announce_email_hold_minutes = 10;
+update profiles set role = 'admin' where id in (t.u('bob'), t.u('ref2'));
+update profiles set role = 'chair' where id = t.u('chair1');
+update profiles set email_opt_in = true, email_bounced = false where id in (t.u('alice'), t.u('carol'), t.u('dave'), t.u('frank'));
+update profiles set email_opt_in = false where id = t.u('erin');
+update profiles set email_bounced = true where id = t.u('frank');
+update profiles set email_opt_in = true where id = t.u('unver');
+select set_config('t.everyone', (select count(*) from profiles)::text, false) \g /dev/null
+
+-- ---- the cap message, word for word ----
+do $$ begin
+  perform t.eq(announce_cap_message(3), '3 all-member announcement emails have already gone out this week (resets Monday). You can still post it in the app, or send the email to one campus.', '0038: the friendly cap message');
+  perform t.eq(announce_cap_message(1), '1 all-member announcement email has already gone out this week (resets Monday). You can still post it in the app, or send the email to one campus.', '0038: cap message, singular');
+end $$;
+
+-- ---- week boundary in New York time ----
+insert into announcements (title, body, audience, send_email, recipient_count, email_count, created_by, created_at) values
+  ('Sun late', 'x', 'all', true, 5, 5, t.u('bob'), '2030-03-10 23:59:59 America/New_York'),
+  ('Mon zero', 'x', 'all', true, 5, 5, t.u('bob'), '2030-03-11 00:00:00 America/New_York'),
+  ('Mon campus', 'x', 'campus', true, 5, 5, t.u('bob'), '2030-03-11 09:00:00 America/New_York'),
+  ('Mon in-app', 'x', 'all', false, 5, 0, t.u('bob'), '2030-03-11 09:00:00 America/New_York'),
+  ('Mon nobody', 'x', 'all', true, 5, 0, t.u('bob'), '2030-03-11 09:00:00 America/New_York');
+update announcements set campus = 'duke' where title = 'Mon campus';
+do $$ begin
+  perform t.eq(announce_week_start('2030-03-11 03:30+00'), '2030-03-04 00:00 America/New_York'::timestamptz, '0038 week: Sunday 11:30 PM in New York (already Monday in UTC) is still last week');
+  perform t.eq(announce_week_start('2030-03-11 04:00+00'), '2030-03-11 00:00 America/New_York'::timestamptz, '0038 week: Monday 00:00 New York starts the new week (EDT, right after the DST change)');
+  perform t.eq(announce_all_emails_used('2030-03-10 12:00 America/New_York'), 1, '0038 week: Sunday 23:59:59 counts in its own week');
+  perform t.eq(announce_all_emails_used('2030-03-11 00:30 America/New_York'), 1, '0038 week: … not in the next one; Monday 00:00 counts there (campus, in-app-only and "emailed nobody" don''t count)');
+  perform t.eq(announce_all_emails_used('2030-03-17 23:59 America/New_York'), 1, '0038 week: still counted on the following Sunday night');
+  perform t.eq(announce_all_emails_used('2030-03-18 00:00 America/New_York'), 0, '0038 week: resets Monday 00:00');
+  perform t.eq(announce_week_end('2030-03-06 12:00 America/New_York'), '2030-03-11 00:00 America/New_York'::timestamptz, '0038 week: the week ends at Monday 00:00 New York even across the DST change');
+  perform set_config('t.weekend', announce_week_end(now())::text, false);
+end $$;
+delete from announcements where created_at > '2030-01-01';
+
+-- ---- permissions ----
+:as_alice
+do $$ begin
+  perform t.throws($q$select announcement_audience_count('all')$q$, 'forbidden', '0038: participant can''t count recipients');
+  perform t.throws($q$select announcement_email_cap()$q$, 'forbidden', '0038: participant can''t read the cap');
+  perform t.throws($q$select recent_announcements()$q$, 'forbidden', '0038: participant can''t list');
+  perform t.throws($q$select set_announcement_email_settings(5, 10)$q$, 'forbidden', '0038: participant can''t change the settings');
+  perform t.throws(format('select cancel_announcement(%L)', gen_random_uuid()), 'forbidden', '0038: participant can''t cancel');
+end $$;
+:as_anon
+do $$ begin
+  perform t.denied($q$select announcement_audience_count('all')$q$, '0038: anon can''t count recipients');
+  perform t.denied(format('select cancel_announcement(%L)', gen_random_uuid()), '0038: anon can''t cancel');
+end $$;
+:as_bob
+do $$ begin
+  perform t.throws($q$select set_announcement_email_settings(5, 10)$q$, 'forbidden', '0038: a plain admin can''t change the cap (YACquest Chairs only)');
+  perform t.eq((announcement_email_cap()->>'cap')::int, 3, '0038: admins can read the cap (default 3)');
+  perform t.eq((announcement_email_cap()->>'holdMinutes')::int, 10, '0038: cancel window default 10 minutes');
+end $$;
+:as_chair1
+do $$ declare r json; begin
+  perform t.throws($q$select set_announcement_email_settings(21, 10)$q$, 'weekly_cap', '0038 settings: cap 0–20');
+  perform t.throws($q$select set_announcement_email_settings(3, 61)$q$, 'hold_minutes', '0038 settings: window 0–60 minutes');
+  r := set_announcement_email_settings(4, 15);
+  perform t.ok((r->>'cap')::int = 4 and (r->>'holdMinutes')::int = 15, '0038 settings: a chair changes them');
+  perform set_announcement_email_settings(3, 10);
+end $$;
+:as_super
+do $$ begin
+  perform t.eq((select count(*) from admin_actions where action = 'announcement_settings_changed'), 2::bigint, '0038 settings: each change is logged');
+  perform t.eq((select announce_all_email_weekly_cap from app_config), 3, '0038 settings: stored in app_config');
+end $$;
+
+-- ---- the count matches who is really queued ----
+:as_bob
+do $$
+declare c json; r json; v_cap json;
+begin
+  c := announcement_audience_count('all');
+  perform t.eq((c->>'inApp')::int, current_setting('t.everyone')::int, '0038 count: in-app = everyone');
+  v_cap := announcement_email_cap();
+  perform t.ok((v_cap->>'used')::int = 0 and (v_cap->>'left')::int = 3, '0038 cap: 3 of 3 left in a fresh week');
+  perform t.eq((v_cap->>'resetsAt')::timestamptz, current_setting('t.weekend')::timestamptz, '0038 cap: resets next Monday 00:00 New York');
+  r := send_announcement('Cap one', 'Hello everyone!', 'all', null, null, true);
+  perform set_config('t.a1', r->>'id', false);
+  perform set_config('t.a1count', c->>'email', false);
+  perform t.eq((r->>'emailed')::int, (c->>'email')::int, '0038 count: "emailed" = the count shown before sending');
+  perform t.eq((r->>'emailHoldUntil')::timestamptz, now() + interval '10 minutes', '0038 hold: the response says when the emails go');
+  perform t.eq((r->>'holdMinutes')::int, 10, '0038 hold: … and how long the window is');
+end $$;
+:as_super
+do $$
+declare v_camp text := 'announcement:' || current_setting('t.a1');
+begin
+  perform t.eq((select count(*)::int from email_messages where campaign_id = v_camp and status = 'queued'), current_setting('t.a1count')::int,
+               '0038 count: email count = the emails actually queued (emails on, confirmed, not bouncing)');
+  perform t.ok(not exists (select 1 from email_messages where campaign_id = v_camp and status = 'queued' and email in ('erin@example.edu', 'frank@example.edu', 'unver@example.edu')),
+               '0038 count: opted-out, bouncing and unconfirmed people are not queued');
+  perform t.ok((select bool_and(not_before = now() + interval '10 minutes') from email_messages where campaign_id = v_camp and status = 'queued'), '0038 hold: every queued email waits 10 minutes (not_before)');
+  perform t.eq((select send_before from email_messages where campaign_id = v_camp limit 1), now() + interval '3 days', '0038 hold: expiry is still 3 days from sending');
+  perform t.eq((select email_hold_until from announcements where id = current_setting('t.a1')::uuid), now() + interval '10 minutes', '0038 hold: stored on the announcement');
+  perform t.eq((select count(*)::int from notifications where announcement_id = current_setting('t.a1')::uuid), current_setting('t.everyone')::int, '0038: every in-app notice is tagged with its announcement');
+end $$;
+:as_bob
+do $$
+declare c json; r json;
+begin
+  c := announcement_audience_count('campus', 'unc');
+  r := send_announcement('Campus one', 'Hi UNC', 'campus', 'unc', null, true);
+  perform set_config('t.c1', r->>'id', false);
+  perform t.eq((c->>'inApp')::int, (r->>'recipients')::int, '0038 count: campus in-app count = recipients');
+  perform t.eq((c->>'email')::int, (r->>'emailed')::int, '0038 count: campus email count = emails queued');
+  perform t.throws($q$select announcement_audience_count('campus', 'mars')$q$, 'campus', '0038 count: bad campus');
+  perform t.throws($q$select announcement_audience_count('nobody')$q$, 'audience', '0038 count: bad audience');
+  c := announcement_audience_count('user', null, t.u('alice'));
+  perform t.ok((c->>'inApp')::int = 1 and (c->>'email')::int = 1 and c->>'emailReason' is null, '0038 count: one person, emailed: yes');
+  perform t.eq(announcement_audience_count('user', null, t.u('erin'))->>'emailReason', 'emails_off', '0038 count: one person, emailed: no (emails off)');
+  perform t.eq(announcement_audience_count('user', null, t.u('unver'))->>'emailReason', 'not_confirmed', '0038 count: one person, emailed: no (not confirmed)');
+  perform t.eq(announcement_audience_count('user', null, t.u('frank'))->>'emailReason', 'bouncing', '0038 count: one person, emailed: no (bouncing)');
+  perform t.eq((announcement_audience_count('user', null, gen_random_uuid())->>'inApp')::int, 0, '0038 count: unknown person → 0');
+  r := send_announcement('For Frank', 'Hi', 'user', null, t.u('frank'), true);
+  perform t.eq((r->>'emailed')::int, 0, '0038 count: … and sending to the bouncing person really emails nobody');
+end $$;
+
+-- ---- not_before: held rows are skipped until the window ends ----
+:as_super
+update email_messages set status = 'sent', sent_at = now() - interval '3 days' where status = 'queued' and campaign_id not in ('announcement:' || current_setting('t.c1'), 'announcement:' || current_setting('t.a1'));
+update email_messages set not_before = not_before + interval '1 hour' where campaign_id = 'announcement:' || current_setting('t.a1');   -- parked for the cancel tests below
+select set_config('t.c1n', (select count(*) from email_messages where campaign_id = 'announcement:' || current_setting('t.c1') and status = 'queued')::text, false) \g /dev/null
+:as_service
+do $$ begin
+  perform t.ok(current_setting('t.c1n')::int > 0, '0038 hold: the campus send queued some emails');
+  perform t.eq((select count(*) from claim_email_messages(50, now() + interval '9 minutes 59 seconds')), 0::bigint, '0038 hold: claim skips emails still in their cancel window');
+  perform t.eq((select count(*)::int from claim_email_messages(50, now() + interval '10 minutes')), current_setting('t.c1n')::int, '0038 hold: … and picks them up once it ends');
+end $$;
+:as_super
+update email_messages set not_before = not_before - interval '1 hour' where campaign_id = 'announcement:' || current_setting('t.a1');
+:as_chair1
+do $$ begin
+  perform t.throws(format('select cancel_announcement(%L)', current_setting('t.c1')), 'already_sending', '0038 cancel: refused once any email has been picked up ("Already sending — can’t cancel")');
+  perform t.ok((select not (x->>'canCancel')::boolean and (x->>'emailsStarted')::boolean from json_array_elements(recent_announcements(50)) x where x->>'id' = current_setting('t.c1')),
+               '0038 list: emailsStarted, no Cancel offered');
+end $$;
+
+-- ---- the cap: 3 allowed, the 4th email refused, in-app still fine; campus and one-person not capped ----
+:as_bob
+do $$ declare r json; v_msg text; begin
+  r := send_announcement('Cap two', 'Hello again', 'all', null, null, true);
+  perform set_config('t.a2', r->>'id', false);
+  r := send_announcement('Cap three', 'And again', 'all', null, null, true);
+  perform set_config('t.a3', r->>'id', false);
+  perform t.eq((announcement_email_cap()->>'left')::int, 0, '0038 cap: 3 sent → 0 left');
+  begin
+    perform send_announcement('Cap four', 'One too many', 'all', null, null, true);
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform t.eq(v_msg, 'email_cap: 3 all-member announcement emails have already gone out this week (resets Monday). You can still post it in the app, or send the email to one campus.',
+               '0038 cap: the 4th all-member email is refused with the friendly message');
+  perform t.eq((select count(*) from announcements where title = 'Cap four'), 0::bigint, '0038 cap: … and nothing was posted');
+  r := send_announcement('Cap four', 'One too many', 'all', null, null, false);
+  perform t.eq((r->>'recipients')::int, current_setting('t.everyone')::int, '0038 cap: the same message in the app only is fine');
+  perform t.ok(r->>'emailHoldUntil' is null and (r->>'emailed')::int = 0, '0038 cap: in-app only → no hold, no emails');
+  r := send_announcement('Campus after cap', 'Hi Duke', 'campus', 'duke', null, true);
+  perform t.ok((r->>'emailed')::int > 0, '0038 cap: campus emails are not capped');
+  r := send_announcement('Person after cap', 'Hi Alice', 'user', null, t.u('alice'), true);
+  perform t.eq((r->>'emailed')::int, 1, '0038 cap: one-person emails are not capped');
+end $$;
+:as_chair1
+do $$ begin
+  perform t.throws($q$select send_announcement('Chair try', 'Hi', 'all', null, null, true)$q$, 'email_cap', '0038 cap: across ALL senders (a chair is refused too)');
+end $$;
+
+-- ---- cancel: permissions, effects, log, frees the slot ----
+:as_ref2
+do $$ begin
+  perform t.throws(format('select cancel_announcement(%L)', current_setting('t.a1')), 'forbidden', '0038 cancel: another (plain) admin can''t cancel someone else''s');
+  perform t.ok((select not (x->>'canCancel')::boolean from json_array_elements(recent_announcements(50)) x where x->>'id' = current_setting('t.a1')), '0038 list: no Cancel for another admin');
+end $$;
+:as_bob
+do $$ declare r json; x json; begin
+  select y into x from json_array_elements(recent_announcements(50)) y where y->>'id' = current_setting('t.a1');
+  perform t.ok((x->>'canCancel')::boolean and not (x->>'emailsStarted')::boolean and (x->>'emailHoldUntil')::timestamptz = now() + interval '10 minutes',
+               '0038 list: the sender sees Cancel with the window end');
+  r := cancel_announcement(current_setting('t.a1')::uuid);
+  perform t.eq((r->>'emailsCancelled')::int, current_setting('t.a1count')::int, '0038 cancel: the sender cancels; every queued email is cancelled');
+  perform t.eq((r->>'notificationsRemoved')::int, current_setting('t.everyone')::int, '0038 cancel: … and every in-app notice removed');
+  perform t.throws(format('select cancel_announcement(%L)', current_setting('t.a1')), 'already_cancelled', '0038 cancel: twice → already cancelled');
+  perform t.eq((announcement_email_cap()->>'left')::int, 1, '0038 cancel: frees the weekly slot');
+  select y into x from json_array_elements(recent_announcements(50)) y where y->>'id' = current_setting('t.a1');
+  perform t.ok(x->>'cancelledAt' is not null and x->>'cancelledByName' = (select display_name from profiles where id = t.u('bob')) and not (x->>'canCancel')::boolean,
+               '0038 list: shows "Cancelled by {name}"');
+  perform t.throws(format('select cancel_announcement(%L)', (select id from announcements where title = 'Cap four')), 'not_cancellable', '0038 cancel: in-app-only announcements have no cancel');
+  perform t.throws(format('select cancel_announcement(%L)', gen_random_uuid()), 'not_found', '0038 cancel: unknown id');
+end $$;
+:as_super
+do $$
+declare v_camp text := 'announcement:' || current_setting('t.a1');
+begin
+  perform t.ok((select bool_and(status = 'skipped_cancelled' and error like 'Cancelled by %' and body_html = '') from email_messages where campaign_id = v_camp and status not like 'skipped_opted%' and status <> 'skipped_unverified' and status <> 'skipped_bouncing'),
+               '0038 cancel: rows are skipped_cancelled, contents emptied');
+  perform t.eq((select count(*) from notifications where announcement_id = current_setting('t.a1')::uuid), 0::bigint, '0038 cancel: in-app notices gone');
+  perform t.ok(exists (select 1 from notifications where announcement_id = current_setting('t.a2')::uuid), '0038 cancel: other announcements'' notices untouched');
+  perform t.ok((select cancelled_at = now() and cancelled_by = t.u('bob') from announcements where id = current_setting('t.a1')::uuid), '0038 cancel: announcement marked cancelled');
+  perform t.ok(exists (select 1 from admin_actions where action = 'announcement_cancelled' and actor_id = t.u('bob') and details->>'title' = 'Cap one'
+                         and (details->>'emailsCancelled')::int = current_setting('t.a1count')::int), '0038 cancel: logged as announcement_cancelled');
+  perform t.eq((select status from email_outbox where dedupe_key = v_camp), 'failed', '0038 cancel: its outbox row is closed (nothing left to send)');
+end $$;
+:as_chair1
+do $$ declare r json; begin
+  perform t.ok((select (x->>'canCancel')::boolean from json_array_elements(recent_announcements(50)) x where x->>'id' = current_setting('t.a2')), '0038 list: a YACquest Chair sees Cancel on anyone''s');
+  r := cancel_announcement(current_setting('t.a2')::uuid);
+  perform t.ok((r->>'cancelled')::boolean, '0038 cancel: a YACquest Chair can cancel anyone''s');
+  r := send_announcement('Slot freed', 'Back in', 'all', null, null, true);
+  perform t.ok((r->>'emailed')::int > 0, '0038 cancel: a freed slot can be used again');
+end $$;
+:as_super
+update announcements set email_hold_until = now() - interval '1 second' where id = current_setting('t.a3')::uuid;
+:as_bob
+do $$ begin
+  perform t.throws(format('select cancel_announcement(%L)', current_setting('t.a3')), 'window_closed', '0038 cancel: refused after the window');
+  perform t.ok((select not (x->>'canCancel')::boolean from json_array_elements(recent_announcements(50)) x where x->>'id' = current_setting('t.a3')), '0038 list: no Cancel after the window');
+end $$;
+
+:as_service
+do $$ begin
+  perform t.eq((select count(*) from claim_email_messages(50, now() + interval '1 hour') c join email_messages m on m.id = c.id where m.campaign_id = 'announcement:' || current_setting('t.a1')), 0::bigint,
+               '0038 cancel: cancelled emails are never sent');
+end $$;
+
+-- ---- stats: cancelled is not sent and not failed ----
+:as_chair1
+do $$ declare s json; c json; begin
+  s := email_stats(1);
+  select x into c from json_array_elements(s->'campaigns') x where x->>'id' = 'announcement:' || current_setting('t.a1');
+  perform t.ok((c->>'cancelled')::int = current_setting('t.a1count')::int and (c->>'sent')::int = 0 and (c->>'failed')::int = 0 and (c->>'waiting')::int = 0,
+               '0038 stats: cancelled emails count as cancelled — not sent, not failed, not waiting');
+  perform t.ok((s->'totals'->>'cancelled')::int >= current_setting('t.a1count')::int, '0038 stats: totals report cancelled');
+  perform t.ok(exists (select 1 from email_log(500) where status = 'skipped_cancelled'), '0038: the delivery log shows cancelled rows');
+end $$;
+
+-- ---- hold 0 → no window ----
+:as_super
+update app_config set announce_email_hold_minutes = 0;
+:as_bob
+do $$ declare r json; begin
+  r := send_announcement('No window', 'Hi Duke', 'campus', 'duke', null, true);
+  perform t.ok(r->>'emailHoldUntil' is null, '0038 hold 0: no cancel window');
+  perform set_config('t.nw', r->>'id', false);
+end $$;
+:as_super
+do $$ begin
+  perform t.ok((select bool_and(not_before is null) from email_messages where campaign_id = 'announcement:' || current_setting('t.nw')), '0038 hold 0: emails not held');
+end $$;
+rollback;
+
+-- A cancelled row stays in the DB so the final "all migrations once more" proves 0034/0038 re-run with it present.
+:as_super
+insert into email_messages (kind, campaign_id, email, status, error) values ('announcement', 'announcement:rerun-check', 'rerun@example.edu', 'skipped_cancelled', 'Cancelled by test.');
+
+-- =============================================================================
 :as_super
 select 'PASSED: ' || current_setting('t.passed') || ' assertions' as result;

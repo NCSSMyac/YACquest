@@ -24,6 +24,11 @@ import { fmtEventTime, reminderTitle } from '../lib/todayEvent';
 import { announcementError, claimContactError, cleanSurveyUrl, isEmail, surveyUrlError } from '../lib/validate';
 import { followupDue, checkInClosesAt, missedBody, missedTitle, nextEventFor, thanksBody, thanksTitle } from '../lib/followups';
 import type {
+  AnnouncementAudience,
+  AnnouncementEmailCap,
+  AnnouncementSendResult,
+  AudienceCount,
+  AudienceEmailReason,
   Activity,
   AdminAction,
   AppNotification,
@@ -101,6 +106,7 @@ import type {
 } from '../types';
 import { DEFAULT_CAMPAIGN, DEFAULT_REWARD_ITEM, DEFAULT_REWARD_MESSAGE, OUTFIT_SETS, campaignInputError, campaignSlug, genSecretWord, passValidUntil, rewardInputError } from '../lib/rewardEvents';
 import { isVerified } from '../lib/quickstart';
+import { ANNOUNCE_DEFAULTS, ANNOUNCE_LIMITS, capReachedMessage, countsTowardCap, weekEndNewYork } from '../lib/announceSafeguards';
 import { questOpen, seriesWindowOpen } from '../lib/promo';
 import { PROMO, VERIFY } from '../config';
 import { SPECIAL_BADGES } from '../lib/badges';
@@ -155,6 +161,10 @@ interface Db {
   eventCreators: Record<string, string>;
   /** announcement id → sender user id (announcements.created_by). */
   announcementSenders: Record<string, string>;
+  /** 0038: announcement id → its in-app notification ids (notifications.announcement_id). */
+  announcementNotifs?: Record<string, string[]>;
+  /** 0038: the weekly cap on all-member emails + the cancel window (app_config). */
+  announceSettings?: { weeklyCap: number; holdMinutes: number };
   /** user id → last normal character, restored if a Golden Yak goes back to participant (profiles.normal_avatar). */
   normalAvatars: Record<string, AvatarId>;
   /** 0022: event RSVPs (the real one is event_rsvps). */
@@ -233,6 +243,8 @@ interface MessageRow {
   html: string;
   priority: number;
   sendBefore?: string | null;
+  /** 0038: held until then (email_messages.not_before: the announcement's cancel window). */
+  notBefore?: string;
   status: EmailStatus;
   attempts: number;
   sentAt?: string;
@@ -344,8 +356,10 @@ function rankedParticipants(campus?: CampusId): LeaderRow[] {
     });
 }
 
-function notify(userId: string, kind: NotificationKind, title: string, body: string) {
-  load().notifications.unshift({ id: nextId('ntf'), userId, kind, title, body, read: false, createdAt: now() });
+function notify(userId: string, kind: NotificationKind, title: string, body: string): string {
+  const id = nextId('ntf');
+  load().notifications.unshift({ id, userId, kind, title, body, read: false, createdAt: now() });
+  return id;
 }
 
 /**
@@ -2019,13 +2033,13 @@ function rollupOutbox(outboxId: string | undefined) {
 const rejects = (m: MessageRow) => /\.invalid$/i.test(m.email);
 
 /** SERVER RULE (0032 claim_email_messages): expiry, opt-out, rolling 24 h budget + reserve, priority order. */
-function startSending() {
+function startSending(at?: number) {
   const d = load();
-  const t = Date.now();
+  const t = at ?? Date.now();
   const touched = new Set<string | undefined>();
   const open = (d.messages ?? []).filter((m) => m.status === 'pending' || (m.status === 'failed' && m.attempts < 5));
   const plan = planBatch(
-    open.map((m) => ({ id: m.id, priority: m.priority, createdAt: m.createdAt, sendBefore: m.sendBefore })),
+    open.map((m) => ({ id: m.id, priority: m.priority, createdAt: m.createdAt, sendBefore: m.sendBefore, notBefore: m.notBefore })),
     {
       now: new Date(t),
       sentLast24h: (d.messages ?? []).filter((m) => (m.status === 'sent' || m.status === 'bounced') && m.sentAt && t - new Date(m.sentAt).getTime() < 86_400_000).length,
@@ -2059,14 +2073,14 @@ function finishSending() {
   touched.forEach(rollupOutbox);
   d.emailRunAt = now();
 }
-/** Sends everything pending right away (tests use this instead of waiting for the timer). */
-function deliverOutbox() {
+/** Sends everything pending right away (tests use this instead of waiting for the timer). `at`: pretend it's that time (ms), e.g. after a cancel window. */
+function deliverOutbox(at?: number) {
   // a timer queued earlier must not pick up rows the caller retries afterwards
   if (deliveryTimer) {
     clearTimeout(deliveryTimer);
     deliveryTimer = null;
   }
-  startSending();
+  startSending(at);
   finishSending();
   save();
 }
@@ -2471,6 +2485,7 @@ export async function emailStats(days = 30): Promise<EmailStats> {
     bounced: ms.filter((m) => m.status === 'bounced').length,
     unsubscribed: ms.filter((m) => emailEventsOf(m.id, 'unsubscribe').length > 0).length,
     skipped: ms.filter((m) => m.status.startsWith('skipped')).length,
+    cancelled: ms.filter((m) => m.status === 'skipped_cancelled').length,
     waiting: ms.filter(isWaiting).length,
     failed: ms.filter((m) => m.status === 'failed' && m.attempts >= 5).length,
   })).sort((a, b) => b.firstAt.localeCompare(a.firstAt)).slice(0, 100);
@@ -2484,6 +2499,7 @@ export async function emailStats(days = 30): Promise<EmailStats> {
       unsubscribed: unsubs.size,
       skipped: inWin.filter((m) => m.status.startsWith('skipped')).length,
       expired: inWin.filter((m) => m.status === 'skipped_expired').length,
+      cancelled: inWin.filter((m) => m.status === 'skipped_cancelled').length,
       failed: inWin.filter((m) => m.status === 'failed' && m.attempts >= 5).length,
     },
     daily,
@@ -2614,8 +2630,74 @@ export async function adminActionLog(opts: { before?: number; limit?: number } =
 
 // ───────────────────────────── announcements (admins) ─────────────────────────────
 
-/** SERVER RULE (send_announcement, 0012): admins and chairs send and may email any audience, including everyone; 20 per sender per day. */
-export async function sendAnnouncement(input: AnnouncementInput): Promise<{ recipients: number; emailed: number }> {
+/** 0038: app_config.announce_all_email_weekly_cap / announce_email_hold_minutes. */
+function announceSettings(): { weeklyCap: number; holdMinutes: number } {
+  const d = load();
+  return d.announceSettings ?? { weeklyCap: ANNOUNCE_DEFAULTS.weeklyCap, holdMinutes: ANNOUNCE_DEFAULTS.holdMinutes };
+}
+
+/** SERVER RULE (announce_cap_json, 0038). */
+function announceCap(at: Date = new Date()): AnnouncementEmailCap {
+  const { weeklyCap, holdMinutes } = announceSettings();
+  const used = load().announcements.filter((a) => countsTowardCap(a, at)).length;
+  return { cap: weeklyCap, used, left: Math.max(0, weeklyCap - used), resetsAt: weekEndNewYork(at).toISOString(), holdMinutes };
+}
+
+/** SERVER RULE (0038): who would really be emailed — emails on, confirmed, not bouncing (same as send + expand). */
+function emailReasonFor(u: User): AudienceEmailReason | undefined {
+  if (!u.emailOptIn) return 'emails_off';
+  if (!isVerified(u)) return 'not_confirmed';
+  if (load().emailBounced?.[u.id]) return 'bouncing';
+  return undefined;
+}
+
+function audienceOf(audience: AnnouncementAudience, campus?: CampusId, userId?: string): User[] {
+  return load().users.filter((u) => (audience === 'all' ? true : audience === 'campus' ? u.campus === campus : u.id === userId));
+}
+
+/** SERVER RULE (announcement_audience_count, 0038): admins + chairs. */
+export async function announcementAudienceCount(audience: AnnouncementAudience, campus?: CampusId, userId?: string): Promise<AudienceCount> {
+  await delay();
+  requireRole('admin', 'chair');
+  if (!['all', 'campus', 'user'].includes(audience)) fail('audience', 'Choose who gets this message.');
+  if (audience === 'campus' && !CAMPUSES.some((c) => c.id === campus)) fail('campus', 'Pick a campus.');
+  const people = audienceOf(audience, campus, userId);
+  if (audience === 'user') {
+    if (!people.length) return { inApp: 0, email: 0 };
+    const why = emailReasonFor(people[0]);
+    return { inApp: 1, email: why ? 0 : 1, ...(why ? { emailReason: why } : {}) };
+  }
+  return { inApp: people.length, email: new Set(people.filter((u) => !emailReasonFor(u)).map((u) => u.email.toLowerCase())).size };
+}
+
+/** SERVER RULE (announcement_email_cap, 0038): admins + chairs. */
+export async function announcementEmailCap(): Promise<AnnouncementEmailCap> {
+  await delay();
+  requireRole('admin', 'chair');
+  return announceCap();
+}
+
+/** SERVER RULE (set_announcement_email_settings, 0038): YACquest Chairs only; cap 0–20, window 0–60 minutes; logged. */
+export async function setAnnouncementEmailSettings(s: { weeklyCap: number; holdMinutes: number }): Promise<AnnouncementEmailCap> {
+  await delay();
+  const chair = requireRole('chair');
+  if (!Number.isInteger(s.weeklyCap) || s.weeklyCap < 0 || s.weeklyCap > ANNOUNCE_LIMITS.weeklyCapMax) fail('weekly_cap', 'All-member emails per week: 0–20.');
+  if (!Number.isInteger(s.holdMinutes) || s.holdMinutes < 0 || s.holdMinutes > ANNOUNCE_LIMITS.holdMinutesMax) fail('hold_minutes', 'Cancel window: 0–60 minutes.');
+  const d = load();
+  const old = announceSettings();
+  d.announceSettings = { weeklyCap: s.weeklyCap, holdMinutes: s.holdMinutes };
+  if (old.weeklyCap !== s.weeklyCap || old.holdMinutes !== s.holdMinutes)
+    logAction('announcement_settings_changed', undefined, { weeklyCap: s.weeklyCap, holdMinutes: s.holdMinutes, fromWeeklyCap: old.weeklyCap, fromHoldMinutes: old.holdMinutes }, chair);
+  save();
+  return announceCap();
+}
+
+/**
+ * SERVER RULE (send_announcement, 0012 + 0038): admins and chairs send and may email any audience; 20 per sender per day.
+ * 0038: at most `weeklyCap` all-member EMAILS per New York week (all senders; cancelled ones don't count; in-app is never
+ * capped); emails wait `holdMinutes` (the cancel window); "emailed" = emails actually queued.
+ */
+export async function sendAnnouncement(input: AnnouncementInput): Promise<AnnouncementSendResult> {
   await delay();
   const admin = requireRole('admin', 'chair');
   const problem = announcementError(input);
@@ -2623,18 +2705,25 @@ export async function sendAnnouncement(input: AnnouncementInput): Promise<{ reci
   const d = load();
   const today = d.announcements.filter((a) => a.senderName === admin.displayName && Date.now() - new Date(a.createdAt).getTime() < 86_400_000).length;
   if (today >= 20) fail('limit', 'You’ve sent 20 messages today. Try again tomorrow.');
-  const targets = d.users.filter((u) =>
-    input.audience === 'all' ? true : input.audience === 'campus' ? u.campus === input.campus : u.id === input.userId,
-  );
+  const { holdMinutes } = announceSettings();
+  if (input.sendEmail && input.audience === 'all') {
+    const cap = announceCap();
+    if (cap.left <= 0) fail('email_cap', capReachedMessage(cap.cap));
+  }
+  const targets = audienceOf(input.audience, input.campus, input.userId);
   if (!targets.length) fail(input.audience === 'user' ? 'user' : 'audience', input.audience === 'user' ? 'Pick the person to message.' : 'Nobody matches that audience yet.');
   const title = input.title.trim();
   const body = input.body.trim();
   const id = nextId('ann');
-  // 0032: fill-ins are filled per person in the app too
+  const at = now();
+  const hold = input.sendEmail ? new Date(new Date(at).getTime() + holdMinutes * 60_000).toISOString() : undefined;
+  // 0032: fill-ins are filled per person in the app too; 0038: remembered per announcement (a cancel removes them)
+  const notifIds: string[] = [];
   for (const u of targets) {
     const v = fillValues({ displayName: u.displayName, campus: u.campus, points: pointsOf(u.id), friendCode: u.friendCode }, { events: d.events, seedKey: `announcement:${id}` });
-    notify(u.id, 'announcement', renderFillIns(title, v), renderFillIns(body, v));
+    notifIds.push(notify(u.id, 'announcement', renderFillIns(title, v), renderFillIns(body, v)));
   }
+  (d.announcementNotifs ??= {})[id] = notifIds;
   let emailed = 0;
   const target = input.audience === 'user' ? targets[0] : undefined;
   d.announcementSenders[id] = admin.id;
@@ -2642,25 +2731,76 @@ export async function sendAnnouncement(input: AnnouncementInput): Promise<{ reci
     id, title, body, audience: input.audience,
     campus: input.audience === 'campus' ? input.campus : undefined,
     targetName: target?.displayName, sendEmail: input.sendEmail,
-    recipientCount: targets.length, emailCount: 0, senderName: admin.displayName, createdAt: now(),
+    recipientCount: targets.length, emailCount: 0, senderName: admin.displayName, createdAt: at,
+    ...(hold ? { emailHoldUntil: hold } : {}),
   });
   if (input.sendEmail) {
     // 0032: only people with emails on (direct messages too); one outbox row, one email per person
     const emails = [...new Set(targets.filter((u) => u.emailOptIn).map((u) => u.email.toLowerCase()))];
-    emailed = emails.length;
     const m = announcementEmail(title, body, admin.displayName);
     enqueueEmail('announcement', emails, m.subject, m.text, m.html, `announcement:${id}`);
+    const queued = (d.messages ?? []).filter((x) => x.campaignId === `announcement:${id}` && x.status === 'pending');
+    if (holdMinutes > 0) for (const x of queued) x.notBefore = hold;
+    emailed = queued.length;
     d.announcements[0].emailCount = emailed;
   }
-  logAction('announcement_sent', target, { title, audience: input.audience, campus: input.campus ?? null, recipients: targets.length, emailed }, admin);
+  logAction('announcement_sent', target, { title, audience: input.audience, campus: input.campus ?? null, recipients: targets.length, emailed, emailHoldUntil: hold ?? null }, admin);
   save();
-  return { recipients: targets.length, emailed };
+  return {
+    recipients: targets.length, emailed,
+    ...(input.sendEmail && holdMinutes > 0 ? { emailHoldUntil: hold, holdMinutes } : input.sendEmail ? { holdMinutes } : {}),
+  };
 }
 
+/** Any of its emails already picked up by the sender (or sent / failed). */
+const emailsStartedFor = (id: string) =>
+  (load().messages ?? []).some((m) => m.campaignId === `announcement:${id}` && (m.attempts > 0 || ['sending', 'sent', 'bounced', 'failed'].includes(m.status)));
+
+/** SERVER RULE (recent_announcements, 0038): + cancel state; canCancel for the sender or a YACquest Chair while the window is open. */
 export async function listAnnouncements(limit = 20): Promise<Announcement[]> {
   await delay();
-  requireRole('admin', 'chair');
-  return load().announcements.slice(0, limit);
+  const caller = requireRole('admin', 'chair');
+  const d = load();
+  // demo stand-in for the 10-minute cron: emails whose window ended go out when someone looks
+  if ((d.messages ?? []).some((m) => m.status === 'pending' && m.notBefore && new Date(m.notBefore).getTime() <= Date.now())) scheduleDelivery();
+  return d.announcements.slice(0, limit).map((a) => {
+    const started = emailsStartedFor(a.id);
+    const mine = d.announcementSenders[a.id] === caller.id;
+    return {
+      ...a,
+      emailsStarted: started,
+      canCancel: !!a.sendEmail && !a.cancelledAt && !!a.emailHoldUntil && new Date(a.emailHoldUntil).getTime() > Date.now() && !started && (mine || caller.role === 'chair'),
+    };
+  });
+}
+
+/** SERVER RULE (cancel_announcement, 0038): the sender or a YACquest Chair, window open, no email picked up yet. */
+export async function cancelAnnouncement(id: string): Promise<{ emailsCancelled: number; notificationsRemoved: number }> {
+  await delay();
+  const caller = requireRole('admin', 'chair');
+  const d = load();
+  const a = d.announcements.find((x) => x.id === id);
+  if (!a) return fail('not_found', 'Announcement not found.');
+  if (d.announcementSenders[id] !== caller.id && caller.role !== 'chair') fail('forbidden', 'Only the person who sent it or a YACquest Chair can cancel it.');
+  if (a.cancelledAt) fail('already_cancelled', 'This announcement was already cancelled.');
+  if (!a.sendEmail || !a.emailHoldUntil) fail('not_cancellable', 'Only announcements sent with email can be cancelled (before the emails go out).');
+  if (emailsStartedFor(id)) fail('already_sending', 'Already sending — can’t cancel.');
+  if (Date.now() >= new Date(a.emailHoldUntil!).getTime()) fail('window_closed', 'Too late to cancel: the emails are on their way.');
+  const rows = (d.messages ?? []).filter((m) => m.campaignId === `announcement:${id}` && m.status === 'pending');
+  for (const m of rows) Object.assign(m, { status: 'skipped_cancelled', error: `Cancelled by ${caller.displayName}.`, text: '', html: '' });
+  new Set(rows.map((m) => m.outboxId)).forEach(rollupOutbox);
+  const ids = new Set(d.announcementNotifs?.[id] ?? []);
+  const before = d.notifications.length;
+  d.notifications = d.notifications.filter((n) => !ids.has(n.id));
+  const removed = before - d.notifications.length;
+  if (d.announcementNotifs) delete d.announcementNotifs[id];
+  a.cancelledAt = now();
+  a.cancelledByName = caller.displayName;
+  const target = a.audience === 'user' ? d.users.find((u) => u.displayName === a.targetName) : undefined;
+  logAction('announcement_cancelled', target, { title: a.title, audience: a.audience, campus: a.campus ?? null, announcementId: id, sentBy: a.senderName, emailsCancelled: rows.length, notificationsRemoved: removed }, caller);
+  save();
+  emitChange();
+  return { emailsCancelled: rows.length, notificationsRemoved: removed };
 }
 
 // ───────────────────────────── feedback ─────────────────────────────

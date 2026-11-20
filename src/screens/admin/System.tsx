@@ -12,6 +12,7 @@ import { useHashScroll } from '../../lib/useHashScroll';
 import { EndOfYearCard } from './EndOfYear';
 import { EmailQueueCard } from '../../components/EmailBlocks';
 import { EMAIL_KIND_LABEL, EMAIL_STATUS_CHIP, EMAIL_STATUS_LABEL } from '../../lib/emailStats';
+import { ANNOUNCE_LIMITS, capLine } from '../../lib/announceSafeguards';
 
 export default function System() {
   const toast = useToast();
@@ -65,6 +66,7 @@ export default function System() {
       {/* 0032: today's budget, queue and bounce checking */}
       <EmailQueueCard id="email" />
       <WeeklyEmail />
+      <AnnouncementEmails />
       <EmailLog />
 
       <Card glyph="coin" title="Export" id="export">
@@ -282,6 +284,69 @@ function WeeklyEmail() {
           </div>
         </div>
       </Modal>
+    </Accordion>
+  );
+}
+
+// ───────────────────────────── 0038: announcement email safeguards ─────────────────────────────
+
+/** The weekly cap on all-member announcement emails and the cancel window (app_config). YACquest Chairs only. */
+function AnnouncementEmails() {
+  const toast = useToast();
+  const cap = useAsync(() => api.announcementEmailCap(), [], { live: true });
+  const [weekly, setWeekly] = useState('');
+  const [hold, setHold] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    if (cap.data) {
+      setWeekly(String(cap.data.cap));
+      setHold(String(cap.data.holdMinutes));
+    }
+  }, [cap.data]);
+  const dirty = !!cap.data && (weekly !== String(cap.data.cap) || hold !== String(cap.data.holdMinutes));
+  const summary = cap.data ? `${capLine(cap.data)} · cancel window ${cap.data.holdMinutes} min` : 'Weekly limit and cancel window';
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setErr(null);
+    const w = Number(weekly);
+    const h = Number(hold);
+    if (!Number.isInteger(w) || w < 0 || w > ANNOUNCE_LIMITS.weeklyCapMax) return setErr(`All-member emails per week: 0–${ANNOUNCE_LIMITS.weeklyCapMax}.`);
+    if (!Number.isInteger(h) || h < 0 || h > ANNOUNCE_LIMITS.holdMinutesMax) return setErr(`Cancel window: 0–${ANNOUNCE_LIMITS.holdMinutesMax} minutes.`);
+    setSaving(true);
+    try {
+      cap.setData(await api.setAnnouncementEmailSettings({ weeklyCap: w, holdMinutes: h }));
+      toast('Announcement email settings saved.', 'success');
+    } catch (x) {
+      setErr(errorMessage(x));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Accordion glyph="megaphone" title="Announcement emails" summary={summary} id="announce-emails">
+      {cap.loading && !cap.data ? <Loading lines={2} /> : (
+        <form className="stack" onSubmit={save}>
+          <p className="muted" style={{ margin: 0 }}>
+            Limits how often everyone gets an announcement email (all senders together; Monday–Sunday, Eastern). Campus and one-person emails and in-app messages aren’t limited.
+          </p>
+          <div className="grid-2">
+            <label className="field">
+              <span>All-member emails per week</span>
+              <input className="input" type="number" inputMode="numeric" min={0} max={ANNOUNCE_LIMITS.weeklyCapMax} step={1} value={weekly} onChange={(e) => setWeekly(e.target.value)} />
+            </label>
+            <label className="field">
+              <span>Cancel window (minutes)</span>
+              <input className="input" type="number" inputMode="numeric" min={0} max={ANNOUNCE_LIMITS.holdMinutesMax} step={1} value={hold} onChange={(e) => setHold(e.target.value)} />
+            </label>
+          </div>
+          <small className="muted">Emailed announcements wait this long before they go out, so the sender or a YACquest Chair can cancel them in Announce → Recently sent.</small>
+          <ErrorText error={err ?? cap.error} />
+          <button className="btn green" disabled={saving || !dirty}>{saving ? 'Saving…' : dirty ? 'Save' : 'Saved'}</button>
+        </form>
+      )}
     </Accordion>
   );
 }
