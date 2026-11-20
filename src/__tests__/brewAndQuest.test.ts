@@ -100,10 +100,11 @@ describe('Coffee Pass + reveal helpers', () => {
 describe('admin setup helpers', () => {
   it('Brew & Quest preset: 3 campus events, dates fixed, times left for the admin', () => {
     expect(BREW_PRESETS.map((p) => [p.campus, p.venue, p.date, p.limit])).toEqual([
-      ['ncsu', 'Cup of Joe', '2026-12-02', 10], ['unc', 'Epilogue', '2026-12-03', 30], ['duke', 'TBD', '2026-12-05', 6],
+      ['ncsu', 'Cup of Joe', '2026-12-02', 10], ['unc', 'Epilogue', '2026-12-03', 30], ['duke', 'Mad Hatter’s Café', '2026-12-05', 6],
     ]);
     expect(presetTitle(BREW_PRESETS[0])).toBe('Brew & Quest @ Cup of Joe');
-    expect(presetTitle(BREW_PRESETS[2])).toBe('Brew & Quest @ Duke');
+    expect(presetTitle(BREW_PRESETS[2])).toBe('Brew & Quest @ Mad Hatter’s Café');
+    expect(presetTitle({ venue: 'TBD', campus: 'duke' })).toBe('Brew & Quest @ Duke');
     const f = applyPreset({ title: '', campus: 'duke', kind: 'high_impact', location: '', start: '2026-11-20T18:00', end: '2026-11-20T20:00', grace: 60, password: 'YAK-1', surveyUrl: '', reward: null }, BREW_PRESETS[1]);
     expect(f).toMatchObject({ title: 'Brew & Quest @ Epilogue', campus: 'unc', kind: 'active', location: 'Epilogue', start: '', end: '' });
     expect(f.reward).toMatchObject({ itemLabel: 'free coffee', limit: '30', venue: 'Epilogue', outfitSet: 'latte_night_scholar' });

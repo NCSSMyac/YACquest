@@ -124,11 +124,11 @@ export interface BrewPreset {
   limit: number;
 }
 
-/** The three exam-season Brew & Quest events (Duke's café isn't picked yet → "TBD"). */
+/** The three exam-season Brew & Quest events (all 12:00–1:00 PM ET; set the times in the form). */
 export const BREW_PRESETS: BrewPreset[] = [
   { id: 'ncsu', label: 'NC State · Cup of Joe · Dec 2', campus: 'ncsu', venue: 'Cup of Joe', date: '2026-12-02', limit: 10 },
   { id: 'unc', label: 'UNC Chapel Hill · Epilogue · Dec 3', campus: 'unc', venue: 'Epilogue', date: '2026-12-03', limit: 30 },
-  { id: 'duke', label: 'Duke · venue TBD · Dec 5', campus: 'duke', venue: 'TBD', date: '2026-12-05', limit: 6 },
+  { id: 'duke', label: 'Duke · Mad Hatter’s Café · Dec 5', campus: 'duke', venue: 'Mad Hatter’s Café', date: '2026-12-05', limit: 6 },
 ];
 
 /** "Brew & Quest @ Cup of Joe" (Duke while the venue is unknown: "Brew & Quest @ Duke"). */
