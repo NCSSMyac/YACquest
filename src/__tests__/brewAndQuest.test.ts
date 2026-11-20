@@ -49,7 +49,7 @@ describe('countdown banner text', () => {
     expect(shortItem('Free hot cocoa')).toBe('hot cocoa');
     expect(fillMessage('{venue}/{limit}/{item}', { venue: '', limit: 6, itemLabel: 'free coffee' })).toBe('TBD/6/coffee');
   });
-  it('banners: every campus, own campus first, then live, then soonest; checked-in / over hidden', () => {
+  it('banners: my campus (+ all-campus) only, live first, then soonest; checked-in / over hidden', () => {
     const now = Date.parse('2026-12-02T19:30:00Z');
     const mk = (id: string, campus: YacEvent['campus'], startsAt: string, endsAt: string, extra: object = {}) => ({ id, title: id, campus, startsAt, endsAt, reward, ...extra });
     const list = [
@@ -60,7 +60,9 @@ describe('countdown banner text', () => {
       mk('mine-already', 'duke', '2026-12-02T19:00:00Z', '2026-12-02T21:00:00Z', { checkedIn: true }),
       { id: 'plain', title: 'Plain', campus: 'duke' as const, startsAt: '2026-12-02T19:00:00Z', endsAt: '2026-12-02T21:00:00Z' },
     ];
-    expect(rewardBanners(list, 'duke', now).map((e) => e.id)).toEqual(['duke', 'ncsu-live', 'unc']);
+    expect(rewardBanners(list, 'duke', now).map((e) => e.id)).toEqual(['duke']);
+    expect(rewardBanners(list, 'ncsu', now).map((e) => e.id)).toEqual(['ncsu-live']);
+    expect(rewardBanners(list, undefined, now).map((e) => e.id)).toEqual(['ncsu-live', 'unc', 'duke']);
   });
 });
 

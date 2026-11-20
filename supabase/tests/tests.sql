@@ -4723,5 +4723,197 @@ end $$;
 rollback;
 
 -- =============================================================================
+-- 0037. EMAIL RETENTION PURGE, EMAILED (mailto) UNSUBSCRIBES, TEST EMAIL GREETING
+--       (everything rolled back afterwards)
+-- =============================================================================
+begin;
+:as_super
+delete from email_purge_runs;
+delete from prize_claims where cycle_id = active_cycle_id();
+update report_settings set prize_alerts_enabled = false;   -- this section writes its own alerts below
+update profiles set email_opt_in = true where id in (t.u('carol'), t.u('dave'));
+insert into prize_claims (id, cycle_id, spot, user_id, display_name, campus, status, contact) values
+  ('00000000-0000-0000-0000-0000000037c1', active_cycle_id(), 1, t.u('alice'), 'Alice A.', 'duke', 'info_submitted', '{"fullName":"Alice Adams","address":"1 Main St"}'),
+  ('00000000-0000-0000-0000-0000000037c2', active_cycle_id(), 2, t.u('bob'), 'Bob', 'unc', 'info_submitted', '{"fullName":"Bob B","address":"2 Main St"}');
+-- (created_at set explicitly; the outbox trigger copies it to each per-recipient message)
+insert into email_outbox (kind, to_emails, subject, body_text, body_html, dedupe_key, created_at) values
+  ('test',          '{staff37@example.edu}', 'old',      'old body',     '<p>old</p>',     't37:old',     now() - interval '13 months'),
+  ('test',          '{staff37@example.edu}', 'recent',   'recent body',  '<p>recent</p>',  't37:recent',  now() - interval '11 months'),
+  ('prize_info',    '{staff37@example.edu}', 'pi old',   'Address: 2 Main St', '<p>2 Main St</p>', 'prize_info:00000000-0000-0000-0000-0000000037c2:a', now() - interval '31 days'),
+  ('prize_info',    '{staff37@example.edu}', 'pi new',   'Address: 2 Main St', '<p>2 Main St</p>', 'prize_info:00000000-0000-0000-0000-0000000037c2:b', now() - interval '29 days'),
+  ('prize_qualified','{staff37@example.edu}', 'pq new',  'Bob won',      '<p>Bob won</p>', 'prize_qualified:00000000-0000-0000-0000-0000000037c2', now() - interval '29 days'),
+  ('prize_info',    '{staff37@example.edu}', 'pi ful',   'Address: 1 Main St', '<p>1 Main St</p>', 'prize_info:00000000-0000-0000-0000-0000000037c1:a', now() - interval '2 days'),
+  ('prize_info',    '{staff37@example.edu}', 'pi queued','Address: 1 Main St', '<p>1 Main St</p>', 'prize_info:00000000-0000-0000-0000-0000000037c1:b', now() - interval '40 days'),
+  ('weekly_report', '{staff37@example.edu}', 'wr old',   'Feedback: Alice said hi', '<p>Alice</p>', 't37:wr-old', now() - interval '31 days'),
+  ('weekly_report', '{staff37@example.edu}', 'wr new',   'Feedback: Bob said hi',   '<p>Bob</p>',   't37:wr-new', now() - interval '1 day'),
+  ('announcement',  '{carol@example.edu}',   'ann old',  'Hello',        '<p>Hello</p>',   't37:ann-old', now() - interval '31 days');
+-- everything went out except 'pi queued' (still waiting) and 'wr old', which failed for good (5 tries)
+update email_messages m set status = 'sent', sent_at = m.created_at
+  from email_outbox o where o.id = m.outbox_id and o.dedupe_key like any (array['t37:%', 'prize_%']) and o.subject not in ('pi queued', 'wr old');
+update email_messages m set status = 'failed', attempts = 5, error = 'x'
+  from email_outbox o where o.id = m.outbox_id and o.subject = 'wr old';
+update email_messages m set status = 'queued'
+  from email_outbox o where o.id = m.outbox_id and o.subject = 'pi queued';
+update email_outbox set status = case when subject = 'pi queued' then 'pending' when subject = 'wr old' then 'failed' else 'sent' end
+ where dedupe_key like any (array['t37:%', 'prize_%:00000000-0000-0000-0000-000000003%']);
+insert into email_events (message_id, user_id, type, created_at)
+select m.id, null, 'open', x.at
+  from email_messages m join email_outbox o on o.id = m.outbox_id,
+       (values (now() - interval '13 months' + interval '1 hour'), (now() - interval '1 day')) x(at)
+ where o.dedupe_key = 't37:recent';
+insert into email_verify_tokens (token_hash, user_id, email, reason, created_at, expires_at, used_at) values
+  ('t37-used-old',    t.u('dave'), 'dave@example.edu', 'signup', now() - interval '31 days', now() - interval '24 days', now() - interval '30 days'),
+  ('t37-expired-old', t.u('dave'), 'dave@example.edu', 'signup', now() - interval '40 days', now() - interval '33 days', null),
+  ('t37-unused-old',  t.u('dave'), 'dave@example.edu', 'signup', now() - interval '31 days', now() + interval '1 day',   null),
+  ('t37-used-new',    t.u('dave'), 'dave@example.edu', 'resend', now() - interval '5 days',  now() + interval '2 days',  now() - interval '4 days');
+
+do $$ begin
+  perform t.eq(email_keep_log(), interval '12 months', '0037: email log kept 12 months (named constant)');
+  perform t.eq(email_keep_sensitive_body(), interval '30 days', '0037: sensitive contents kept 30 days (named constant)');
+  perform t.eq(email_keep_verify_tokens(), interval '30 days', '0037: used/expired confirmation tokens kept 30 days (named constant)');
+  perform t.eq(email_purge_every(), interval '1 day', '0037: purge at most once a day (named constant)');
+  perform t.eq((select count(*) from email_messages m join email_outbox o on o.id = m.outbox_id where o.dedupe_key like 't37:%' or o.dedupe_key like 'prize_%:00000000-0000-0000-0000-000000003%'), 10::bigint, '0037 setup: one message per test email');
+end $$;
+
+-- ---- access: service role only ----
+:as_anon
+do $$ begin
+  perform t.denied('select purge_email_data()', '0037: anon cannot run the purge');
+  perform t.denied($q$select unsubscribe_by_email('carol@example.edu')$q$, '0037: anon cannot call unsubscribe_by_email');
+  perform t.denied('select count(*) from email_purge_runs', '0037: anon cannot read purge runs');
+end $$;
+:as_alice
+do $$ begin
+  perform t.denied('select purge_email_data()', '0037: participants cannot run the purge');
+  perform t.denied($q$select unsubscribe_by_email('carol@example.edu')$q$, '0037: participants cannot call unsubscribe_by_email');
+end $$;
+:as_chair1
+do $$ begin
+  perform t.denied('select purge_email_data()', '0037: chairs cannot run the purge');
+  perform t.denied($q$select unsubscribe_by_email('carol@example.edu')$q$, '0037: chairs cannot call unsubscribe_by_email');
+  perform t.denied('select count(*) from email_purge_runs', '0037: chairs cannot read purge runs directly');
+end $$;
+
+-- ---- fulfilment empties that winner's prize alerts right away (not ones still waiting to go out) ----
+:as_chair1
+select mark_fulfilled(1) \g /dev/null
+:as_super
+do $$ begin
+  perform t.ok((select body_text = '' and body_html = '' and body_purged_at is not null from email_outbox where subject = 'pi ful'), '0037 fulfilment: prize alert contents emptied in the outbox');
+  perform t.ok((select bool_and(m.body_text = '' and m.body_html = '' and m.body_purged_at is not null) from email_messages m join email_outbox o on o.id = m.outbox_id where o.subject = 'pi ful'),
+               '0037 fulfilment: and in the per-recipient copy');
+  perform t.ok((select body_text like '%1 Main St%' from email_outbox where subject = 'pi queued'), '0037 fulfilment: an alert still waiting to go out keeps its contents');
+  perform t.ok((select bool_and(m.body_text like '%1 Main St%') from email_messages m join email_outbox o on o.id = m.outbox_id where o.subject = 'pi queued'), '0037 fulfilment: (its message too)');
+  perform t.ok((select body_text like '%2 Main St%' from email_outbox where subject = 'pi new'), '0037 fulfilment: another winner''s alert is untouched');
+  perform t.eq((select count(*) from email_purge_runs), 0::bigint, '0037 fulfilment: not a purge run');
+end $$;
+
+-- ---- the daily purge ----
+:as_service
+do $$ declare r jsonb; begin
+  r := purge_email_data();
+  perform set_config('t.purge', r::text, false);
+  perform t.ok(r->>'skipped' is null, '0037 purge: runs');
+end $$;
+:as_super
+do $$ declare r jsonb := current_setting('t.purge')::jsonb; begin
+  perform t.ok(not exists (select 1 from email_outbox where dedupe_key = 't37:old'), '0037 purge: outbox row older than 12 months deleted');
+  perform t.ok(not exists (select 1 from email_messages where subject = 'old' and email = 'staff37@example.edu'), '0037 purge: its message deleted');
+  perform t.ok(exists (select 1 from email_outbox where dedupe_key = 't37:recent' and body_text = 'recent body'), '0037 purge: 11-month-old test email kept as is');
+  perform t.ok(exists (select 1 from email_messages where subject = 'recent' and email = 'staff37@example.edu'), '0037 purge: its message kept');
+  perform t.eq((select count(*) from email_events e join email_messages m on m.id = e.message_id where m.subject = 'recent' and m.email = 'staff37@example.edu'), 1::bigint,
+               '0037 purge: event older than 12 months deleted, recent one kept');
+  perform t.ok((r->>'events')::int >= 1 and (r->>'outbox')::int >= 1, '0037 purge: counts reported');
+  perform t.ok((select body_text = '' and body_html = '' and body_purged_at is not null from email_outbox where subject = 'pi old'), '0037 purge: prize_info contents emptied after 30 days');
+  perform t.ok((select bool_and(m.body_text = '' and m.body_html = '') from email_messages m join email_outbox o on o.id = m.outbox_id where o.subject = 'pi old'), '0037 purge: (its message too)');
+  perform t.ok((select body_text like '%2 Main St%' and body_purged_at is null from email_outbox where subject = 'pi new'), '0037 purge: 29-day-old prize_info of an undelivered prize kept');
+  perform t.ok((select body_text = 'Bob won' from email_outbox where subject = 'pq new'), '0037 purge: 29-day-old prize_qualified kept');
+  perform t.ok((select body_text like '%1 Main St%' from email_outbox where subject = 'pi queued'), '0037 purge: a prize alert still waiting to go out is never emptied');
+  perform t.ok((select body_text = '' and body_purged_at is not null from email_outbox where subject = 'wr old'), '0037 purge: weekly report contents emptied after 30 days');
+  perform t.ok((select bool_and(m.body_text = '' and m.body_purged_at is not null) from email_messages m join email_outbox o on o.id = m.outbox_id where o.subject = 'wr old'),
+               '0037 purge: (its failed-for-good message too)');
+  perform t.ok((select body_text like '%Bob said hi%' from email_outbox where subject = 'wr new'), '0037 purge: this week''s report kept');
+  perform t.ok((select bool_and(m.body_text <> '' and m.body_purged_at is null) from email_messages m join email_outbox o on o.id = m.outbox_id where o.subject = 'ann old'),
+               '0037 purge: member emails keep their contents (deleted after 12 months instead)');
+  perform t.ok(not exists (select 1 from email_verify_tokens where token_hash in ('t37-used-old', 't37-expired-old')), '0037 purge: used / expired confirmation tokens older than 30 days deleted');
+  perform t.ok((select count(*) = 2 from email_verify_tokens where token_hash in ('t37-unused-old', 't37-used-new')), '0037 purge: unexpired or recent tokens kept');
+  perform t.eq((r->>'verifyTokens')::int, 2, '0037 purge: token count reported');
+  perform t.eq((select count(*) from email_purge_runs), 1::bigint, '0037 purge: run logged');
+end $$;
+:as_service
+do $$ declare r jsonb; begin
+  r := purge_email_data();
+  perform t.eq(r->>'skipped', 'ran_today', '0037 purge: at most once a day');
+  perform t.ok(enqueue_weekly_report_if_due() is not null, '0037: the per-run call still works while the purge is skipped');
+  r := purge_email_data(now() + interval '25 hours');
+  perform t.ok(r->>'skipped' is null, '0037 purge: runs again the next day');
+  r := purge_email_data(now(), true);
+  perform t.ok(r->>'skipped' is null, '0037 purge: p_force skips the once-a-day check');
+end $$;
+:as_super
+delete from email_purge_runs;
+:as_service
+select enqueue_weekly_report_if_due() \g /dev/null
+:as_super
+do $$ begin
+  perform t.eq((select count(*) from email_purge_runs), 1::bigint, '0037: enqueue_weekly_report_if_due (the send-emails per-run call) runs the purge');
+end $$;
+-- a purge failure never blocks sending
+create function t.purge_boom() returns void language plpgsql as $$ begin raise exception 'boom'; end $$;
+alter function public.purge_email_data(timestamptz, boolean) rename to purge_email_data_real;
+create function public.purge_email_data(p_now timestamptz default now(), p_force boolean default false) returns jsonb
+  language plpgsql as $$ begin perform t.purge_boom(); return null; end $$;
+grant usage on schema t to service_role;
+grant execute on function t.purge_boom() to service_role;
+:as_service
+do $$ begin
+  perform t.ok(enqueue_weekly_report_if_due() is not null, '0037: a failing purge never blocks enqueue_weekly_report_if_due');
+end $$;
+:as_super
+drop function public.purge_email_data(timestamptz, boolean);
+alter function public.purge_email_data_real(timestamptz, boolean) rename to purge_email_data;
+
+-- ---- Retry refuses emptied emails ----
+select set_config('t.wrold', (select m.id::text from email_messages m join email_outbox o on o.id = m.outbox_id where o.subject = 'wr old'), false) \g /dev/null
+:as_chair1
+do $$ begin
+  perform t.throws(format('select retry_email(%L)', current_setting('t.wrold')),
+                   'purged', '0037: Retry refuses an email whose contents were emptied');
+end $$;
+
+-- ---- unsubscribe_by_email (List-Unsubscribe mailto) ----
+:as_service
+do $$ begin
+  perform t.eq(unsubscribe_by_email('  Carol@Example.EDU '), true, '0037 mailto: known address (any case, spaces) → true');
+  perform t.eq(unsubscribe_by_email('carol@example.edu'), true, '0037 mailto: again → still true (idempotent)');
+  perform t.eq(unsubscribe_by_email('nobody37@example.edu'), false, '0037 mailto: unknown address → false');
+  perform t.eq(unsubscribe_by_email('not an email'), false, '0037 mailto: garbage → false');
+  perform t.eq(unsubscribe_by_email(null), false, '0037 mailto: null → false');
+end $$;
+:as_super
+do $$ begin
+  perform t.ok((select not email_opt_in from profiles where id = t.u('carol')), '0037 mailto: emails turned off');
+  perform t.eq((select count(*) from email_events where user_id = t.u('carol') and type = 'unsubscribe' and detail = 'mailto'), 1::bigint, '0037 mailto: exactly one unsubscribe event (detail mailto)');
+  perform t.ok((select email_opt_in from profiles where id = t.u('dave')), '0037 mailto: nobody else touched');
+end $$;
+:as_service
+select email_run_finished('{"sent": 1, "failed": 0, "bounces": 0, "unsubscribes": 2, "imap": "ok"}') \g /dev/null
+:as_super
+do $$ begin
+  perform t.eq((select unsubscribes from email_runs order by ran_at desc, id desc limit 1), 2, '0037: run stats record mailto unsubscribes');
+end $$;
+
+-- ---- test email greets with the first name ----
+update profiles set display_name = 'Iesha Landis' where id = t.u('chair1');
+:as_chair1
+select send_test_email() \g /dev/null
+:as_super
+do $$ begin
+  perform t.ok((select body_text like 'Hi Iesha,%' and position('Landis' in body_text) = 0 and position('Hi Iesha,' in body_html) > 0
+                  from email_outbox where kind = 'test' order by created_at desc, id limit 1), '0037: test email says "Hi Iesha," (first name)');
+end $$;
+rollback;
+
+-- =============================================================================
 :as_super
 select 'PASSED: ' || current_setting('t.passed') || ' assertions' as result;

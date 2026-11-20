@@ -29,7 +29,7 @@ export function MysterySilhouette({ outfitSet, avatar = 'yak', size = 72 }: { ou
   );
 }
 
-/** Home: RSVP to the next event of the series (own campus first). */
+/** Home: RSVP to the next event of the series at my campus (or an all-campus one). */
 export function HomeMysteryTeaser() {
   const { user } = useAuth();
   const toast = useToast();

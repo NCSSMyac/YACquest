@@ -14,6 +14,7 @@ import { eventPhase } from '../../lib/adminDashboard';
 import { monthName } from '../../lib/format';
 import { FILL_INS, SAMPLE_PERSON, fillValues, greetingLine, renderFillIns, unknownFillIns, type FillInToken, type FillPerson } from '../../lib/emailFill';
 import { startedEventsMentioned } from '../../lib/emailStats';
+import { ANNOUNCE_EMAIL_HINT_GROUP, ANNOUNCE_EMAIL_HINT_ONE } from '../../lib/emailWording';
 
 /** Admins send a custom message to everyone, one campus, or one person (in-app + optional email). */
 export default function Announce() {
@@ -196,9 +197,7 @@ export default function Announce() {
               Also send as an email
               <br />
               <small className="muted">
-                {audience === 'user'
-                  ? 'Goes to their account email.'
-                  : 'Only to people who left “Email me announcements from YAC” on. Gmail allows about 500 emails a day, so save email for important news.'}
+                {audience === 'user' ? ANNOUNCE_EMAIL_HINT_ONE : ANNOUNCE_EMAIL_HINT_GROUP}
               </small>
             </span>
           </label>

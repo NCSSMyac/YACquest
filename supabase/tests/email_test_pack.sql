@@ -126,7 +126,7 @@ begin
   -- Participant emails (3–6) are skipped for people who turned emails off, haven't confirmed
   -- their email, or whose address bounces: stop now instead of queuing emails that won't go.
   if not p.email_opt_in then
-    raise exception 'Email test pack: email updates are OFF for % (for example after testing Unsubscribe), so the announcement / reminder / follow-up / Wrapped tests would be skipped. Turn them back on in YACquest → Me → Settings ("Email me announcements"), then press Run again. Nothing was queued.', v_addr;
+    raise exception 'Email test pack: email updates are OFF for % (for example after testing Unsubscribe), so the announcement / reminder / follow-up / Wrapped tests would be skipped. Turn them back on in YACquest → Me → Settings ("Email me YACquest updates"), then press Run again. Nothing was queued.', v_addr;
   end if;
   if p.email_verified_at is null then
     raise exception 'Email test pack: % hasn''t confirmed their email yet, so participant emails would be skipped (in-app only). Confirm it first (red bar at the top of the app → Resend email), then press Run again. Nothing was queued.', v_addr;

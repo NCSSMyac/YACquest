@@ -177,11 +177,13 @@ describe('mystery outfit teaser', () => {
     { id: 'unc', title: 'Brew & Quest @ Epilogue', campus: 'unc' as const, startsAt: '2026-12-03T19:00:00Z', endsAt: '2026-12-03T21:00:00Z', reward },
     { id: 'plain', title: 'Trivia', campus: 'unc' as const, startsAt: '2026-11-25T19:00:00Z', endsAt: '2026-11-25T21:00:00Z' },
   ];
-  it('shows within 14 days of the series, RSVP to my campus first', () => {
+  it('shows within 14 days of the series, only for my campus', () => {
     const t = homeTeaser(evs, [], 'unc', Date.parse('2026-11-20T12:00:00Z'))!;
     expect(t).toMatchObject({ outfitSet: 'latte_night_scholar', name: 'Brew & Quest', emoji: '☕' });
     expect(t.rsvp?.id).toBe('unc');
-    expect(homeTeaser(evs, [], 'duke', Date.parse('2026-11-20T12:00:00Z'))!.rsvp?.id).toBe('ncsu');
+    expect(homeTeaser(evs, [], 'ncsu', Date.parse('2026-11-20T12:00:00Z'))!.rsvp?.id).toBe('ncsu');
+    expect(homeTeaser(evs, [], 'duke', Date.parse('2026-11-20T12:00:00Z'))).toBeNull();
+    expect(homeTeaser(evs, [], undefined, Date.parse('2026-11-20T12:00:00Z'))!.rsvp?.id).toBe('ncsu');
   });
   it('hidden more than 14 days before, after the series, and once I own the whole outfit', () => {
     expect(homeTeaser(evs, [], 'unc', Date.parse('2026-11-17T18:00:00Z'))).toBeNull();

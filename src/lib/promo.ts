@@ -7,7 +7,7 @@ import { CAMPUSES, CAMPUS_THANKS, CAPS, PROMO, QUEST_WINDOWS, TIER_POINTS, campu
 import { signupLink } from './friends';
 import { nyDate } from './seasonal';
 import { yakPun } from './yakPuns';
-import { OUTFIT_SETS, campaignLabels, isCoffee, pluralItem, rewardEventName } from './rewardEvents';
+import { OUTFIT_SETS, campaignLabels, isCoffee, myCampusEvents, pluralItem, rewardEventName } from './rewardEvents';
 import type { EventRecap, EventReward, RewardScoreboard, RewardTeaser, YacEvent } from '../types';
 
 const DAY = 86_400_000;
@@ -22,7 +22,7 @@ export interface HomeTeaser {
   name: string;
   emoji: string;
   startsAt: string;
-  /** The event to RSVP to: own campus (or all-campus) first, then the soonest that hasn't started. */
+  /** The event to RSVP to: the soonest at my campus (or all-campus) that hasn't started. */
   rsvp?: TeaserEvent;
 }
 
@@ -30,12 +30,13 @@ export interface HomeTeaser {
 export const setItems = (outfitSet: string) => OUTFIT_SETS.find((s) => s.id === outfitSet)?.items ?? [];
 
 /**
- * Home: the next special series whose next event starts within PROMO.teaserDays (or is live), unless the
- * player already owns the whole outfit.
+ * Home: the next special series whose next event at my campus (or an all-campus one) starts within
+ * PROMO.teaserDays (or is live), unless the player already owns the whole outfit. Other campuses' events
+ * are never teased (no campus set → every campus counts).
  */
 export function homeTeaser(events: readonly TeaserEvent[] | null | undefined, owned: Iterable<string>, campus: CampusId | undefined, now: number): HomeTeaser | null {
   const have = new Set(owned);
-  const open = (events ?? []).filter((e) => e.reward && new Date(e.endsAt).getTime() > now);
+  const open = myCampusEvents(events, campus).filter((e) => e.reward && new Date(e.endsAt).getTime() > now);
   const sets = [...new Set(open.map((e) => e.reward!.outfitSet))];
   const cands = sets
     .map((set) => {
@@ -51,8 +52,7 @@ export function homeTeaser(events: readonly TeaserEvent[] | null | undefined, ow
   const c = cands[0];
   if (!c) return null;
   const notStarted = c.evs.filter((e) => new Date(e.startsAt).getTime() > now);
-  const mine = (e: TeaserEvent) => e.campus === campus || e.campus === 'all';
-  const rsvp = notStarted.find(mine) ?? notStarted[0];
+  const rsvp = notStarted[0];
   return { outfitSet: c.set, name: rewardEventName(c.first.title), emoji: c.first.reward!.emoji ?? campaignLabels(c.set).emoji, startsAt: c.first.startsAt, rsvp };
 }
 

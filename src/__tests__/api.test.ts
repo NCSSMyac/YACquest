@@ -477,7 +477,7 @@ describe('launch extras (0013)', () => {
     await expect(api.adminEventAttendees('evt_nope')).rejects.toMatchObject({ code: 'not_found' });
   });
 
-  it('sign-up respects the "Email me announcements" checkbox (default on)', async () => {
+  it('sign-up respects the "Email me YACquest updates" checkbox (default on)', async () => {
     const base = { displayName: 'New Yak', password: 'password1', campus: 'unc' as const, avatar: 'yak' as const, acceptedRules: true };
     const off = await api.signup({ ...base, handle: 'optout_yak', email: 'optout@example.com', emailOptIn: false });
     expect(off.user?.emailOptIn).toBe(false);

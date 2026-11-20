@@ -2,17 +2,27 @@
  * Privacy summary (0027). Public: reachable logged out from Login/Signup and from Help and Me.
  * Keep this in step with the database (supabase/migrations) — docs/BACKEND.md lists what each table holds.
  */
+import type { MouseEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '../components/Layout';
 import { Panel } from '../components/ui';
 import { Accordion } from '../components/Blocks';
 import { CONTACT_EMAILS } from '../config';
 import { useAuth } from '../lib/auth';
+import { EMAIL_OPT_IN_LABEL } from '../lib/emailWording';
+import { RETENTION } from '../../supabase/functions/_shared/emailCore';
 
-export const PRIVACY_UPDATED = 'November 7, 2026';
+export const PRIVACY_UPDATED = 'November 19, 2026';
 
 export default function Privacy() {
   const { user } = useAuth();
+  // HashRouter owns the URL hash, so the in-page link opens and scrolls to the section itself.
+  const openEmails = (e: MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    const el = document.getElementById('emails');
+    if (el instanceof HTMLDetailsElement) el.open = true;
+    el?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  };
   const mail = `mailto:${CONTACT_EMAILS.join(',')}?subject=${encodeURIComponent('YACquest privacy question')}`;
   return (
     <div className="app-shell" role="main" style={{ paddingTop: 16 }}>
@@ -26,7 +36,8 @@ export default function Privacy() {
             <li>We keep only what the game needs: your account, your points and what you send us.</li>
             <li>Other players see your <b>display name, campus, character and points</b>. Never your email.</li>
             <li>The YAC team (staff) sees more so they can run the game: details below.</li>
-            <li>We don’t sell your data and there are no ads or trackers.</li>
+            <li>We don’t sell your data. No ads, no analytics, no tracking cookies.</li>
+            <li>Our optional member emails can tell us when they’re opened and which link was clicked. <a href="#emails" onClick={openEmails}>How that works</a>, and how to turn those emails off.</li>
             <li>You can <b>delete your account</b> any time in Me → Account.</li>
           </ul>
         </Panel>
@@ -40,7 +51,8 @@ export default function Privacy() {
             <li><b>Uploads:</b> screenshots you send as quest proof and event photos, with your note.</li>
             <li><b>Feedback, prize ideas and problem reports</b> you send (see below).</li>
             <li><b>Notifications:</b> the messages the app shows you (approvals, announcements, prize news) and whether you read them.</li>
-            <li><b>Your choices:</b> “Email me announcements” on or off, photo-wall on or off, whether you’ve seen the welcome tour.</li>
+            <li><b>Your choices:</b> “{EMAIL_OPT_IN_LABEL}” on or off, photo-wall on or off, whether you’ve seen the welcome tour.</li>
+            <li><b>Email activity:</b> which emails we sent you and whether they went out, and for optional member emails when you opened one or clicked a link (see “Emails” below).</li>
             <li><b>Friend codes:</b> your code, and who signed up with it (so the bonus goes to the right people).</li>
             <li><b>Prize winners only:</b> name, email, phone and mailing address to deliver the gift card.</li>
           </ul>
@@ -50,7 +62,8 @@ export default function Privacy() {
           <ul className="privacy-list">
             <li><b>Other players</b> see your display name, campus, character and points on the leaderboards, and the photos you chose to share on a photo wall. Friends who used your code see each other’s display name, campus, character and whether they came to an event.</li>
             <li><b>The YAC team (admins and YACquest Chairs)</b> also see your email and username, your uploads (to review them), your points history, check-ins and RSVPs, and feedback you send (without your name if you sent it anonymously). They can keep short private <b>staff notes</b> about players to help with questions; only staff can see these.</li>
-            <li><b>YACquest Chairs only</b> see prize winners’ delivery info, the staff action log (who changed points, roles or events), the email log, and can export the player list.</li>
+            <li><b>Email stats (admins and YACquest Chairs):</b> how many people opened or clicked each email, and each person’s email history: what we sent them, whether it arrived, and whether they opened it or clicked a link.</li>
+            <li><b>YACquest Chairs only</b> see prize winners’ delivery info in the app, the staff action log (who changed points, roles or events), the email delivery log, and can export the player list. Winners’ delivery info is also emailed to the staff prize-alert list (see below).</li>
           </ul>
         </Accordion>
 
@@ -59,8 +72,9 @@ export default function Privacy() {
           <p style={{ margin: 0 }}>An event photo appears on that event’s photo wall only if you ticked “Show my photo on the event photo wall” when uploading, it was approved, and you haven’t turned photo walls off in Me → Settings. Staff can hide any photo from the wall.</p>
         </Accordion>
 
-        <Accordion icon="🎁" title="Prize winners’ delivery info" summary="Only YACquest Chairs; only to send the gift card">
-          <p style={{ margin: 0 }}>If you win, you send your name, email, phone and mailing address. Only YACquest Chairs can see it (in the app and in a prize alert email), and it’s used <b>only</b> to deliver your gift card.</p>
+        <Accordion icon="🎁" title="Prize winners’ delivery info" summary="Staff who send the gift card; only for that">
+          <p>If you win, you send your name, email, phone and mailing address. It’s used <b>only</b> to deliver your gift card.</p>
+          <p style={{ margin: 0 }}>YACquest Chairs see it in the app. It’s also emailed to the staff <b>prize-alert list</b>: the YACquest Chairs, the admins, and any extra addresses a YACquest Chair adds (for example a YAC board member who helps send the cards). Our copy of that email is emptied once your prize is marked delivered, or after {RETENTION.sensitiveBodyDays} days at the latest.</p>
         </Accordion>
 
         <Accordion icon="💬" title="Feedback and problem reports" summary="Optionally anonymous; reports include a few tech details">
@@ -68,8 +82,12 @@ export default function Privacy() {
           <p style={{ margin: 0 }}><b>🐞 Report a problem</b> also attaches: the page you were on, the app version, your browser and system (like “Chrome 130 · Android”), screen size, online or offline, light or dark theme, the time, and the last few error messages. Never your password, email or login tokens. Only staff can see these details.</p>
         </Accordion>
 
-        <Accordion icon="✉️" title="Emails and notifications" summary="From the YAC Gmail; turn announcements off any time">
-          <p style={{ margin: 0 }}>Emails come from the YAC Gmail account: sign-up and password emails, event reminders and follow-ups, and announcements. Turn off announcement emails in Me → Settings (you’ll still see them in the app). The app keeps an <b>email log</b> (recipients, subject, sent or failed) that only YACquest Chairs can see. Staff get a weekly report email with the leaderboard, people close to the prize and recent feedback.</p>
+        <Accordion icon="✉️" title="Emails and notifications" summary="Opens and clicks on optional emails; turn them off any time" id="emails">
+          <p><b>Optional member emails</b> are announcements, event reminders, event follow-ups (“Thanks for coming!”) and your yearly Wrapped. They come from the YAC Gmail account, one email to you alone.</p>
+          <p><b>What they record:</b> each one has a tiny invisible image that tells us when it was opened, and its links go through YACquest first so we know which link was clicked. We store the time, which link, and a shortened description of your browser or email app (its “user agent”, cut to 120 characters). We <b>don’t</b> store your IP address or your location. Opens are approximate: some email apps load images on their own, and some block them.</p>
+          <p><b>Not tracked at all:</b> the email that confirms your address, password reset emails, and emails to the YAC team (weekly report, prize alerts).</p>
+          <p><b>Who sees it:</b> admins and YACquest Chairs see open and click stats and each person’s email history. Staff also get a weekly report email with the leaderboard, people close to the prize and recent feedback.</p>
+          <p style={{ margin: 0 }}><b>Turning them off:</b> one setting covers all four kinds. Untick “{EMAIL_OPT_IN_LABEL}” in Me → Settings, tap <b>Unsubscribe in one click</b> at the bottom of any of these emails, use your email app’s Unsubscribe button, or send an email with the subject “unsubscribe” to the address our emails come from (from the address you signed up with). You’ll still see everything in the app, and you can turn emails back on any time in Me → Settings.</p>
         </Accordion>
 
         <Accordion icon="🗄️" title="Where it’s stored" summary="Supabase (US East) · GitHub Pages · Gmail">
@@ -80,8 +98,15 @@ export default function Privacy() {
           </ul>
         </Accordion>
 
-        <Accordion icon="⏳" title="How long we keep it" summary="Archived at the yearly reset; deleted when you delete your account">
-          <p style={{ margin: 0 }}>At the end of each school year the cycle is archived: everyone’s points go back to 0 and the old points history and winners are kept as that year’s record. Your account stays until you delete it.</p>
+        <Accordion icon="⏳" title="How long we keep it" summary={`Game data archived yearly; email records ${RETENTION.logMonths} months`}>
+          <p>At the end of each school year the cycle is archived: everyone’s points go back to 0 and the old points history and winners are kept as that year’s record. Your account stays until you delete it.</p>
+          <p style={{ marginBottom: 4 }}>Email records are cleaned up automatically, once a day:</p>
+          <ul className="privacy-list" style={{ margin: 0 }}>
+            <li><b>Opens, clicks and the email log</b> (who we emailed, what and when): deleted after <b>{RETENTION.logMonths} months</b>.</li>
+            <li><b>Prize-alert emails</b> with a winner’s delivery details: their contents are erased as soon as the prize is marked delivered, and after <b>{RETENTION.sensitiveBodyDays} days</b> at the latest. Weekly staff reports (they name players and quote feedback) are erased after {RETENTION.sensitiveBodyDays} days too.</li>
+            <li><b>Email confirmation links</b> and the confirmation email’s contents: deleted after {RETENTION.verifyTokenDays} days.</li>
+            <li><b>Your unsubscribe link</b> keeps working for as long as you have an account, so old emails can still turn emails off.</li>
+          </ul>
         </Accordion>
 
         <Accordion icon="🗑️" title="Deleting your account" summary="What’s removed and what stays (anonymously)" id="delete">
@@ -92,7 +117,7 @@ export default function Privacy() {
         </Accordion>
 
         <Accordion icon="🍪" title="Cookies and local storage" summary="Your login session and preferences only">
-          <p style={{ margin: 0 }}>No cookies for tracking and no analytics. The app saves a few things in your browser: your login session, theme, sound on/off, which tour and pop-ups you’ve already seen, and a pending event check-in if you scanned a QR code while logged out. Logging out clears the session.</p>
+          <p style={{ margin: 0 }}>No tracking cookies and no analytics. The app saves a few things in your browser: your login session, theme, sound on/off, which tour and pop-ups you’ve already seen, and a pending event check-in if you scanned a QR code while logged out. Logging out clears the session.</p>
         </Accordion>
 
         <Accordion icon="🚫" title="No selling, no ads" summary="Your data is only used to run YACquest">

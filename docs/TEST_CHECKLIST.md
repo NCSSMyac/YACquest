@@ -127,7 +127,11 @@ Delete the test event when you're done.
 - In [TEST 3/9], tap **Unsubscribe in one click** at the bottom. Expect the "Email settings" page saying
   you're unsubscribed, with **Turn emails back on**.
 - Gmail may also show its own "Unsubscribe" link next to the sender; that works too.
-- Re-subscribe: tap **Turn emails back on** (or Me → Settings → "Email me announcements from YAC" on).
+- (0037) Emailed unsubscribe: from the address on your account, send an email with the subject **unsubscribe** to the
+  YAC Gmail. Within ~10 minutes Me → Settings shows "Email me YACquest updates" off, and in the YAC Gmail the message is
+  read and under the label **YACquest unsubscribes**. From an address with no account it stays unread in the Inbox with
+  the label **YACquest unsubscribes/unmatched**.
+- Re-subscribe: tap **Turn emails back on** (or Me → Settings → "Email me YACquest updates" on).
 - Expect: Me → Settings shows emails on again. (If you re-run the SQL test pack while you're unsubscribed,
   it stops and tells you to turn emails back on. That's on purpose.)
 - If wrong: "Unsubscribe page showed [message]" / "Couldn't turn emails back on".

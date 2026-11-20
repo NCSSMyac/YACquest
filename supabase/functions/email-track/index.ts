@@ -35,7 +35,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2.49.1';
 
 export type EmailKind =
   | 'weekly_report' | 'prize_qualified' | 'prize_info' | 'test'
-  | 'announcement' | 'event_reminder' | 'event_followup' | 'wrapped';
+  | 'announcement' | 'event_reminder' | 'event_followup' | 'wrapped' | 'verify_email';
 
 /** Emails to participants: personalized, opt-out respected, unsubscribe footer + List-Unsubscribe headers. */
 export const PARTICIPANT_KINDS: readonly string[] = ['announcement', 'event_reminder', 'event_followup', 'wrapped'];
@@ -53,6 +53,24 @@ export const emailPriority = (kind: string) => EMAIL_PRIORITY[kind] ?? 4;
 
 /** Free @gmail.com: ~500 recipients per rolling 24 h. Google Workspace: use 1900. */
 export const BUDGET = { daily: 450, reserve: 50, workspaceDaily: 1900, announcementDays: 3 } as const;
+
+/**
+ * 0037 retention, same as the SQL constants public.email_keep_log() / email_keep_sensitive_body() /
+ * email_keep_verify_tokens() / email_purge_every() (a vitest test compares them).
+ */
+export const RETENTION = {
+  /** email_events, email_messages and email_outbox rows are deleted after this many months. */
+  logMonths: 12,
+  /** Contents of prize alerts, weekly reports and confirmation emails are emptied after this many days (prize alerts also once delivered). */
+  sensitiveBodyDays: 30,
+  /** Used or expired confirmation tokens are deleted after this many days. */
+  verifyTokenDays: 30,
+  /** The purge runs at most once per this many hours. */
+  purgeEveryHours: 24,
+} as const;
+
+/** Kinds whose contents are emptied after RETENTION.sensitiveBodyDays (SQL public.email_sensitive_kinds()). */
+export const SENSITIVE_BODY_KINDS: readonly string[] = ['prize_info', 'prize_qualified', 'weekly_report', 'verify_email'];
 
 /** Sending pace inside one 10-minute run (Edge Functions stop after ~150 s on the free plan). */
 export const THROTTLE = { perMinute: 20, sendWindowMs: 90_000, imapBudgetMs: 25_000, claimChunk: 5 } as const;
@@ -239,6 +257,38 @@ export const TRANSPARENT_GIF = new Uint8Array([
 ]);
 
 export const shortUserAgent = (ua: string | null | undefined) => (ua ?? '').replace(/[\r\n]+/g, ' ').slice(0, 120);
+
+// ───────────────────────────── emailed unsubscribes (List-Unsubscribe mailto) ─────────────────────────────
+
+/** Label in the YAC Gmail for processed "unsubscribe" emails, and its sub-label for ones we couldn't match. */
+export const UNSUB_LABEL = 'YACquest unsubscribes';
+export const UNSUB_UNMATCHED_LABEL = 'YACquest unsubscribes/unmatched';
+
+/**
+ * True when an email's subject is an unsubscribe request: exactly "unsubscribe" (any case, spaces around it,
+ * an optional final "." or "!"), optionally after one or more "Re:" prefixes. Forwards ("Fwd: unsubscribe")
+ * don't count: the sender would be whoever forwarded it.
+ */
+export function isUnsubscribeRequest(subject: string | null | undefined): boolean {
+  if (typeof subject !== 'string') return false;
+  return /^\s*(?:re\s*:\s*)*unsubscribe\s*[.!]?\s*$/i.test(subject);
+}
+
+/** The sender's address from a From value ("Name <a@b.co>" or "a@b.co"), lower-case; null if none. */
+export function senderAddress(from: string | null | undefined): string | null {
+  const m = (from ?? '').match(/<\s*([^<>\s@]+@[^<>\s@]+\.[^<>\s@]+)\s*>/) ?? (from ?? '').match(/([^<>\s@,;"]+@[^<>\s@,;"]+\.[^<>\s@,;"]+)/);
+  return m ? m[1].toLowerCase() : null;
+}
+
+/**
+ * Gmail's Authentication-Results header(s): true when the message passed DKIM, SPF or DMARC and DMARC did not
+ * fail. Used so a forged From address can't turn someone else's emails off (those are left for a person to check).
+ */
+export function senderAuthenticated(authResults: string | null | undefined): boolean {
+  const h = (authResults ?? '').toLowerCase();
+  if (!h.trim() || /\bdmarc=fail\b/.test(h)) return false;
+  return /\b(?:dkim|spf|dmarc)=pass\b/.test(h);
+}
 
 // ───────────────────────────── bounces (Gmail DSNs) ─────────────────────────────
 

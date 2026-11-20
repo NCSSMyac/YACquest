@@ -243,14 +243,27 @@ export function countdown(e: Pick<YacEvent, 'title' | 'startsAt' | 'endsAt'> & {
 type BannerEvent = Pick<YacEvent, 'id' | 'title' | 'campus' | 'startsAt' | 'endsAt'> & { reward?: EventReward; checkedIn?: boolean };
 
 /**
- * Special events to show a banner for: upcoming or live, not yet checked in. Every campus is shown;
- * the person's own campus (and all-campus events) first, then live before upcoming, then soonest.
+ * Home promos only advertise events at the person's own campus (staff too: their own profile campus).
+ * All-campus events (or ones with no campus) are for everyone, and a person with no / unknown campus sees
+ * everything. The Quest Board and Admin screens don't use this: anyone can still find and attend any event.
  */
-export function rewardBanners<E extends BannerEvent>(events: readonly E[] | null | undefined, campus: CampusId | undefined, now: number): (E & { reward: EventReward })[] {
-  const list = (events ?? []).filter((e): e is E & { reward: EventReward } => !!e.reward && !e.checkedIn && now < new Date(e.endsAt).getTime());
-  const own = (e: E) => (e.campus === campus || e.campus === 'all' ? 0 : 1);
+export function isMyCampusEvent(e: { campus?: CampusId | 'all' | null | '' }, campus: CampusId | null | undefined | ''): boolean {
+  if (!campus || !CAMPUSES.some((c) => c.id === campus)) return true;
+  return !e.campus || e.campus === 'all' || e.campus === campus;
+}
+
+/** The events Home may advertise to someone from `campus` (see isMyCampusEvent). */
+export const myCampusEvents = <E extends { campus?: CampusId | 'all' | null | '' }>(events: readonly E[] | null | undefined, campus: CampusId | null | undefined | ''): E[] =>
+  (events ?? []).filter((e) => isMyCampusEvent(e, campus));
+
+/**
+ * Special events to show a Home banner for: upcoming or live, not yet checked in, at the person's own
+ * campus (or all-campus; everything when no campus is set). Live before upcoming, then soonest.
+ */
+export function rewardBanners<E extends BannerEvent>(events: readonly E[] | null | undefined, campus: CampusId | null | undefined, now: number): (E & { reward: EventReward })[] {
+  const list = myCampusEvents(events, campus).filter((e): e is E & { reward: EventReward } => !!e.reward && !e.checkedIn && now < new Date(e.endsAt).getTime());
   const live = (e: E) => (now >= new Date(e.startsAt).getTime() ? 0 : 1);
-  return list.sort((a, b) => own(a) - own(b) || live(a) - live(b) || a.startsAt.localeCompare(b.startsAt));
+  return list.sort((a, b) => live(a) - live(b) || a.startsAt.localeCompare(b.startsAt));
 }
 
 // ───────────── Coffee Pass ─────────────

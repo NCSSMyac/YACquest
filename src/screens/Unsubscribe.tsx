@@ -5,6 +5,7 @@ import { Sprite } from '../components/Sprite';
 import { ErrorText, Loading, Panel, useToast } from '../components/ui';
 import { useAuth } from '../lib/auth';
 import { errorMessage } from '../lib/useAsync';
+import { UNSUB_BACK_ON, UNSUB_CHANGE_MIND, UNSUB_DONE, UNSUB_STILL_GET } from '../lib/emailWording';
 
 /**
  * 0032: the "Unsubscribe in one click" link in every participant email: #/unsubscribe?t=<token>.
@@ -64,16 +65,15 @@ export default function Unsubscribe() {
           ) : state === 'error' ? (
             <ErrorText error={error} />
           ) : back ? (
-            <p style={{ margin: 0 }} role="status">You’re back on the list. We’ll email you YAC news and event reminders again.</p>
+            <p style={{ margin: 0 }} role="status">{UNSUB_BACK_ON}</p>
           ) : (
             <div className="stack" style={{ gap: 8 }}>
               <p style={{ margin: 0, fontSize: 17 }} role="status">
                 <b>{state === 'already' ? 'You were already unsubscribed.' : 'You’re unsubscribed.'}</b>
               </p>
-              <p style={{ margin: 0 }}>
-                You won’t get YACquest announcement or reminder emails anymore. Everything still shows up in the app.
-              </p>
-              <p className="muted" style={{ margin: 0 }}>Changed your mind? Turn emails back on in Me → Settings.</p>
+              <p style={{ margin: 0 }}>{UNSUB_DONE}</p>
+              <p className="muted" style={{ margin: 0 }}>{UNSUB_STILL_GET}</p>
+              <p className="muted" style={{ margin: 0 }}>{UNSUB_CHANGE_MIND}</p>
             </div>
           )}
         </Panel>

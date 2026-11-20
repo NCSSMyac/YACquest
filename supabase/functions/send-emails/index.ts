@@ -21,7 +21,9 @@
  *   if due → for ~90 s: claim a few emails (budget, priority and expiry are decided by the database),
  *   send each to ONE address with tracked links, an open pixel and one-click unsubscribe headers,
  *   ~20 a minute with small random gaps → put back anything claimed but not sent → check Gmail for
- *   bounce notices (≤ 25 s, never blocks sending) → record the run (Admin → System shows it).
+ *   bounce notices and emailed "unsubscribe" requests (≤ 25 s together, never blocks sending) → record the
+ *   run (Admin → System shows it). The database's per-run call also purges old email data once a day (0037).
+ * Only participant emails get tracked links and the open pixel; staff and confirmation emails are never tracked.
  * Failed emails are retried by later runs (up to 5 tries); YACquest Chairs can also press Retry.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2.49.1';
@@ -43,7 +45,7 @@ import nodemailer from 'npm:nodemailer@6.9.16';
 
 export type EmailKind =
   | 'weekly_report' | 'prize_qualified' | 'prize_info' | 'test'
-  | 'announcement' | 'event_reminder' | 'event_followup' | 'wrapped';
+  | 'announcement' | 'event_reminder' | 'event_followup' | 'wrapped' | 'verify_email';
 
 /** Emails to participants: personalized, opt-out respected, unsubscribe footer + List-Unsubscribe headers. */
 export const PARTICIPANT_KINDS: readonly string[] = ['announcement', 'event_reminder', 'event_followup', 'wrapped'];
@@ -61,6 +63,24 @@ export const emailPriority = (kind: string) => EMAIL_PRIORITY[kind] ?? 4;
 
 /** Free @gmail.com: ~500 recipients per rolling 24 h. Google Workspace: use 1900. */
 export const BUDGET = { daily: 450, reserve: 50, workspaceDaily: 1900, announcementDays: 3 } as const;
+
+/**
+ * 0037 retention, same as the SQL constants public.email_keep_log() / email_keep_sensitive_body() /
+ * email_keep_verify_tokens() / email_purge_every() (a vitest test compares them).
+ */
+export const RETENTION = {
+  /** email_events, email_messages and email_outbox rows are deleted after this many months. */
+  logMonths: 12,
+  /** Contents of prize alerts, weekly reports and confirmation emails are emptied after this many days (prize alerts also once delivered). */
+  sensitiveBodyDays: 30,
+  /** Used or expired confirmation tokens are deleted after this many days. */
+  verifyTokenDays: 30,
+  /** The purge runs at most once per this many hours. */
+  purgeEveryHours: 24,
+} as const;
+
+/** Kinds whose contents are emptied after RETENTION.sensitiveBodyDays (SQL public.email_sensitive_kinds()). */
+export const SENSITIVE_BODY_KINDS: readonly string[] = ['prize_info', 'prize_qualified', 'weekly_report', 'verify_email'];
 
 /** Sending pace inside one 10-minute run (Edge Functions stop after ~150 s on the free plan). */
 export const THROTTLE = { perMinute: 20, sendWindowMs: 90_000, imapBudgetMs: 25_000, claimChunk: 5 } as const;
@@ -248,6 +268,38 @@ export const TRANSPARENT_GIF = new Uint8Array([
 
 export const shortUserAgent = (ua: string | null | undefined) => (ua ?? '').replace(/[\r\n]+/g, ' ').slice(0, 120);
 
+// ───────────────────────────── emailed unsubscribes (List-Unsubscribe mailto) ─────────────────────────────
+
+/** Label in the YAC Gmail for processed "unsubscribe" emails, and its sub-label for ones we couldn't match. */
+export const UNSUB_LABEL = 'YACquest unsubscribes';
+export const UNSUB_UNMATCHED_LABEL = 'YACquest unsubscribes/unmatched';
+
+/**
+ * True when an email's subject is an unsubscribe request: exactly "unsubscribe" (any case, spaces around it,
+ * an optional final "." or "!"), optionally after one or more "Re:" prefixes. Forwards ("Fwd: unsubscribe")
+ * don't count: the sender would be whoever forwarded it.
+ */
+export function isUnsubscribeRequest(subject: string | null | undefined): boolean {
+  if (typeof subject !== 'string') return false;
+  return /^\s*(?:re\s*:\s*)*unsubscribe\s*[.!]?\s*$/i.test(subject);
+}
+
+/** The sender's address from a From value ("Name <a@b.co>" or "a@b.co"), lower-case; null if none. */
+export function senderAddress(from: string | null | undefined): string | null {
+  const m = (from ?? '').match(/<\s*([^<>\s@]+@[^<>\s@]+\.[^<>\s@]+)\s*>/) ?? (from ?? '').match(/([^<>\s@,;"]+@[^<>\s@,;"]+\.[^<>\s@,;"]+)/);
+  return m ? m[1].toLowerCase() : null;
+}
+
+/**
+ * Gmail's Authentication-Results header(s): true when the message passed DKIM, SPF or DMARC and DMARC did not
+ * fail. Used so a forged From address can't turn someone else's emails off (those are left for a person to check).
+ */
+export function senderAuthenticated(authResults: string | null | undefined): boolean {
+  const h = (authResults ?? '').toLowerCase();
+  if (!h.trim() || /\bdmarc=fail\b/.test(h)) return false;
+  return /\b(?:dkim|spf|dmarc)=pass\b/.test(h);
+}
+
 // ───────────────────────────── bounces (Gmail DSNs) ─────────────────────────────
 
 /** Gmail's "Delivery Status Notification" senders. */
@@ -369,15 +421,16 @@ Deno.serve(async () => {
 
   async function sendOne(r: Claimed) {
     let html = r.body_html ?? '';
-    // Tracked links: the database signs each http(s) link (its secret never leaves the database).
-    const links = extractLinks(html);
+    const participant = isParticipantKind(r.kind);
+    // Tracked links (participant emails only, 0037): the database signs each http(s) link (its secret never
+    // leaves the database). Staff emails, prize alerts, test and confirmation emails are never tracked.
+    const links = participant ? extractLinks(html) : [];
     if (links.length) {
       const s = await db.rpc('email_sign_links', { p_msg: r.id, p_urls: links });
       if (s.error) console.error('email_sign_links', s.error.message);
       const sigs = new Map(((s.data ?? []) as { url: string; sig: string }[]).map((x) => [x.url, x.sig]));
       html = rewriteLinks(html, r.id, base, sigs);
     }
-    const participant = isParticipantKind(r.kind);
     if (participant && html) html = addOpenPixel(html, openPixelUrl(base, r.id));
     const headers = participant && r.unsub_token ? listUnsubscribeHeaders(base, r.unsub_token, user) : undefined;
     await transport.sendMail({
@@ -425,10 +478,11 @@ Deno.serve(async () => {
   }
   transport.close();
 
-  // 4. Bounce notices (Gmail "Delivery Status Notification (Failure)") over IMAP. Never blocks sending.
+  // 4. Over IMAP: bounce notices (Gmail "Delivery Status Notification (Failure)") and emailed unsubscribe
+  //    requests (List-Unsubscribe mailto, 0037). Never blocks sending; never replies to anyone.
   let imap: 'ok' | 'off' | 'error' | 'skipped' = 'off';
   let imapError: string | null = null;
-  let bounces = 0;
+  const inbox: InboxStats = { bounces: 0, unsubscribes: 0, unsubscribeUnmatched: 0 };
   const left = EDGE_LIMIT_MS - (Date.now() - started) - 15_000;
   if ((Deno.env.get('BOUNCE_CHECK') || '').toLowerCase() === 'off') {
     imap = 'off';
@@ -437,7 +491,7 @@ Deno.serve(async () => {
     imap = 'skipped';
   } else {
     try {
-      bounces = await withTimeout(checkBounces(db, user, pass), Math.min(THROTTLE.imapBudgetMs, left), 'IMAP');
+      await withTimeout(checkInbox(db, user, pass, inbox), Math.min(THROTTLE.imapBudgetMs, left), 'IMAP');
       imap = 'ok';
     } catch (e) {
       imap = 'error';
@@ -446,44 +500,31 @@ Deno.serve(async () => {
     }
   }
 
-  await db.rpc('email_run_finished', { p_stats: { sent, failed, released, bounces, imap, imapError } });
-  return json({ enqueuedWeekly, purged, sent, failed, released, bounces, imap, imapError });
+  const { bounces, unsubscribes, unsubscribeUnmatched } = inbox; // partial counts survive an IMAP timeout
+  await db.rpc('email_run_finished', { p_stats: { sent, failed, released, bounces, unsubscribes, imap, imapError } });
+  return json({ enqueuedWeekly, purged, sent, failed, released, bounces, unsubscribes, unsubscribeUnmatched, imap, imapError });
 });
 
-/** Reads unseen bounce notices from the last 3 days, records them, marks them seen and files them. */
-async function checkBounces(db: ReturnType<typeof createClient>, user: string, pass: string): Promise<number> {
+type InboxStats = { bounces: number; unsubscribes: number; unsubscribeUnmatched: number };
+// deno-lint-ignore no-explicit-any
+type Imap = any; // an ImapFlow client (imported lazily inside checkInbox)
+
+/** One IMAP connection for both inbox checks. Counts go into `stats` as they happen. */
+async function checkInbox(db: ReturnType<typeof createClient>, user: string, pass: string, stats: InboxStats): Promise<void> {
   const { ImapFlow } = await import('npm:imapflow@2.9.1');
   const client = new ImapFlow({
     host: 'imap.gmail.com', port: 993, secure: true, auth: { user, pass }, logger: false,
     connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000,
   });
-  let found = 0;
   await client.connect();
   try {
     const lock = await client.getMailboxLock('INBOX');
     try {
-      const since = new Date(Date.now() - 3 * 86_400_000);
-      const uids = ((await client.search({ seen: false, since, or: [{ from: 'mailer-daemon' }, { from: 'postmaster' }] }, { uid: true })) || []) as number[];
-      const list = uids.slice(0, 50);
-      const done: number[] = [];
-      if (list.length) {
-        for await (const msg of client.fetch(list, { uid: true, source: true, envelope: true }, { uid: true })) {
-          const fromText = (msg.envelope?.from ?? []).map((a: { name?: string; address?: string }) => `${a.name ?? ''} <${a.address ?? ''}>`).join(', ');
-          if (!isDsnFrom(fromText)) continue;
-          done.push(msg.uid);
-          const dsn = parseDsn(msg.source ? new TextDecoder().decode(msg.source) : '');
-          if (!dsn) continue;
-          for (const rcpt of dsn.recipients) {
-            const res = await db.rpc('record_email_bounce', { p_email: rcpt, p_reason: dsn.reason, p_hard: dsn.hard });
-            if (res.error) console.error('record_email_bounce', res.error.message);
-            else if ((res.data as { matched?: boolean } | null)?.matched) found++;
-          }
-        }
-      }
-      if (done.length) {
-        await client.messageFlagsAdd(done, ['\\Seen'], { uid: true });
-        try { await client.mailboxCreate('YACquest bounces'); } catch { /* already there */ }
-        try { await client.messageMove(done, 'YACquest bounces', { uid: true }); } catch { /* marking them seen is enough */ }
+      await checkBounces(db, client, stats);
+      try {
+        await checkUnsubscribes(db, client, user, stats);
+      } catch (e) {
+        console.error('unsubscribe check failed', errText(e)); // bounces above still count
       }
     } finally {
       lock.release();
@@ -491,5 +532,72 @@ async function checkBounces(db: ReturnType<typeof createClient>, user: string, p
   } finally {
     await client.logout().catch(() => {});
   }
-  return found;
+}
+
+/** Reads unseen bounce notices from the last 3 days, records them, marks them seen and files them. */
+async function checkBounces(db: ReturnType<typeof createClient>, client: Imap, stats: InboxStats): Promise<void> {
+  const since = new Date(Date.now() - 3 * 86_400_000);
+  const uids = ((await client.search({ seen: false, since, or: [{ from: 'mailer-daemon' }, { from: 'postmaster' }] }, { uid: true })) || []) as number[];
+  const list = uids.slice(0, 50);
+  const done: number[] = [];
+  if (list.length) {
+    for await (const msg of client.fetch(list, { uid: true, source: true, envelope: true }, { uid: true })) {
+      const fromText = (msg.envelope?.from ?? []).map((a: { name?: string; address?: string }) => `${a.name ?? ''} <${a.address ?? ''}>`).join(', ');
+      if (!isDsnFrom(fromText)) continue;
+      done.push(msg.uid);
+      const dsn = parseDsn(msg.source ? new TextDecoder().decode(msg.source) : '');
+      if (!dsn) continue;
+      for (const rcpt of dsn.recipients) {
+        const res = await db.rpc('record_email_bounce', { p_email: rcpt, p_reason: dsn.reason, p_hard: dsn.hard });
+        if (res.error) console.error('record_email_bounce', res.error.message);
+        else if ((res.data as { matched?: boolean } | null)?.matched) stats.bounces++;
+      }
+    }
+  }
+  if (done.length) {
+    await client.messageFlagsAdd(done, ['\\Seen'], { uid: true });
+    try { await client.mailboxCreate('YACquest bounces'); } catch { /* already there */ }
+    try { await client.messageMove(done, 'YACquest bounces', { uid: true }); } catch { /* marking them seen is enough */ }
+  }
+}
+
+/**
+ * 0037: unread emails from the last 7 days (newest 50) whose subject is "unsubscribe" (what Gmail and other apps
+ * send to the List-Unsubscribe mailto). A sender whose address belongs to an account and whose message passed
+ * Gmail's checks: emails turned off (unsubscribe_by_email), marked read, moved to "YACquest unsubscribes".
+ * Anything else (no account with that address, or the sender couldn't be verified) stays unread in the Inbox with
+ * the label "YACquest unsubscribes/unmatched", for a YACquest Chair to handle by hand; it isn't looked at again.
+ * Never replies.
+ */
+async function checkUnsubscribes(db: ReturnType<typeof createClient>, client: Imap, user: string, stats: InboxStats): Promise<void> {
+  const since = new Date(Date.now() - 7 * 86_400_000);
+  const uids = ((await client.search({ seen: false, since, subject: 'unsubscribe' }, { uid: true })) || []) as number[];
+  const list = uids.slice().sort((a, b) => b - a).slice(0, 50);
+  if (!list.length) return;
+  const self = user.toLowerCase();
+  const matched: number[] = [];
+  const unmatched: number[] = [];
+  for await (const msg of client.fetch(list, { uid: true, envelope: true, labels: true, headers: ['authentication-results'] }, { uid: true })) {
+    if (!isUnsubscribeRequest(msg.envelope?.subject)) continue;
+    const labels = [...((msg.labels as Set<string> | undefined) ?? [])];
+    if (labels.some((l) => l === UNSUB_UNMATCHED_LABEL)) continue; // already left for a person
+    const a = msg.envelope?.from?.[0] as { name?: string; address?: string } | undefined;
+    const from = senderAddress(a?.address ?? '');
+    if (!from || from === self) continue; // our own test sends: leave them alone
+    const auth = msg.headers ? new TextDecoder().decode(msg.headers) : '';
+    if (!senderAuthenticated(auth)) { unmatched.push(msg.uid); stats.unsubscribeUnmatched++; continue; }
+    const res = await db.rpc('unsubscribe_by_email', { p_email: from });
+    if (res.error) { console.error('unsubscribe_by_email', res.error.message); continue; } // try again next run
+    if (res.data === true) { matched.push(msg.uid); stats.unsubscribes++; }
+    else { unmatched.push(msg.uid); stats.unsubscribeUnmatched++; }
+  }
+  if (matched.length) {
+    await client.messageFlagsAdd(matched, ['\\Seen'], { uid: true });
+    try { await client.mailboxCreate(UNSUB_LABEL); } catch { /* already there */ }
+    try { await client.messageMove(matched, UNSUB_LABEL, { uid: true }); } catch { /* marking them read is enough */ }
+  }
+  if (unmatched.length) {
+    try { await client.mailboxCreate(UNSUB_UNMATCHED_LABEL); } catch { /* already there */ }
+    try { await client.messageCopy(unmatched, UNSUB_UNMATCHED_LABEL, { uid: true }); } catch (e) { console.error('label unmatched', errText(e)); }
+  }
 }

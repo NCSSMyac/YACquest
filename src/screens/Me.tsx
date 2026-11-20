@@ -22,6 +22,7 @@ import { requestTour } from '../lib/tour';
 import { setDeletingAccount } from '../lib/goodbye';
 import { ReportProblemButton } from '../components/ReportProblem';
 import { CONTACT_EMAILS } from '../config';
+import { EMAIL_OPT_IN_HINT, EMAIL_OPT_IN_LABEL } from '../lib/emailWording';
 
 type Theme = 'light' | 'dark' | 'system';
 const THEME_KEY = 'yacquest-theme';
@@ -241,8 +242,8 @@ export default function Me() {
           <label className="check">
             <input type="checkbox" checked={user.emailOptIn} onChange={(e) => toggleEmail(e.target.checked)} />
             <span>
-              Email me announcements from YAC
-              <small className="muted" style={{ display: 'block' }}>Event news and reminders. You’ll still see every message in the app.</small>
+              {EMAIL_OPT_IN_LABEL}
+              <small className="muted" style={{ display: 'block' }}>{EMAIL_OPT_IN_HINT}</small>
             </span>
           </label>
           <label className="check">

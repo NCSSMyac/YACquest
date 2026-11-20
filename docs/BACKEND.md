@@ -644,3 +644,49 @@ Additive (no downtime): new rows + upserts; nothing dropped or re-created. Run A
 - **Items** (`cosmetics`, `rule_type 'seasonal'`, `rule_value 'kwanzaa'`, sort 123–125; 25 seasonal, 45 cosmetics in all): `kikombe_cha_umoja` "Kikombe cha Umoja (Unity Cup)" (accessory, held), `zawadi` "Zawadi (Gift)" (accessory, held), `kwanzaa_scarf` "Red, Black & Green Scarf" (accessory, worn at the neck). Cosmetic only.
 - `seasonal_holidays.item_noun` for `kwanzaa` → `'items'`: the notification reads "🕯️ New limited-time items for Kwanzaa — see what they honor" (`claim_seasonal_for` from 0035 already handles plural nouns; not re-created).
 - **App:** `SEASONAL` windows + Kwanzaa `noun: 'items'` and `itemAbout` (one short line per item, shown under the group's About text); the About texts no longer carry "not a costume" lines. `src/lib/seasonal.ts`: `holidayYear()` uses the window's last day (Lunar New Year opening Dec 1, 2026 still celebrates 2027, Year of the Goat); `newYearHatYear()` falls back to next year from Dec 1; `returnsLabel(st, at, holiday)` says "Coming soon" within 100 days or later this calendar year only if this year's window hasn't happened yet, else "Returns next year" / "Returns next winter"; `seasonalOrder()` breaks equal start dates by end date. Art: three new vector pieces in `winterVec.ts`; the Rosca de Reyes background moved the rosca to the bottom-right corner and the mugs to the bottom-left so they peek out beside every character. Tests: `src/__tests__/winterKwanzaa0036.test.ts`, updated `winterSeasonal.test.ts` / `seasonalWrapped.test.ts`, DB section "0035 + 0036" in `supabase/tests/tests.sql`.
+
+## 0037 — Email retention purge, emailed unsubscribes, small email fixes
+
+Additive (no downtime): one new table, nullable/defaulted columns, one index, one trigger, re-created functions; nothing dropped. Run AFTER 0036; safe to re-run. Then re-deploy `send-emails` (SETUP.md). `email-track` behaves exactly as before (its pasted copy of `emailCore.ts` only gained helpers it doesn't use), so re-deploying it is optional.
+
+### Retention (named constants, SQL = `RETENTION` in `supabase/functions/_shared/emailCore.ts`, unit tested)
+| Data | Kept | Constant |
+|---|---|---|
+| `email_events` (opens, clicks, bounces, unsubscribes, complaints) | 12 months, then deleted | `email_keep_log()` |
+| `email_messages` (one row per recipient; their events cascade) | 12 months, then deleted | `email_keep_log()` |
+| `email_outbox` (what the app queued; `email_outbox_forget` removes its messages) | 12 months, then deleted | `email_keep_log()` |
+| `body_text`/`body_html` of `prize_info` (winner's delivery details), `prize_qualified`, `weekly_report` (names + feedback) and `verify_email` (a confirmation link), in `email_outbox` **and** `email_messages` | emptied 30 days after queuing; prize alerts also as soon as the claim is `fulfilled` | `email_keep_sensitive_body()`, `email_sensitive_kinds()` |
+| `email_verify_tokens` that are used or expired | deleted 30 days after creation | `email_keep_verify_tokens()` |
+| `email_unsub_tokens` | kept for the account's lifetime (old emails' links must keep working); deleted with the account (`on delete cascade`, since 0032) | — |
+| `email_runs` | 30 days (unchanged, 0032) | — |
+| `email_purge_runs` | 12 months | `email_keep_log()` |
+
+- **`purge_email_data(p_now default now(), p_force default false) → jsonb`** — service role only. At most once per `email_purge_every()` (1 day, from `email_purge_runs`; `p_force` skips that check) and never twice at once (advisory lock). Returns `{events, messages, outbox, verifyTokens, bodiesOutbox, bodiesMessages}` or `{skipped: 'ran_today'|'running'}` and logs the run in `email_purge_runs(id, ran_at, stats jsonb)` (RLS on, no grants).
+- **When it runs:** step "0d" of `enqueue_weekly_report_if_due()` (re-created as a copy of 0028 + that step), i.e. the call `send-emails` already makes every 10 minutes. Wrapped in `begin … exception when others → raise warning`, so a purge failure never blocks reminders, the weekly report or sending.
+- `email_clear_sensitive_bodies(p_now, p_claim)` (internal): sets `body_text = ''`, `body_html = ''`, `body_purged_at = p_now`. Never touches rows still waiting to go out (outbox `pending`/`sending`; messages `queued`/`sending`, or `failed` with fewer than 5 tries). Prize alerts are tied to their claim through the dedupe key (`prize_info:<claim>:<md5>`, `prize_qualified:<claim>`) or the campaign id (`prize:<claim>`), via `email_prize_claim_id(text)`.
+- Trigger **`prize_claim_clear_alerts`** (after update of `status` on `prize_claims`): when a claim becomes `fulfilled` (Admin → Prizes → mark delivered), that claim's prize alerts are emptied right away (errors only raise a warning).
+- New columns: `email_outbox.body_purged_at`, `email_messages.body_purged_at` (null = contents intact). `retry_email()` (copy of 0032) refuses an emptied email with `purged`.
+- New index `email_messages_created (created_at)` for the age-based delete.
+- Admin → Email stats (`email_stats`, 7 or 30 days in the UI; the RPC accepts up to 365) is unaffected: the data now goes back at most 12 months.
+- Old dedupe keys disappear with their outbox rows after 12 months. That's safe: weekly keys include the ISO year, prize keys the claim id, reminders use `event_reminders_sent`, Wrapped uses `wrapped_sends`, follow-ups only go out for events that just ended.
+
+### Emailed unsubscribes (List-Unsubscribe `mailto:`)
+- Participant emails carry `List-Unsubscribe: <…/email-track/u/<token>>, <mailto:<YAC Gmail>?subject=unsubscribe>` (0032). Since 0037 `send-emails` reads those requests in its IMAP step (same connection and same ≤ 25 s budget as the bounce check; never blocks sending, never replies): **unread** Inbox messages from the last 7 days (newest 50) whose subject is "unsubscribe" (`isUnsubscribeRequest()`: any case, surrounding spaces, optional trailing `.`/`!`, optional `Re:` prefixes; not `Fwd:`).
+  - Sender passed Gmail's checks (`senderAuthenticated()`: DKIM, SPF or DMARC pass in `Authentication-Results`, no DMARC fail) **and** `unsubscribe_by_email(from)` returns true → marked read and moved to the label **YACquest unsubscribes**.
+  - Otherwise (no account with that address, or an unverified sender) → left **unread in the Inbox** with the label **YACquest unsubscribes/unmatched** for a YACquest Chair to handle by hand; labelled messages are skipped on later runs. Messages from the YAC Gmail itself are left alone.
+- **`unsubscribe_by_email(p_email) → boolean`** — service role only (revoked from public, anon, authenticated). Matches `auth.users.email` or `profiles.email` (lower-case, trimmed). True = an account uses the address: `email_opt_in = false` and, only if emails were on, one `email_events` row `type 'unsubscribe'`, `detail 'mailto'` (linked to their latest sent email). Calling it again changes nothing. False = no account (or not an address).
+- `email_runs.unsubscribes int default 0`; `email_run_finished()` (copy of 0032) stores `p_stats.unsubscribes`. The function's JSON response adds `unsubscribes` and `unsubscribeUnmatched`.
+
+### Small fixes
+- `send_test_email()` (copy of 0004) greets with the first name (`email_first_name(display_name)`, "Hi there" without one), like every other email.
+- `send-emails`: tracked links and the open pixel are now added **only to participant emails** (announcement, event_reminder, event_follow-up, wrapped). Staff emails (weekly report, prize alerts, test) and confirmation emails are never tracked (before, their links were rewritten into tracked links too).
+- `emailCore.ts`: `EmailKind` includes `'verify_email'`; new `RETENTION`, `SENSITIVE_BODY_KINDS`, `UNSUB_LABEL`, `UNSUB_UNMATCHED_LABEL`, `isUnsubscribeRequest()`, `senderAddress()`, `senderAuthenticated()`.
+
+### Grants
+Internal (nobody): `email_keep_log`, `email_keep_sensitive_body`, `email_keep_verify_tokens`, `email_purge_every`, `email_sensitive_kinds`, `email_prize_claim_id`, `email_clear_sensitive_bodies`, `prize_claim_clear_alerts`. Service role only: `purge_email_data`, `unsubscribe_by_email`, `email_run_finished`, `enqueue_weekly_report_if_due`. Authenticated (chair checked inside): `send_test_email`, `retry_email`.
+
+### App
+- One setting, one wording (`src/lib/emailWording.ts`): **"Email me YACquest updates"** — "Announcements, event reminders, post-event thank-yous and your yearly Wrapped. You'll still see everything in the app." Used by Sign-up, Me → Settings, `#/unsubscribe` and Admin → Announce (the one-person hint now says it's only emailed with emails on and a confirmed address).
+- Privacy page rewritten (email tracking, who sees email stats, prize-alert list, retention, how to opt out); `PRIVACY_UPDATED` = November 19, 2026.
+- Mock API mirrors the server: `purgeEmailData()` (from `maybeEnqueueWeekly()`, once a day), `clearSensitiveBodies()` (also on `markFulfilled`), `retryEmail` → `purged`, test email first name.
+- Tests: `src/__tests__/emailRetention0037.test.tsx`; DB section "0037" in `supabase/tests/tests.sql`.

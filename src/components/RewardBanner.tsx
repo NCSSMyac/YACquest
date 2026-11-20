@@ -89,7 +89,7 @@ export function RewardBanner({ e, now, compact, own }: { e: BannerEvent; now: nu
   );
 }
 
-/** Home: every upcoming/live special event (own campus first). */
+/** Home: upcoming/live special events at my campus (and all-campus ones). */
 export function HomeRewardBanners() {
   const { user } = useAuth();
   const { data } = useAsync(() => api.listEvents('upcoming'), [], { live: true });

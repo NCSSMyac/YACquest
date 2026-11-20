@@ -14,6 +14,7 @@ import { NAME_NOT_ALLOWED, nameIsClean } from '../lib/nameFilter';
 import { RulesContent } from './Rules';
 import { PendingCheckInBanner } from './CheckInLink';
 import { codeFromQuery } from '../lib/friends';
+import { EMAIL_OPT_IN_HINT, EMAIL_OPT_IN_LABEL } from '../lib/emailWording';
 
 type Errors = Partial<Record<'handle' | 'displayName' | 'email' | 'password' | 'campus' | 'friendCode' | 'form', string>>;
 
@@ -118,8 +119,8 @@ export default function Signup() {
             <label className="check">
               <input type="checkbox" checked={emailOptIn} onChange={(e) => setEmailOptIn(e.target.checked)} />
               <span>
-                Email me announcements from YAC
-                <small className="muted" style={{ display: 'block' }}>Event news and reminders. You’ll still see every message in the app.</small>
+                {EMAIL_OPT_IN_LABEL}
+                <small className="muted" style={{ display: 'block' }}>{EMAIL_OPT_IN_HINT} You can change this any time in Me → Settings.</small>
               </span>
             </label>
           </div>

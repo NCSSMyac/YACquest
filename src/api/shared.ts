@@ -30,7 +30,7 @@ export interface SignupInput {
   avatar: AvatarId;
   friendCode?: string;
   acceptedRules: boolean;
-  /** "Email me announcements from YAC" (default true). */
+  /** "Email me YACquest updates" (default true): announcements, event reminders, follow-ups and Wrapped. */
   emailOptIn?: boolean;
 }
 

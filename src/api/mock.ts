@@ -104,9 +104,9 @@ import { isVerified } from '../lib/quickstart';
 import { questOpen, seriesWindowOpen } from '../lib/promo';
 import { PROMO, VERIFY } from '../config';
 import { SPECIAL_BADGES } from '../lib/badges';
-import { BUDGET, emailPriority, planBatch, sendBeforeFor } from '../../supabase/functions/_shared/emailCore';
+import { BUDGET, RETENTION, SENSITIVE_BODY_KINDS, emailPriority, planBatch, sendBeforeFor } from '../../supabase/functions/_shared/emailCore';
 import { announcementEmail, emailLayout, isParticipantEmail, renderForRecipient } from '../lib/emailRender';
-import { fillValues, renderFillIns } from '../lib/emailFill';
+import { fillValues, firstName, renderFillIns } from '../lib/emailFill';
 import { SURVEY_LIMITS, SURVEY_POINTS, cleanSurveyText, surveyClosesAt, surveyError, surveyWindowOpen } from '../lib/eventSurvey';
 
 // ───────────────────────────── errors ─────────────────────────────
@@ -191,6 +191,8 @@ interface Db {
   emailBounced?: Record<string, string>;
   /** 0032: last sender run (the real one is email_runs). */
   emailRunAt?: string;
+  /** 0037: last retention purge (the real one is email_purge_runs). */
+  emailPurgeAt?: string;
   /** 0033: event id → special reward (the real one is event_rewards). */
   eventRewards?: Record<string, EventReward & { secretWord: string }>;
   /** 0033: reward passes (the real one is reward_passes). `series` = outfit set. */
@@ -213,6 +215,8 @@ interface OutboxRow extends EmailLogRow {
   text: string;
   html: string;
   dedupeKey: string;
+  /** 0037: contents emptied for privacy (email_outbox.body_purged_at). */
+  bodyPurgedAt?: string;
 }
 
 /** 0032: one email to one person (email_messages). Status 'pending' = queued. */
@@ -234,6 +238,8 @@ interface MessageRow {
   sentAt?: string;
   error?: string;
   createdAt: string;
+  /** 0037: contents emptied for privacy (email_messages.body_purged_at). */
+  bodyPurgedAt?: string;
 }
 
 const DB_KEY = 'yacquest-db-v1';
@@ -1213,6 +1219,7 @@ export async function markFulfilled(spot: number): Promise<void> {
   if (!c) return fail('not_found', 'Claim not found.');
   c.status = 'fulfilled';
   c.fulfilledAt = now();
+  clearSensitiveBodies(Date.now(), { userId: c.userId, spot: c.spot }); // 0037: delivery details leave the email log
   logAction('prize_fulfilled', { displayName: c.displayName }, { spot: c.spot, reason: null }, chair);
   notify(c.userId, 'prize_update', 'Your prize is on the way!', `Your ${PRIZE.name} has been sent. Reference ${c.reference ?? '—'}.`);
   save();
@@ -1777,7 +1784,7 @@ const PHOTO_IMG = (sky: string, grass: string, variant: number) =>
   );
 
 // Expose for tests
-export const __test = { queueVerification, grantEventReward, expandOutbox, campaignFor, unsubTokenFor, surveyRowsFor, queueEventReminders, queueEventFollowups, queueWrappedNotifications, claimSeasonalFor, wrappedFor, load, pointsOf, rankedParticipants, setSession, addLedger, deliverOutbox, badgesFor, unlocksFor, shoutoutSync, staffStats, staffUnlocksFor, legendaryFor, streakFor };
+export const __test = { purgeEmailData, clearSensitiveBodies, queueVerification, grantEventReward, expandOutbox, campaignFor, unsubTokenFor, surveyRowsFor, queueEventReminders, queueEventFollowups, queueWrappedNotifications, claimSeasonalFor, wrappedFor, load, pointsOf, rankedParticipants, setSession, addLedger, deliverOutbox, badgesFor, unlocksFor, shoutoutSync, staffStats, staffUnlocksFor, legendaryFor, streakFor };
 
 // ───────────────────────────── team (chairs only) ─────────────────────────────
 
@@ -2253,8 +2260,69 @@ function buildWeeklyReport(): Omit<WeeklyReport, 'recipients'> {
   return { subject, text, html };
 }
 
+/** 0037: the prize claim a demo prize alert is about (dedupe key `prize_…:<userId>:<spot>:…`). */
+function prizeAlertClaim(dedupeKey: string): { userId: string; spot: number } | null {
+  const [kind, userId, spot] = dedupeKey.split(':');
+  return kind === 'prize_info' || kind === 'prize_qualified' ? { userId, spot: Number(spot) } : null;
+}
+
+/**
+ * SERVER RULE (email_clear_sensitive_bodies, 0037): empties prize alerts / weekly reports / confirmation emails
+ * 30 days after they were queued, and prize alerts as soon as the claim is fulfilled (`claim` = only that one).
+ * Never touches emails still waiting to go out.
+ */
+function clearSensitiveBodies(nowMs: number, claim?: { userId: string; spot: number }) {
+  const d = load();
+  const cut = nowMs - RETENTION.sensitiveBodyDays * 86_400_000;
+  const fulfilled = (key: string) => {
+    const c = prizeAlertClaim(key);
+    if (!c) return false;
+    if (claim) return c.userId === claim.userId && c.spot === claim.spot;
+    return d.claims.some((x) => x.userId === c.userId && x.spot === c.spot && x.status === 'fulfilled');
+  };
+  const stamp = new Date(nowMs).toISOString();
+  for (const o of d.outbox) {
+    if (!SENSITIVE_BODY_KINDS.includes(o.kind) || o.bodyPurgedAt || o.status === 'pending' || o.status === 'sending') continue;
+    if (claim ? fulfilled(o.dedupeKey) : new Date(o.createdAt).getTime() < cut || fulfilled(o.dedupeKey))
+      Object.assign(o, { text: '', html: '', bodyPurgedAt: stamp });
+  }
+  for (const m of d.messages ?? []) {
+    if (!SENSITIVE_BODY_KINDS.includes(m.kind) || m.bodyPurgedAt || m.status === 'pending' || m.status === 'sending' || (m.status === 'failed' && m.attempts < 5)) continue;
+    const key = d.outbox.find((o) => o.id === m.outboxId)?.dedupeKey ?? '';
+    if (claim ? fulfilled(key) : new Date(m.createdAt).getTime() < cut || fulfilled(key))
+      Object.assign(m, { text: '', html: '', bodyPurgedAt: stamp });
+  }
+}
+
+/**
+ * SERVER RULE (purge_email_data, 0037; runs inside enqueue_weekly_report_if_due, at most once a day):
+ * email events / messages / outbox older than 12 months are deleted, sensitive contents emptied after 30 days,
+ * used or expired confirmation tokens deleted after 30 days.
+ */
+function purgeEmailData(nowMs = Date.now()): boolean {
+  const d = load();
+  if (d.emailPurgeAt && nowMs - new Date(d.emailPurgeAt).getTime() < RETENTION.purgeEveryHours * 3_600_000) return false;
+  const logCut = new Date(nowMs);
+  logCut.setMonth(logCut.getMonth() - RETENTION.logMonths);
+  const old = (iso: string) => new Date(iso).getTime() < logCut.getTime();
+  clearSensitiveBodies(nowMs);
+  d.emailEvents = (d.emailEvents ?? []).filter((e) => !old(e.createdAt));
+  const goneOutbox = new Set(d.outbox.filter((o) => old(o.createdAt)).map((o) => o.id));
+  d.outbox = d.outbox.filter((o) => !goneOutbox.has(o.id));
+  d.messages = (d.messages ?? []).filter((m) => !old(m.createdAt) && !(m.outboxId && goneOutbox.has(m.outboxId)));
+  const ids = new Set(d.messages.map((m) => m.id));
+  d.emailEvents = d.emailEvents.filter((e) => !e.messageId || ids.has(e.messageId));
+  const tokCut = nowMs - RETENTION.verifyTokenDays * 86_400_000;
+  d.verifyTokens = (d.verifyTokens ?? []).filter(
+    (t) => !(new Date(t.createdAt).getTime() < tokCut && (t.usedAt || new Date(t.expiresAt).getTime() < nowMs)),
+  );
+  d.emailPurgeAt = new Date(nowMs).toISOString();
+  return true;
+}
+
 /** SERVER RULE (enqueue_weekly_report_if_due, run by the Edge Function): once per ISO week after the set day/hour. */
 function maybeEnqueueWeekly(): boolean {
+  if (purgeEmailData()) save(); // 0037: the same per-run call purges old email data once a day
   const s = load().reportSettings;
   if (!s.weeklyEnabled) return false;
   const t = easternNow();
@@ -2317,7 +2385,7 @@ export async function sendTestEmail(): Promise<void> {
   await delay();
   const chair = requireRole('chair');
   const subject = 'YACquest test email ✅';
-  const text = `Hi ${chair.displayName}, this is a test from YACquest. If you're reading this, the weekly report and prize alerts can reach you.`;
+  const text = `Hi ${firstName(chair.displayName) ?? 'there'}, this is a test from YACquest. If you're reading this, the weekly report and prize alerts can reach you.`;
   enqueueEmail('test', [chair.email.toLowerCase()], subject, text, emailHtml(subject, `<p>${esc(text)}</p>`), `test:${nextId('t')}`);
   save();
 }
@@ -2339,6 +2407,8 @@ export async function retryEmail(id: string): Promise<void> {
   requireRole('chair');
   const d = load();
   const m = (d.messages ?? []).find((x) => x.id === id);
+  if (m?.bodyPurgedAt || d.outbox.find((x) => x.id === id)?.bodyPurgedAt)
+    fail('purged', 'This email’s contents were removed for privacy (after 30 days, or once the prize was delivered), so it can’t be sent again.');
   if (m) {
     if (m.status !== 'failed') fail('not_failed', 'Only failed emails can be retried.');
     Object.assign(m, { status: 'pending', attempts: 0, error: undefined });
